@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "format": "protomaps-v4",
+  "name": "台灣本島標準底圖",
+  "version": "2026-10-11",
+  "bytes": 94340652,
+  "sha256": "9074bb5be7b1653ff1c0b0b5680787554e6f385b33b6d3fe1f45384d1a30598f",
+  "bounds": [
+    119.9,
+    21.8,
+    122.1,
+    25.5
+  ],
+  "maxZoom": 14,
+  "source": "https://build.protomaps.com/20261011.pmtiles",
+  "license": "OpenStreetMap ODbL produced work / Natural Earth public domain",
+  "attribution": "© OpenStreetMap contributors · Protomaps / Natural Earth"
+}
