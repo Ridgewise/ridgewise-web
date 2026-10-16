@@ -3091,5 +3091,114 @@ summary {
   }
 }
 
+/* src/features/gpx/diagnostics.css */
+@layer components {
+  .correction-panel {
+    min-width: 0;
+  }
+  .correction-panel h2 {
+    margin-bottom: 8px;
+  }
+  .correction-comparison {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 14px;
+    font-variant-numeric: tabular-nums;
+  }
+  .correction-comparison caption {
+    text-align: left;
+    padding-bottom: 12px;
+  }
+  .correction-comparison th,
+  .correction-comparison td {
+    text-align: right;
+    padding: 12px 4px;
+    border-bottom: 1px solid var(--line);
+    overflow-wrap: anywhere;
+  }
+  .correction-comparison th:first-child {
+    text-align: left;
+    width: 17%;
+  }
+  .correction-comparison thead {
+    color: var(--muted);
+  }
+  .correction-comparison [data-value=corrected] {
+    font-weight: 700;
+    color: var(--forest);
+  }
+  .correction-panel summary {
+    cursor: pointer;
+    font-weight: 700;
+    padding: 10px 0;
+  }
+  .correction-reasons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    padding: 0;
+    list-style: none;
+    font-size: 13px;
+  }
+  .correction-reasons li {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 6px 10px;
+  }
+  .correction-points {
+    padding: 0;
+    list-style: none;
+  }
+  .correction-points > li {
+    border-top: 1px solid var(--line);
+    padding: 16px 0;
+    overflow-wrap: anywhere;
+  }
+  .correction-point-heading {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    font-size: 14px;
+  }
+  .correction-point-heading > span {
+    color: var(--forest);
+  }
+  .correction-locations {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 20px;
+    margin-bottom: 0;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .correction-locations dt {
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+  .correction-locations dd {
+    margin: 0;
+  }
+  .correction-pagination {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12px;
+  }
+  .correction-pagination .button {
+    padding: 8px;
+    min-width: 0;
+  }
+  @media (max-width: 480px) {
+    .correction-locations {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .correction-comparison {
+      font-size: 12px;
+    }
+  }
+}
+
 /* src/styles/index.css */
 /*# sourceMappingURL=app.bundle.css.map */

@@ -1,19 +1,21 @@
 /* Generated from src/ by esbuild; do not edit dist/. */
 (() => {
-  // src/domain/track.js
+  // src/domain/track-math.js
   function haversine(a, b) {
-    const rad2 = (value) => value * Math.PI / 180;
+    const rad2 = (value2) => value2 * Math.PI / 180;
     const x = Math.sin(rad2(b.lat - a.lat) / 2) ** 2 + Math.cos(rad2(a.lat)) * Math.cos(rad2(b.lat)) * Math.sin(rad2(b.lon - a.lon) / 2) ** 2;
     return 6371 * 2 * Math.atan2(Math.sqrt(Math.min(1, x)), Math.sqrt(Math.max(0, 1 - x)));
   }
   function trackStats(segments) {
-    let km = 0, up = 0, down = 0, points = 0, withElevation = 0;
+    let km = 0, up = 0, down = 0, points = 0, withElevation = 0, excludedPoints = 0;
     for (const segment of segments) {
       segment.forEach((point, index) => {
         points++;
-        if (Number.isFinite(point.elevation)) withElevation++;
+        if (point.excluded) excludedPoints++;
+        if (!point.excluded && Number.isFinite(point.elevation)) withElevation++;
         if (!index) return;
         const previous = segment[index - 1];
+        if (previous.excluded || point.excluded) return;
         km += haversine(previous, point);
         if (Number.isFinite(point.elevation) && Number.isFinite(previous.elevation)) {
           const delta = point.elevation - previous.elevation;
@@ -29,31 +31,495 @@
       down: complete ? down : null,
       points,
       withElevation,
-      segments: segments.length
+      segments: segments.length,
+      excludedPoints
     };
   }
-  function prepareTrack(segments) {
+  function elevationPrefixes(points) {
+    const up = [], down = [], missing = [];
+    points.forEach((point, i) => {
+      const previous = points[i - 1];
+      const edge = previous && previous.segment === point.segment;
+      const valid = edge && !previous.excluded && !point.excluded && Number.isFinite(previous.elevation) && Number.isFinite(point.elevation);
+      const delta = valid ? point.elevation - previous.elevation : 0;
+      up.push((up[i - 1] ?? 0) + Math.max(0, delta));
+      down.push((down[i - 1] ?? 0) + Math.max(0, -delta));
+      missing.push((missing[i - 1] ?? 0) + (edge && !valid ? 1 : 0));
+    });
+    return { up, down, missing };
+  }
+  function indexTrack(segments) {
     const points = [];
     let km = 0;
     segments.forEach((segment, segmentIndex) => {
-      segment.forEach((point, index) => {
-        if (index) km += haversine(segment[index - 1], point);
-        points.push({ ...point, segment: segmentIndex, km });
+      segment.forEach((point, sourceIndex) => {
+        if (sourceIndex && !segment[sourceIndex - 1].excluded && !point.excluded)
+          km += haversine(segment[sourceIndex - 1], point);
+        points.push({ ...point, segment: segmentIndex, sourceIndex, km });
       });
     });
-    const completeTime = points.length > 1 && points.every((point) => Number.isFinite(point.time));
-    const orderedTime = completeTime && points.every((point, index) => !index || point.time > points[index - 1].time);
-    const recordedMs = orderedTime ? points.at(-1).time - points[0].time : null;
+    const { up, down, missing } = elevationPrefixes(points);
+    return points.map((point, i) => ({
+      ...point,
+      up: up[i],
+      down: down[i],
+      elevationGapCount: missing[i]
+    }));
+  }
+
+  // src/domain/track-filter.js
+  var TRACK_FILTER_VERSION = 4;
+  var TRACK_FILTER_DEFAULTS = Object.freeze({
+    horizontalToleranceM: 10,
+    stationaryRadiusM: 5,
+    stationaryDurationS: 60,
+    maxSpeedMps: 12,
+    spikeLegM: 50,
+    elevationWindow: 17,
+    elevationWindowSeconds: 48,
+    elevationHysteresisM: 15,
+    maxHorizontalAccuracyM: 50,
+    maxAltitudeAccuracyM: 30
+  });
+  var distance = (a, b) => haversine(a, b) * 1e3;
+  var longitudeDelta = (a, b) => ((b - a) % 360 + 540) % 360 - 180;
+  var longitude = (value2) => ((value2 + 180) % 360 + 360) % 360 - 180;
+  var median = (values) => {
+    const sorted = [...values].sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  };
+  function settings(options) {
+    for (const key of Object.keys(options)) {
+      if (!Object.hasOwn(TRACK_FILTER_DEFAULTS, key))
+        throw new TypeError("Unknown track filter option: " + key);
+    }
+    const result = { ...TRACK_FILTER_DEFAULTS, ...options };
+    for (const [key, value2] of Object.entries(result)) {
+      if (!Number.isFinite(value2) || value2 < 0) throw new RangeError(key + " must be non-negative");
+    }
+    if (!Number.isInteger(result.elevationWindow) || result.elevationWindow < 1 || result.elevationWindow > 31 || result.elevationWindow % 2 === 0) {
+      throw new RangeError("elevationWindow must be an odd integer from 1 to 31");
+    }
+    return result;
+  }
+  function snapshot(segments) {
+    if (!Array.isArray(segments)) throw new TypeError("Expected an array of track segments");
+    return segments.map((segment) => {
+      if (!Array.isArray(segment)) throw new TypeError("Expected a segment array");
+      return segment.map((point) => {
+        if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lon) || Math.abs(point.lat) > 90 || Math.abs(point.lon) > 180) {
+          throw new TypeError("Track points must contain valid latitude and longitude");
+        }
+        return { ...point };
+      });
+    });
+  }
+  function interpolate(a, b, fraction) {
     return {
+      lat: a.lat + (b.lat - a.lat) * fraction,
+      lon: longitude(a.lon + longitudeDelta(a.lon, b.lon) * fraction)
+    };
+  }
+  function positionReliable(point, config = TRACK_FILTER_DEFAULTS) {
+    return !point.excluded && (!config.maxHorizontalAccuracyM || point.accuracy == null || Number.isFinite(point.accuracy) && point.accuracy >= 0 && point.accuracy <= config.maxHorizontalAccuracyM);
+  }
+  function elevationReliable(point, config = TRACK_FILTER_DEFAULTS) {
+    return !config.maxAltitudeAccuracyM || point.altitudeAccuracy == null || Number.isFinite(point.altitudeAccuracy) && point.altitudeAccuracy >= 0 && point.altitudeAccuracy <= config.maxAltitudeAccuracyM;
+  }
+  function removeSpikes(raw, corrected, flags, config) {
+    if (!config.maxSpeedMps) return;
+    for (let i = 1; i < raw.length - 1; i++) {
+      const a = raw[i - 1], b = raw[i], c = raw[i + 1];
+      const ab = distance(a, b), bc = distance(b, c), ac = distance(a, c);
+      if (Math.min(ab, bc) < config.spikeLegM || ab + bc < 4 * Math.max(ac, 1)) continue;
+      const timed = [a, b, c].every((point) => Number.isFinite(point.time)) && a.time < b.time && b.time < c.time;
+      if (!timed) {
+        flags[i].push("suspect-spike-without-time");
+        continue;
+      }
+      if (ab / ((b.time - a.time) / 1e3) <= config.maxSpeedMps || bc / ((c.time - b.time) / 1e3) <= config.maxSpeedMps || ac / ((c.time - a.time) / 1e3) > config.maxSpeedMps)
+        continue;
+      Object.assign(corrected[i], interpolate(a, c, (b.time - a.time) / (c.time - a.time)));
+      flags[i].push("isolated-position-spike");
+    }
+  }
+  function removeStationaryDrift(points, flags, config) {
+    if (!config.stationaryRadiusM) return;
+    let start = 0;
+    while (start < points.length - 1) {
+      const origin = points[start];
+      let end = start + 1, length = 0;
+      let minX = 0, maxX = 0, minY = 0, maxY = 0;
+      for (; end < points.length; end++) {
+        const point = points[end], previous = points[end - 1];
+        if (!Number.isFinite(previous.time) || !Number.isFinite(point.time) || point.time <= previous.time)
+          break;
+        const { x, y } = project(origin, point);
+        const bounds = [Math.min(minX, x), Math.max(maxX, x), Math.min(minY, y), Math.max(maxY, y)];
+        if (Math.hypot(bounds[1] - bounds[0], bounds[3] - bounds[2]) > 2 * config.stationaryRadiusM)
+          break;
+        [minX, maxX, minY, maxY] = bounds;
+        length += distance(previous, point);
+      }
+      const last = end - 1;
+      if (end - start >= 5 && (points[last].time - origin.time) / 1e3 >= config.stationaryDurationS && length > 4 * config.stationaryRadiusM && distance(origin, points[last]) <= config.stationaryRadiusM) {
+        const cloud = points.slice(start, end);
+        const centre = {
+          lat: median(cloud.map((point) => point.lat)),
+          lon: longitude(
+            origin.lon + median(cloud.map((point) => longitudeDelta(origin.lon, point.lon)))
+          )
+        };
+        for (let i = start; i < end; i++) {
+          Object.assign(points[i], centre);
+          flags[i].push("stationary-drift");
+        }
+      }
+      start = Math.max(start + 1, last);
+    }
+  }
+  function project(origin, point) {
+    const scale = 6371e3 * Math.PI / 180;
+    return {
+      x: longitudeDelta(origin.lon, point.lon) * scale * Math.cos(origin.lat * Math.PI / 180),
+      y: (point.lat - origin.lat) * scale
+    };
+  }
+  function chordProjection(a, b, point) {
+    const end = project(a, b), at = project(a, point);
+    const squared = end.x ** 2 + end.y ** 2;
+    const fraction = squared ? Math.max(0, Math.min(1, (at.x * end.x + at.y * end.y) / squared)) : 0;
+    return { fraction, error: Math.hypot(at.x - fraction * end.x, at.y - fraction * end.y) };
+  }
+  function smoothHorizontal(points, flags, tolerance) {
+    if (!tolerance || points.length < 3) return;
+    const original = points.map((point) => ({ ...point }));
+    const anchors = [0];
+    for (let i = 1; i < points.length - 1; i++) {
+      const inbound = project(points[i - 1], points[i]), outbound = project(points[i], points[i + 1]);
+      const first = Math.hypot(inbound.x, inbound.y), second = Math.hypot(outbound.x, outbound.y);
+      if (Math.min(first, second) >= Math.min(3 * tolerance, 9) && (inbound.x * outbound.x + inbound.y * outbound.y) / (first * second) < 0.5)
+        anchors.push(i);
+    }
+    anchors.push(points.length - 1);
+    const keep = new Set(anchors), stack = [];
+    for (let i = 1; i < anchors.length; i++) stack.push([anchors[i - 1], anchors[i]]);
+    while (stack.length) {
+      const [start, end] = stack.pop();
+      let error = tolerance, selected = -1;
+      for (let i = start + 1; i < end; i++) {
+        const candidate = chordProjection(original[start], original[end], original[i]).error;
+        if (candidate > error) {
+          error = candidate;
+          selected = i;
+        }
+      }
+      if (selected !== -1) {
+        keep.add(selected);
+        stack.push([start, selected], [selected, end]);
+      }
+    }
+    const indices = [...keep].sort((a, b) => a - b);
+    for (let j = 1; j < indices.length; j++) {
+      const start = indices[j - 1], end = indices[j];
+      for (let i = start + 1; i < end; i++) {
+        Object.assign(
+          points[i],
+          interpolate(
+            original[start],
+            original[end],
+            chordProjection(original[start], original[end], original[i]).fraction
+          )
+        );
+        flags[i].push("horizontal-smoothing");
+      }
+    }
+  }
+  function queue() {
+    const heap = [];
+    return {
+      push(item) {
+        let index = heap.length;
+        heap.push(item);
+        while (index) {
+          const parent = index - 1 >> 1;
+          if (heap[parent].delta <= item.delta) break;
+          heap[index] = heap[parent];
+          index = parent;
+        }
+        heap[index] = item;
+      },
+      pop() {
+        const first = heap[0], last = heap.pop();
+        if (heap.length) {
+          let index = 0;
+          while (index * 2 + 1 < heap.length) {
+            let child = index * 2 + 1;
+            if (child + 1 < heap.length && heap[child + 1].delta < heap[child].delta) child++;
+            if (last.delta <= heap[child].delta) break;
+            heap[index] = heap[child];
+            index = child;
+          }
+          heap[index] = last;
+        }
+        return first;
+      },
+      get length() {
+        return heap.length;
+      }
+    };
+  }
+  function elevationTrend(values, positions, threshold) {
+    if (!threshold || values.length < 2) return [...values];
+    let low = Infinity, high = -Infinity;
+    for (const value2 of values) {
+      low = Math.min(low, value2);
+      high = Math.max(high, value2);
+    }
+    let variation = 0;
+    for (let i = 1; i < values.length; i++) variation += Math.abs(values[i] - values[i - 1]);
+    if (high - low < threshold && variation > 2 * (high - low)) {
+      const level = median(values);
+      return values.map(() => level);
+    }
+    const indices = [0];
+    let direction = 0;
+    for (let i = 1; i < values.length; i++) {
+      const next = Math.sign(values[i] - values[i - 1]);
+      if (next && direction && next !== direction) indices.push(i - 1);
+      if (next) direction = next;
+    }
+    indices.push(values.length - 1);
+    const nodes = indices.map((index, order) => ({
+      index,
+      order,
+      value: values[index],
+      alive: true
+    }));
+    nodes.forEach((node, i) => {
+      node.prev = nodes[i - 1];
+      node.next = nodes[i + 1];
+    });
+    const candidates = queue();
+    function offer(left) {
+      const right = left?.next;
+      if (!left?.prev || !right?.next) return;
+      const delta = Math.abs(right.value - left.value);
+      if (delta < threshold && delta <= Math.abs(left.value - left.prev.value) && delta <= Math.abs(right.next.value - right.value))
+        candidates.push({ left, right, delta });
+    }
+    nodes.forEach(offer);
+    while (candidates.length) {
+      const { left, right } = candidates.pop();
+      if (!left.alive || !right.alive || left.next !== right) continue;
+      const before = left.prev, after = right.next;
+      left.alive = false;
+      right.alive = false;
+      before.next = after;
+      after.prev = before;
+      offer(before.prev);
+      offer(before);
+      offer(after);
+    }
+    const result = [...values];
+    for (let node = nodes[0]; node.next; node = node.next) {
+      const end = node.next;
+      if (end.order === node.order + 1) continue;
+      for (let i = node.index; i <= end.index; i++) {
+        const span = positions[end.index] - positions[node.index];
+        const fraction = span > 0 ? (positions[i] - positions[node.index]) / span : (i - node.index) / (end.index - node.index);
+        result[i] = node.value + (end.value - node.value) * fraction;
+      }
+    }
+    return result;
+  }
+  function resolvedElevation(values, index, half, threshold) {
+    const first = Math.max(0, index - half);
+    const last = Math.min(values.length - 1, index + half);
+    let rises = 0, falls = 0;
+    for (let i = first + 1; i <= last; i++) {
+      const delta = values[i] - values[i - 1];
+      if (delta > 0) rises++;
+      if (delta < 0) falls++;
+    }
+    if (!rises || !falls) return true;
+    const value2 = values[index];
+    let plateauStart = index, plateauEnd = index;
+    while (plateauStart > first && values[plateauStart - 1] === value2) plateauStart--;
+    while (plateauEnd < last && values[plateauEnd + 1] === value2) plateauEnd++;
+    const left = Math.max(0, plateauStart - half), right = Math.min(values.length - 1, plateauEnd + half);
+    let leftRises = 0, leftFalls = 0, rightRises = 0, rightFalls = 0;
+    for (let i = left + 1; i <= plateauStart; i++) {
+      const delta = values[i] - values[i - 1];
+      if (delta > 0) leftRises++;
+      if (delta < 0) leftFalls++;
+    }
+    for (let i = plateauEnd + 1; i <= right; i++) {
+      const delta = values[i] - values[i - 1];
+      if (delta > 0) rightRises++;
+      if (delta < 0) rightFalls++;
+    }
+    const rise = value2 - values[left], drop = value2 - values[right];
+    return leftRises >= 2 && !leftFalls && rightFalls >= 2 && !rightRises && rise >= 2 * threshold && drop >= 2 * threshold || leftFalls >= 2 && !leftRises && rightRises >= 2 && !rightFalls && -rise >= 2 * threshold && -drop >= 2 * threshold;
+  }
+  function smoothElevation(points, flags, config) {
+    let start = 0;
+    while (start < points.length) {
+      if (!Number.isFinite(points[start].elevation)) {
+        start++;
+        continue;
+      }
+      let end = start + 1;
+      while (end < points.length && Number.isFinite(points[end].elevation)) end++;
+      const values = points.slice(start, end).map((point) => point.elevation);
+      const positions = [0];
+      let wideSteps = 0;
+      for (let i = start + 1; i < end; i++) {
+        const step = distance(points[i - 1], points[i]);
+        positions.push(positions.at(-1) + step);
+        if (step > 20) wideSteps++;
+      }
+      let half = (config.elevationWindow - 1) / 2;
+      if (config.elevationWindowSeconds && half > 3) {
+        const intervals = [];
+        for (let i = start + 1; i < end; i++) {
+          if (!Number.isFinite(points[i - 1].time) || !Number.isFinite(points[i].time)) continue;
+          const seconds = (points[i].time - points[i - 1].time) / 1e3;
+          if (Number.isFinite(seconds) && seconds > 0) intervals.push(seconds);
+        }
+        const cadence = intervals.length ? median(intervals) : null;
+        half = Math.min(
+          half,
+          cadence ? Math.max(3, Math.round(config.elevationWindowSeconds / (2 * cadence))) : 3
+        );
+      }
+      if (wideSteps > (values.length - 1) / 2) half = Math.min(1, half);
+      const smoothed = values.map(
+        (value2, i) => i === 0 || i === values.length - 1 || resolvedElevation(values, i, half, config.elevationHysteresisM) ? value2 : median(values.slice(Math.max(0, i - half), Math.min(values.length, i + half + 1)))
+      );
+      const trend = elevationTrend(smoothed, positions, config.elevationHysteresisM);
+      for (let i = start; i < end; i++) {
+        if (smoothed[i - start] !== values[i - start]) flags[i].push("elevation-median");
+        if (trend[i - start] !== smoothed[i - start]) flags[i].push("elevation-hysteresis");
+        points[i].elevation = trend[i - start];
+      }
+      start = end;
+    }
+  }
+  function filterTrack(segments, options = {}) {
+    const config = settings(options), rawSegments = snapshot(segments);
+    const correctedSegments = rawSegments.map((segment) => segment.map((point) => ({ ...point })));
+    const diagnostics = [];
+    correctedSegments.forEach((points2, segment) => {
+      const flags = points2.map(() => []);
+      points2.forEach((point, i) => {
+        if (!positionReliable(point, config)) {
+          point.excluded = true;
+          point.elevation = null;
+          flags[i].push("low-horizontal-accuracy");
+        } else if (!elevationReliable(point, config)) {
+          point.elevation = null;
+          flags[i].push("low-altitude-accuracy");
+        }
+      });
+      let start = 0;
+      while (start < points2.length) {
+        if (points2[start].excluded) {
+          start++;
+          continue;
+        }
+        let end = start + 1;
+        while (end < points2.length && !points2[end].excluded) end++;
+        const section = points2.slice(start, end), reasons = flags.slice(start, end);
+        removeSpikes(rawSegments[segment].slice(start, end), section, reasons, config);
+        const orderedTime = section.every(
+          (point, i) => Number.isFinite(point.time) && (!i || point.time > section[i - 1].time)
+        );
+        for (let i = 1; i < section.length; i++) {
+          const a = section[i - 1], b = section[i];
+          if (orderedTime && config.maxSpeedMps && Number.isFinite(a.time) && Number.isFinite(b.time) && b.time > a.time && distance(a, b) >= config.spikeLegM && distance(a, b) / ((b.time - a.time) / 1e3) > config.maxSpeedMps) {
+            b.excluded = true;
+            b.elevation = null;
+            reasons[i].push("unconfirmed-position-jump");
+          }
+        }
+        let from = 0;
+        while (from < section.length) {
+          if (section[from].excluded) {
+            from++;
+            continue;
+          }
+          let to = from + 1;
+          while (to < section.length && !section[to].excluded) to++;
+          const usable = section.slice(from, to), usableFlags = reasons.slice(from, to);
+          removeStationaryDrift(usable, usableFlags, config);
+          smoothHorizontal(usable, usableFlags, config.horizontalToleranceM);
+          smoothElevation(usable, usableFlags, config);
+          from = to;
+        }
+        start = end;
+      }
+      flags.forEach((reasons, sourceIndex) => {
+        if (reasons.length) diagnostics.push({ segment, sourceIndex, reasons });
+      });
+    });
+    const points = indexTrack(correctedSegments);
+    return {
+      version: TRACK_FILTER_VERSION,
+      options: config,
+      rawSegments,
+      rawStats: trackStats(rawSegments),
+      correctedSegments,
       points,
-      stats: trackStats(segments),
+      stats: trackStats(correctedSegments),
+      diagnostics
+    };
+  }
+
+  // src/domain/track.js
+  function qualitySegments(segments) {
+    const result = [];
+    segments.forEach((segment, rawSegment) => {
+      let run = [];
+      segment.forEach((point, rawIndex) => {
+        if (point.excluded) {
+          if (run.length) result.push(run);
+          run = [];
+        } else run.push({ ...point, rawSegment, rawIndex });
+      });
+      if (run.length) result.push(run);
+    });
+    return result.length ? result : [[]];
+  }
+  function prepareTrack(segments, { filter = false, filterOptions = {} } = {}) {
+    const analysis = filter ? filterTrack(segments, filterOptions) : null;
+    const geometry = analysis?.stats.excludedPoints ? qualitySegments(analysis.correctedSegments) : analysis?.correctedSegments ?? segments;
+    const points = analysis?.stats.excludedPoints ? indexTrack(geometry) : analysis?.points ?? indexTrack(geometry);
+    const timedPoints = analysis?.points ?? points;
+    const completeTime = timedPoints.length > 1 && timedPoints.every((point) => Number.isFinite(point.time));
+    const orderedTime = completeTime && timedPoints.every((point, index) => !index || point.time > timedPoints[index - 1].time);
+    const recordedMs = orderedTime ? timedPoints.at(-1).time - timedPoints[0].time : null;
+    return {
+      segments: geometry,
+      points,
+      stats: analysis ? { ...analysis.stats, segments: geometry.length } : trackStats(segments),
+      ...analysis ? {
+        rawSegments: analysis.rawSegments,
+        rawStats: analysis.rawStats,
+        processing: {
+          version: analysis.version,
+          options: analysis.options,
+          diagnostics: analysis.diagnostics
+        }
+      } : {},
       recordedMs,
       timeStatus: orderedTime ? "complete" : completeTime ? "unordered" : "missing"
     };
   }
   function elapsedLabel(ms) {
     const seconds = Math.max(0, Math.floor(ms / 1e3));
-    return [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60].map((value) => String(value).padStart(2, "0")).join(":");
+    return [Math.floor(seconds / 3600), Math.floor(seconds / 60) % 60, seconds % 60].map((value2) => String(value2).padStart(2, "0")).join(":");
   }
   function sampled(segment, limit = 1600) {
     const step = Math.max(1, Math.ceil(segment.length / limit));
@@ -62,16 +528,46 @@
 
   // src/features/routes/direction.js
   var reversedRoutes = /* @__PURE__ */ new WeakMap();
-  var normalizeDirection = (value) => value === "reverse" ? "reverse" : "forward";
+  var reverseSegments = (segments) => segments.slice().reverse().map((segment) => segment.slice().reverse());
+  var normalizeDirection = (value2) => value2 === "reverse" ? "reverse" : "forward";
   function routeForDirection(file, direction) {
     if (!file || file.kind === "recording" || normalizeDirection(direction) === "forward")
       return file;
     if (!reversedRoutes.has(file)) {
-      const segments = file.segments.slice().reverse().map((segment) => segment.slice().reverse());
+      const rawSegments = file.rawSegments && reverseSegments(file.rawSegments);
+      const segments = reverseSegments(file.segments).map(
+        (segment) => segment.map(
+          (point) => Number.isInteger(point.rawSegment) ? {
+            ...point,
+            rawSegment: file.rawSegments.length - 1 - point.rawSegment,
+            rawIndex: file.rawSegments[point.rawSegment].length - 1 - point.rawIndex
+          } : point
+        )
+      );
       reversedRoutes.set(file, {
         ...file,
         segments,
         ...prepareTrack(segments),
+        ...file.processing && file.stats.excludedPoints ? {
+          stats: {
+            ...file.stats,
+            up: file.stats.down,
+            down: file.stats.up,
+            segments: segments.length
+          }
+        } : {},
+        ...rawSegments ? {
+          rawSegments,
+          rawStats: trackStats(rawSegments),
+          processing: {
+            ...file.processing,
+            diagnostics: (file.processing?.diagnostics ?? []).map((item) => ({
+              ...item,
+              segment: file.rawSegments.length - 1 - item.segment,
+              sourceIndex: file.rawSegments[item.segment].length - 1 - item.sourceIndex
+            }))
+          }
+        } : {},
         direction: "reverse"
       });
     }
@@ -100,15 +596,16 @@
         if (!disposed) state.directionError = "\u884C\u8D70\u65B9\u5411\u8A2D\u5B9A\u7121\u6CD5\u8B80\u53D6\uFF0C\u5148\u4F7F\u7528 GPX \u539F\u5411\u3002";
       }
     }
-    async function set(value) {
+    async function set(value2) {
       const file = current();
       if (disposed || !file || file.kind === "recording" || file.recording) return;
       if (gpsPending2() || state.starting) {
         feedback.toast("\u6B64\u8D9F\u884C\u8D70\u65B9\u5411\u5DF2\u56FA\u5B9A\uFF0C\u8ACB\u7D50\u675F\u7D00\u9304\u5F8C\u518D\u5207\u63DB\u3002");
         return;
       }
-      if (!["forward", "reverse"].includes(value)) return;
-      state.routeDirections = { ...state.routeDirections, [file.id]: value };
+      if (!["forward", "reverse"].includes(value2)) return;
+      state.correctionPage = null;
+      state.routeDirections = { ...state.routeDirections, [file.id]: value2 };
       const thisRevision = ++revision;
       state.directionError = "";
       render();
@@ -199,22 +696,22 @@
 
   // src/features/offline-map/download.js
   var MAX_MAP_BYTES = 256 * 1024 * 1024;
-  function validateManifest(value) {
-    const bounds = value?.bounds;
-    if (value?.schema !== 1 || value?.format !== "protomaps-v4" || !Number.isSafeInteger(value.bytes) || value.bytes < 127 || value.bytes > MAX_MAP_BYTES || !/^[a-f0-9]{64}$/.test(value.sha256 ?? "") || !Array.isArray(bounds) || bounds.length !== 4 || !bounds.every(Number.isFinite) || bounds[0] >= bounds[2] || bounds[1] >= bounds[3] || bounds[0] < -180 || bounds[2] > 180 || bounds[1] < -85 || bounds[3] > 85 || !Number.isInteger(value.maxZoom) || value.maxZoom < 0 || value.maxZoom > 15 || typeof value.version !== "string" || !value.version || typeof value.name !== "string")
+  function validateManifest(value2) {
+    const bounds = value2?.bounds;
+    if (value2?.schema !== 1 || value2?.format !== "protomaps-v4" || !Number.isSafeInteger(value2.bytes) || value2.bytes < 127 || value2.bytes > MAX_MAP_BYTES || !/^[a-f0-9]{64}$/.test(value2.sha256 ?? "") || !Array.isArray(bounds) || bounds.length !== 4 || !bounds.every(Number.isFinite) || bounds[0] >= bounds[2] || bounds[1] >= bounds[3] || bounds[0] < -180 || bounds[2] > 180 || bounds[1] < -85 || bounds[3] > 85 || !Number.isInteger(value2.maxZoom) || value2.maxZoom < 0 || value2.maxZoom > 15 || typeof value2.version !== "string" || !value2.version || typeof value2.name !== "string")
       throw new Error("\u96E2\u7DDA\u5716\u8CC7\u8CC7\u8A0A\u4E0D\u5B8C\u6574\uFF0C\u8ACB\u7A0D\u5F8C\u518D\u8A66\u3002");
-    return value;
+    return value2;
   }
   async function downloadMap({
     url,
     manifest,
     signal,
-    fetch = globalThis.fetch,
+    fetch: fetch2 = globalThis.fetch,
     crypto: crypto2 = globalThis.crypto,
     onProgress = () => {
     }
   }) {
-    const response = await fetch(url, { signal, cache: "no-store" });
+    const response = await fetch2(url, { signal, cache: "no-store" });
     if (!response.ok) throw new Error("\u7121\u6CD5\u4E0B\u8F09\u5E95\u5716\uFF0C\u8ACB\u78BA\u8A8D\u7DB2\u8DEF\u5F8C\u91CD\u8A66\u3002");
     const reader = response.body?.getReader();
     if (!reader) throw new Error("\u6B64\u700F\u89BD\u5668\u4E0D\u652F\u63F4\u5730\u5716\u4E0B\u8F09\u3002");
@@ -223,12 +720,12 @@
     try {
       while (true) {
         signal.throwIfAborted();
-        const { done, value } = await reader.read();
+        const { done, value: value2 } = await reader.read();
         if (done) break;
-        received += value.byteLength;
+        received += value2.byteLength;
         if (received > manifest.bytes || received > MAX_MAP_BYTES)
           throw new Error("\u4E0B\u8F09\u8CC7\u6599\u5927\u5C0F\u4E0D\u7B26\uFF0C\u5DF2\u53D6\u6D88\u672C\u6B21\u4E0B\u8F09\u3002");
-        chunks.push(value);
+        chunks.push(value2);
         onProgress(received, manifest.bytes);
       }
     } catch (error) {
@@ -251,11 +748,14 @@
   // src/features/offline-map/shell.js
   async function prepareOfflineShell({
     navigator = globalThis.navigator,
-    document: document2 = globalThis.document
+    document: document2 = globalThis.document,
+    platform = globalThis.Capacitor?.getPlatform?.()
   } = {}) {
-    if (!navigator?.serviceWorker || !document2?.baseURI) return false;
+    if (!document2?.baseURI) return false;
     const url = new URL("./sw.js", document2.baseURI);
-    if (!["http:", "https:"].includes(url.protocol)) return false;
+    if (platform === "ios" && url.protocol === "capacitor:" && url.hostname === "localhost")
+      return true;
+    if (!navigator?.serviceWorker || !["http:", "https:"].includes(url.protocol)) return false;
     const existing = await navigator.serviceWorker.getRegistration?.(url.href);
     if (navigator.onLine === false && existing?.active) return true;
     const registration = await navigator.serviceWorker.register(url.href, { scope: "./" });
@@ -286,7 +786,7 @@
     store = createOfflineMapStore(),
     document: document2 = globalThis.document,
     navigator = globalThis.navigator,
-    fetch = globalThis.fetch,
+    fetch: fetch2 = globalThis.fetch,
     prepareShell = () => prepareOfflineShell({ navigator, document: document2 }),
     downloader = downloadMap,
     onChange = () => {
@@ -347,7 +847,7 @@
         }
         if (disposed || navigator?.onLine === false) return;
         try {
-          const response = await fetch(assetUrl("manifest.json"), {
+          const response = await fetch2(assetUrl("manifest.json"), {
             signal: lifetime.signal,
             cache: "no-store"
           });
@@ -367,7 +867,7 @@
       update({ phase: "downloading", received: 0, message: "\u6B63\u5728\u6E96\u5099\u4E0B\u8F09\u2026" });
       job = (async () => {
         try {
-          const response = await fetch(assetUrl("manifest.json"), { signal, cache: "no-store" });
+          const response = await fetch2(assetUrl("manifest.json"), { signal, cache: "no-store" });
           if (!response.ok) throw new Error("\u96E2\u7DDA\u5716\u8CC7\u5C1A\u672A\u5C31\u7DD2\uFF0C\u8ACB\u9023\u7DDA\u5F8C\u91CD\u8A66\u3002");
           const next = validateManifest(await response.json());
           manifest = next;
@@ -383,7 +883,7 @@
             url: assetUrl("taiwan.pmtiles"),
             manifest: next,
             signal,
-            fetch,
+            fetch: fetch2,
             onProgress: (received, total) => update({ received, total }, true)
           });
           signal.throwIfAborted();
@@ -484,13 +984,13 @@
   var icon = (name, cls = "") => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${icons[name] || icons.mountain}"/></svg>`;
 
   // src/ui/html.js
-  var esc = (value) => String(value).replace(
+  var esc = (value2) => String(value2).replace(
     /[&<>"']/g,
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
   );
   var button = (label, action, kind = "", ic = "", extra = "") => `<button class="button ${kind}" data-action="${action}" ${extra}>${ic ? icon(ic) : ""}${label}</button>`;
-  var metric = (label, value, unit = "", ic = "") => `<div class="stat"><div class="stat-label">${ic ? icon(ic) : ""}${label}</div><div class="stat-value">${value}<small>${unit}</small></div></div>`;
-  var meters = (value) => value === null ? "\u2014" : Math.round(value).toLocaleString();
+  var metric = (label, value2, unit = "", ic = "") => `<div class="stat"><div class="stat-label">${ic ? icon(ic) : ""}${label}</div><div class="stat-value">${value2}<small>${unit}</small></div></div>`;
+  var meters = (value2) => value2 === null ? "\u2014" : Math.round(value2).toLocaleString();
 
   // src/features/offline-map/view.js
   var megabytes = (bytes) => `${(bytes / 1048576).toFixed(1)} MB`;
@@ -552,15 +1052,15 @@
     }
     boundaries.sort((a, b) => a - b);
     const unique = [...new Set(boundaries)];
-    return unique.slice(1).map((time, index) => {
-      const begin = unique[index], middle = (begin + time) / 2;
+    return unique.slice(1).map((time2, index) => {
+      const begin = unique[index], middle = (begin + time2) / 2;
       const sun = solarDay(reference, county, taipeiDate(middle));
       const phase = !sun ? "unknown" : middle >= sun.sunrise && middle < sun.sunset ? "day" : "night";
       return {
         fromM: fromM + (toM - fromM) * (begin - start) / (end - start),
-        toM: fromM + (toM - fromM) * (time - start) / (end - start),
+        toM: fromM + (toM - fromM) * (time2 - start) / (end - start),
         start: begin,
-        end: time,
+        end: time2,
         phase,
         date: taipeiDate(middle)
       };
@@ -635,17 +1135,17 @@
     };
   }
   function nearbyDaylightReference(file, locations, maxDistanceKm = 75) {
-    const position = routeReferencePoint(file);
-    if (!position) return null;
+    const position2 = routeReferencePoint(file);
+    if (!position2) return null;
     let nearest = null, distanceKm = Infinity;
     for (const point of locations.points) {
-      const distance = haversine(position, point);
-      if (distance < distanceKm) {
+      const distance2 = haversine(position2, point);
+      if (distance2 < distanceKm) {
         nearest = point;
-        distanceKm = distance;
+        distanceKm = distance2;
       }
     }
-    return nearest && distanceKm <= maxDistanceKm ? { ...nearest, distanceKm, routePosition: position } : null;
+    return nearest && distanceKm <= maxDistanceKm ? { ...nearest, distanceKm, routePosition: position2 } : null;
   }
 
   // src/features/daylight/controller.js
@@ -655,7 +1155,7 @@
     locations = daylightLocations
   }) {
     const nearbyCache = /* @__PURE__ */ new WeakMap();
-    function snapshot(file, now = Date.now()) {
+    function snapshot3(file, now = Date.now()) {
       if (!nearbyCache.has(file)) nearbyCache.set(file, nearbyDaylightReference(file, locations));
       const nearby = nearbyCache.get(file);
       const county = nearby?.county ?? "";
@@ -667,7 +1167,7 @@
         countyName: reference.counties.find((entry) => entry.id === county)?.name ?? null
       };
     }
-    return { snapshot, dispose() {
+    return { snapshot: snapshot3, dispose() {
     } };
   }
 
@@ -686,7 +1186,7 @@
       }
     const span = Math.max(high - low, 20), floor = Math.floor(low - span * 0.12), ceiling = Math.ceil(high + span * 0.12);
     const left = 56, right = 620, top = 18, bottom = 154;
-    const y = (value) => bottom - (value - floor) / (ceiling - floor) * (bottom - top);
+    const y = (value2) => bottom - (value2 - floor) / (ceiling - floor) * (bottom - top);
     const distanceX = (km) => left + km / Math.max(file.stats.km, 1e-6) * (right - left);
     const x = (point) => distanceX(point.km);
     const groups = [];
@@ -736,9 +1236,9 @@
       const previous2 = all[index - 1];
       if (!previous2 || Math.abs(previous2.toM - band.fromM) > 1e-3 || previous2.phase === band.phase)
         return [];
-      const position = distanceX(band.fromM / 1e3);
+      const position2 = distanceX(band.fromM / 1e3);
       return [
-        `<path class="height-phase-boundary" d="M${position.toFixed(2)} ${top}V${bottom}"><title>${phaseLabels[previous2.phase]} \u2192 ${phaseLabels[band.phase]} \xB7 ${esc(timeLabel(band.start))}</title></path>`
+        `<path class="height-phase-boundary" d="M${position2.toFixed(2)} ${top}V${bottom}"><title>${phaseLabels[previous2.phase]} \u2192 ${phaseLabels[band.phase]} \xB7 ${esc(timeLabel(band.start))}</title></path>`
       ];
     }).join("");
     const labels = (profile?.bands ?? []).map((band) => {
@@ -746,18 +1246,18 @@
       return end - start >= 70 ? `<text class="height-phase-label" x="${((start + end) / 2).toFixed(2)}" y="29" text-anchor="middle">${phaseLabels[band.phase]}</text>` : "";
     }).join("");
     const grid = [0, 1 / 3, 2 / 3, 1].map((ratio) => {
-      const value = ceiling - (ceiling - floor) * ratio, position = top + (bottom - top) * ratio;
-      return `<path d="M${left} ${position}H${right}" stroke="#afc4a1" stroke-opacity=".55" stroke-dasharray="3 5"/><text x="43" y="${position + 4}" text-anchor="end">${Math.round(value).toLocaleString()}</text>`;
+      const value2 = ceiling - (ceiling - floor) * ratio, position2 = top + (bottom - top) * ratio;
+      return `<path d="M${left} ${position2}H${right}" stroke="#afc4a1" stroke-opacity=".55" stroke-dasharray="3 5"/><text x="43" y="${position2 + 4}" text-anchor="end">${Math.round(value2).toLocaleString()}</text>`;
     }).join("");
     const ticks = [0, 0.5, 1].map((ratio) => {
-      const position = left + ratio * (right - left), label = ratio === 0 ? "0" : (file.stats.km * ratio).toFixed(ratio === 1 || file.stats.km < 10 ? 2 : 1);
-      return `<path d="M${position} ${bottom}v5" stroke="#a3b998"/><text x="${position}" y="181" text-anchor="${ratio === 0 ? "start" : ratio === 1 ? "end" : "middle"}">${label} km</text>`;
+      const position2 = left + ratio * (right - left), label = ratio === 0 ? "0" : (file.stats.km * ratio).toFixed(ratio === 1 || file.stats.km < 10 ? 2 : 1);
+      return `<path d="M${position2} ${bottom}v5" stroke="#a3b998"/><text x="${position2}" y="181" text-anchor="${ratio === 0 ? "start" : ratio === 1 ? "end" : "middle"}">${label} km</text>`;
     }).join("");
-    return `<div class="elevation-summary"><span>\u6700\u4F4E\u9AD8\u5EA6 <strong>${Math.round(low).toLocaleString()}<small>m</small></strong></span><span>\u6700\u9AD8\u9AD8\u5EA6 <strong>${Math.round(high).toLocaleString()}<small>m</small></strong></span><span class="elevation-distance">\u5168\u7A0B <strong>${file.stats.km.toFixed(2)}<small>km</small></strong></span></div><svg class="elevation-chart" viewBox="0 0 640 194" role="img" aria-label="GPX \u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762${profile ? "\uFF0C\u767D\u5929\u6696\u8272\u3001\u591C\u9593\u6DF1\u85CD\uFF0C\u672A\u77E5\u6642\u9593\u7070\u8272" : ""}\uFF1B\u7F3A\u5C11\u9AD8\u5EA6\u8207\u5206\u6BB5\u8655\u4E0D\u9023\u7DDA"><defs><linearGradient id="elevation-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#5f8c58" stop-opacity=".55"/><stop offset="100%" stop-color="#99b67c" stop-opacity=".12"/></linearGradient><clipPath id="height-profile-clip">${clip}</clipPath></defs><g font-size="11" fill="#61785a">${grid}${ticks}<text class="elevation-axis-unit" x="43" y="5" text-anchor="end">\u9AD8\u5EA6 m</text></g>${areas}<g clip-path="url(#height-profile-clip)">${colors}</g>${shapes.map((shape) => shape.line).join("")}${transitions}${labels}<circle cx="${x(peak)}" cy="${y(high)}" r="4.5" fill="#326753" stroke="#eef4e6" stroke-width="2"><title>\u6700\u9AD8\u9AD8\u5EA6 ${Math.round(high)} m \xB7 ${peak.km.toFixed(2)} km</title></circle></svg><p class="elevation-caption">\u9AD8\u5EA6\u8207\u8DDD\u96E2\u4F9D GPX \u8CC7\u6599\u986F\u793A \xB7 \u7F3A\u6F0F\u8655\u4FDD\u7559\u7A7A\u767D</p>`;
+    return `<div class="elevation-summary"><span>\u6700\u4F4E\u9AD8\u5EA6 <strong>${Math.round(low).toLocaleString()}<small>m</small></strong></span><span>\u6700\u9AD8\u9AD8\u5EA6 <strong>${Math.round(high).toLocaleString()}<small>m</small></strong></span><span class="elevation-distance">\u5168\u7A0B <strong>${file.stats.km.toFixed(2)}<small>km</small></strong></span></div><svg class="elevation-chart" viewBox="0 0 640 194" role="img" aria-label="GPX \u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762${profile ? "\uFF0C\u767D\u5929\u6696\u8272\u3001\u591C\u9593\u6DF1\u85CD\uFF0C\u672A\u77E5\u6642\u9593\u7070\u8272" : ""}\uFF1B\u7F3A\u5C11\u9AD8\u5EA6\u8207\u5206\u6BB5\u8655\u4E0D\u9023\u7DDA"><defs><linearGradient id="elevation-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#5f8c58" stop-opacity=".55"/><stop offset="100%" stop-color="#99b67c" stop-opacity=".12"/></linearGradient><clipPath id="height-profile-clip">${clip}</clipPath></defs><g font-size="11" fill="#61785a">${grid}${ticks}<text class="elevation-axis-unit" x="43" y="5" text-anchor="end">\u9AD8\u5EA6 m</text></g>${areas}<g clip-path="url(#height-profile-clip)">${colors}</g>${shapes.map((shape) => shape.line).join("")}${transitions}${labels}<circle cx="${x(peak)}" cy="${y(high)}" r="4.5" fill="#326753" stroke="#eef4e6" stroke-width="2"><title>\u6700\u9AD8\u9AD8\u5EA6 ${Math.round(high)} m \xB7 ${peak.km.toFixed(2)} km</title></circle></svg><p class="elevation-caption">${file.processing ? "\u9AD8\u5EA6\u8207\u8DDD\u96E2\u5DF2\u6821\u6B63 GPS \u6296\u52D5" : "\u9AD8\u5EA6\u8207\u8DDD\u96E2\u4F9D GPX \u8CC7\u6599\u986F\u793A"} \xB7 \u7F3A\u6F0F\u8655\u4FDD\u7559\u7A7A\u767D</p>`;
   }
 
   // src/features/daylight/view.js
-  var hhmm = (time) => new Date(time).toLocaleTimeString("zh-TW", {
+  var hhmm = (time2) => new Date(time2).toLocaleTimeString("zh-TW", {
     timeZone: "Asia/Taipei",
     hour: "2-digit",
     minute: "2-digit",
@@ -821,6 +1321,7 @@
       selected: null,
       routeDirections: {},
       directionError: "",
+      correctionPage: null,
       loading: true,
       importing: false,
       results: [],
@@ -884,15 +1385,15 @@
     record: ["\u767B\u5C71\u7D00\u9304", "\u76F4\u63A5\u8A18\u9304\u8ECC\u8DE1\uFF0C\u6216\u53C3\u7167\u9078\u5B9A\u7684 GPX \u8DEF\u7DDA\u3002"],
     library: ["\u6211\u7684 GPX", "\u6BCF\u4E00\u6BB5\u89AA\u81EA\u8D70\u904E\u3001\u9078\u64C7\u7559\u4E0B\u7684\u5C71\u884C\u3002"]
   };
-  var validView = (value) => Object.hasOwn(titles, value) ? value : "routes";
-  function createNavigation({ state, render, window }) {
-    const location = window.location;
+  var validView = (value2) => Object.hasOwn(titles, value2) ? value2 : "routes";
+  function createNavigation({ state, render, window: window2 }) {
+    const location = window2.location;
     function navigate(view) {
       const changed = state.view !== view;
       state.view = validView(view);
       if (location.hash !== `#${state.view}`) location.hash = state.view;
       render();
-      if (changed) window.scrollTo({ top: 0, behavior: "instant" });
+      if (changed) window2.scrollTo({ top: 0, behavior: "instant" });
     }
     return {
       navigate,
@@ -910,7 +1411,7 @@
   function bindBrowserEvents({
     state,
     document: document2,
-    window,
+    window: window2,
     actions,
     navigation,
     library,
@@ -989,29 +1490,29 @@
           }
         }
       });
-    listen(window, "hashchange", navigation.onHashChange);
-    listen(window, "beforeunload", (event) => {
+    listen(window2, "hashchange", navigation.onHashChange);
+    listen(window2, "beforeunload", (event) => {
       if (gpsActive2() || state.importing) {
         event.preventDefault();
         event.returnValue = "";
       }
     });
-    listen(window, "pagehide", () => {
+    listen(window2, "pagehide", () => {
       persistence.save();
     });
     listen(document2, "visibilitychange", () => {
       if (document2.visibilityState === "hidden") persistence.save();
     });
-    const clock = window.setInterval(() => {
+    const clock = window2.setInterval(() => {
       heightProfile?.update();
       if (state.view === "record" && gpsPending2()) recordingView.updateNumbers();
     }, 1e3);
-    const autosave = window.setInterval(() => {
+    const autosave = window2.setInterval(() => {
       if (["requesting", "tracking"].includes(state.gps.status)) persistence.save();
     }, 1e4);
     cleanups.push(() => {
-      window.clearInterval(clock);
-      window.clearInterval(autosave);
+      window2.clearInterval(clock);
+      window2.clearInterval(autosave);
     });
     return () => {
       for (const cleanup of cleanups.splice(0)) cleanup();
@@ -1025,6 +1526,7 @@
         reject(new Error("\u6B64\u700F\u89BD\u5668\u4E0D\u63D0\u4F9B\u672C\u6A5F\u5132\u5B58"));
         return;
       }
+      let blocked = false;
       const request = indexedDB.open("ridgewise-gpx-library", 2);
       request.onupgradeneeded = () => {
         if (!request.result.objectStoreNames.contains("files"))
@@ -1033,26 +1535,33 @@
           request.result.createObjectStore("drafts", { keyPath: "slot" });
       };
       request.onerror = () => reject(request.error);
-      request.onblocked = () => reject(new Error("\u672C\u6A5F\u5132\u5B58\u88AB\u53E6\u4E00\u500B\u5206\u9801\u9396\u5B9A"));
+      request.onblocked = () => {
+        blocked = true;
+        reject(new Error("\u672C\u6A5F\u5132\u5B58\u88AB\u53E6\u4E00\u500B\u5206\u9801\u9396\u5B9A"));
+      };
       request.onsuccess = () => {
+        if (blocked) {
+          request.result.close();
+          return;
+        }
         request.result.onversionchange = () => request.result.close();
         resolve(request.result);
       };
     });
   }
-  function gpxStoreAction(db, action, value) {
+  function gpxStoreAction(db, action, value2) {
     return new Promise((resolve, reject) => {
       const transaction = db.transaction("files", action === "getAll" ? "readonly" : "readwrite");
-      const request = transaction.objectStore("files")[action](value);
+      const request = transaction.objectStore("files")[action](value2);
       transaction.oncomplete = () => resolve(request.result);
       transaction.onerror = () => reject(transaction.error);
       transaction.onabort = () => reject(transaction.error || new Error("\u5132\u5B58\u5DF2\u4E2D\u6B62"));
     });
   }
-  function draftAction(db, action, value) {
+  function draftAction(db, action, value2) {
     return new Promise((resolve, reject) => {
       const transaction = db.transaction("drafts", action === "get" ? "readonly" : "readwrite");
-      const request = transaction.objectStore("drafts")[action](value ?? "active");
+      const request = transaction.objectStore("drafts")[action](value2 ?? "active");
       transaction.oncomplete = () => resolve(request.result);
       transaction.onerror = transaction.onabort = () => reject(transaction.error || new Error("\u7D00\u9304\u5132\u5B58\u5931\u6557"));
     });
@@ -1085,11 +1594,11 @@
       putFile: (file) => gpxStoreAction(requireDatabase(), "put", file),
       removeFile: (id2) => gpxStoreAction(requireDatabase(), "delete", id2),
       getRouteDirections: () => draftAction(requireDatabase(), "get", "route-directions"),
-      saveRouteDirections: (value) => draftAction(requireDatabase(), "put", { ...value, slot: "route-directions" }),
+      saveRouteDirections: (value2) => draftAction(requireDatabase(), "put", { ...value2, slot: "route-directions" }),
       getResources: () => draftAction(requireDatabase(), "get", "route-resources"),
-      saveResources: (value) => draftAction(requireDatabase(), "put", { ...value, slot: "route-resources" }),
+      saveResources: (value2) => draftAction(requireDatabase(), "put", { ...value2, slot: "route-resources" }),
       getDraft: () => draftAction(requireDatabase(), "get"),
-      saveDraft: (snapshot) => draftAction(requireDatabase(), "put", snapshot),
+      saveDraft: (snapshot3) => draftAction(requireDatabase(), "put", snapshot3),
       deleteDraft: () => draftAction(requireDatabase(), "delete"),
       finishRecording: (file) => finishRecordingStore(requireDatabase(), file),
       close() {
@@ -1098,6 +1607,9 @@
       }
     };
   }
+
+  // src/domain/gpx-quality.js
+  var RIDGEWISE_GPX_NAMESPACE = "https://github.com/Ridgewise/app/gpx/1";
 
   // src/features/gpx/parser.js
   var GPX_MAX_BYTES = 10 * 1024 * 1024;
@@ -1127,7 +1639,7 @@
     const result = Date.parse(text);
     return Number.isFinite(result) ? result : null;
   }
-  function parseGpx(text, fileName, Parser = globalThis.DOMParser, { allowSinglePoint = false } = {}) {
+  function parseGpx(text, fileName, Parser = globalThis.DOMParser, { allowSinglePoint = false, filter = true } = {}) {
     if (/<!DOCTYPE|<!ENTITY/i.test(text)) throw new Error("\u4E0D\u652F\u63F4\u542B\u6709\u5916\u90E8\u5BE6\u9AD4\u6216\u6587\u4EF6\u578B\u5225\u5BA3\u544A\u7684 GPX\u3002");
     const doc = new Parser().parseFromString(text, "application/xml");
     if (doc.getElementsByTagName("parsererror").length || doc.getElementsByTagNameNS("*", "parsererror").length || doc.documentElement?.localName !== "gpx")
@@ -1138,7 +1650,7 @@
     const children = (node, name2) => Array.from(node.childNodes).filter(
       (child) => child.nodeType === 1 && child.localName === name2 && (child.namespaceURI || "") === ns
     );
-    const value = (node, name2) => children(node, name2)[0]?.textContent.trim() || "";
+    const value2 = (node, name2) => children(node, name2)[0]?.textContent.trim() || "";
     const number = (textValue) => textValue !== "" && Number.isFinite(Number(textValue)) ? Number(textValue) : null;
     let total = 0, badElevation = 0, badTime = 0;
     function point(node) {
@@ -1146,12 +1658,22 @@
       if (lat === null || lon === null || Math.abs(lat) > 90 || Math.abs(lon) > 180)
         throw new Error("GPX \u542B\u6709\u7F3A\u6F0F\u6216\u8D85\u51FA\u7BC4\u570D\u7684\u5EA7\u6A19\uFF0C\u8ACB\u4FEE\u6B63\u6A94\u6848\u5F8C\u518D\u532F\u5165\u3002");
       if (++total > 1e5) throw new Error("\u55AE\u4E00\u6A94\u6848\u6700\u591A\u652F\u63F4 100,000 \u500B\u8ECC\u8DE1\u9EDE\uFF0C\u8ACB\u5148\u5206\u5272\u6A94\u6848\u3002");
-      const elevationText = value(node, "ele"), elevation = number(elevationText);
+      const elevationText = value2(node, "ele"), elevation = number(elevationText);
       if (elevationText && elevation === null) badElevation++;
-      const timeText = value(node, "time");
-      const time = parseGpxTime(timeText);
-      if (timeText && !Number.isFinite(time)) badTime++;
-      return { lat, lon, elevation, time: Number.isFinite(time) ? time : null };
+      const timeText = value2(node, "time");
+      const time2 = parseGpxTime(timeText);
+      if (timeText && !Number.isFinite(time2)) badTime++;
+      const extensions = children(node, "extensions")[0], quality = {};
+      for (const key of ["accuracy", "altitudeAccuracy"]) {
+        const element = extensions && Array.from(extensions.childNodes).find(
+          (child) => child.nodeType === 1 && child.localName === key && child.namespaceURI === RIDGEWISE_GPX_NAMESPACE
+        );
+        if (element) {
+          const parsed = number(element.textContent.trim());
+          quality[key] = parsed !== null && parsed >= 0 ? parsed : null;
+        }
+      }
+      return { lat, lon, elevation, time: Number.isFinite(time2) ? time2 : null, ...quality };
     }
     const tracks = children(root, "trk"), routes = children(root, "rte");
     let groups = tracks.flatMap((track2) => children(track2, "trkseg").map((segment) => children(segment, "trkpt"))).filter((group) => group.length);
@@ -1164,13 +1686,17 @@
     if (!groups.some((group) => group.length >= (allowSinglePoint ? 1 : 2)))
       throw new Error("\u627E\u4E0D\u5230\u53EF\u4F7F\u7528\u7684\u9023\u7E8C\u8ECC\u8DE1\uFF1B\u81F3\u5C11\u9700\u8981\u4E00\u6BB5\u542B\u5169\u500B\u5EA7\u6A19\u9EDE\u7684 trk \u6216 rte\u3002");
     const segments = groups.map((group) => group.map(point)), warnings = [];
+    if (!routeOnly && tracks.length > 1)
+      warnings.push("\u6B64\u6A94\u5305\u542B\u591A\u689D\u8ECC\u8DE1\uFF0C\u5DF2\u5206\u6BB5\u7D0D\u5165\u7D71\u8A08\uFF1B\u91CD\u8907\u6216\u91CD\u758A\u8DEF\u7DDA\u53EF\u80FD\u589E\u52A0\u7E3D\u91CC\u7A0B\u3002");
     if (!routeOnly && routes.length) warnings.push("\u6B64\u6A94\u540C\u6642\u542B\u6709\u8ECC\u8DE1\u8207\u898F\u5283\u8DEF\u7DDA\uFF1B\u76EE\u524D\u4F7F\u7528 trk \u8ECC\u8DE1\u3002");
     if (badElevation) warnings.push("\u90E8\u5206\u6D77\u62D4\u683C\u5F0F\u7121\u6548\uFF0C\u5DF2\u6A19\u8A18\u70BA\u7F3A\u6F0F\u3002");
     if (badTime) warnings.push("\u90E8\u5206\u6642\u9593\u683C\u5F0F\u7121\u6548\u6216\u7F3A\u5C11\u6642\u5340\uFF1B\u4E0D\u5F71\u97FF\u8DEF\u7DDA\u986F\u793A\u3002");
-    const track = prepareTrack(segments);
+    const track = prepareTrack(segments, { filter });
+    if (track.stats.excludedPoints)
+      warnings.push("\u5B9A\u4F4D\u7CBE\u5EA6\u4E0D\u8DB3\u6216\u53EF\u7591\u8DF3\u9EDE\u4FDD\u7559\u65BC\u539F\u59CB GPX\uFF0C\u5206\u6790\u8DEF\u7DDA\u5728\u8A72\u8655\u5206\u6BB5\uFF1B\u9AD8\u5EA6\u7D71\u8A08\u53EF\u80FD\u4E0D\u5B8C\u6574\u3002");
     if (track.timeStatus === "unordered") warnings.push("\u6642\u9593\u6233\u6709\u91CD\u8907\u6216\u5012\u5E8F\uFF1B\u4E0D\u5F71\u97FF\u8DEF\u7DDA\u986F\u793A\u3002");
     const metadata = children(root, "metadata")[0];
-    const name = (routeOnly ? routes : tracks).map((node) => value(node, "name")).find(Boolean) || metadata && value(metadata, "name") || fileName.replace(/\.gpx$/i, "");
+    const name = (routeOnly ? routes : tracks).map((node) => value2(node, "name")).find(Boolean) || metadata && value2(metadata, "name") || fileName.replace(/\.gpx$/i, "");
     return {
       name: name.slice(0, 300),
       fileName,
@@ -1276,6 +1802,7 @@
         return;
       }
       if (!state.library.some((entry) => entry.id === id2)) return;
+      state.correctionPage = null;
       state.selected = id2;
       navigate("plan");
     }
@@ -1288,7 +1815,7 @@
   }
 
   // src/features/map/thumbnail.js
-  function mapSvg(file, position = null, live = [], small = false, stations = []) {
+  function mapSvg(file, position2 = null, live = [], small = false, stations = []) {
     const all = [...file.points, ...live.flat()], origin = all[0];
     if (!all.length)
       return '<div class="map-waiting">\u7B49\u5F85\u7B2C\u4E00\u500B GPS \u4F4D\u7F6E\uFF1B\u53EF\u5148\u7E2E\u653E\u8207\u5207\u63DB\u5E95\u5716\u3002</div>';
@@ -1309,7 +1836,7 @@
       (width - pad * 2) / Math.max(maxX - minX, 1e-4),
       (height - pad * 2) / Math.max(maxY - minY, 1e-4)
     );
-    const project = (point) => {
+    const project2 = (point) => {
       const p = raw(point);
       return {
         x: width / 2 + (p.x - (minX + maxX) / 2) * scale,
@@ -1320,13 +1847,13 @@
       segment,
       Math.max(20, Math.floor(4e3 / Math.max(1, file.segments.length + live.length)))
     ).map((point) => {
-      const p = project(point);
+      const p = project2(point);
       return `${p.x.toFixed(2)},${p.y.toFixed(2)}`;
     }).join(
       " "
     )}" fill="none" stroke="${color}" stroke-width="${size}" stroke-linecap="round" stroke-linejoin="round"/>`;
     const dot = (point, color, r = 6) => {
-      const p = project(point);
+      const p = project2(point);
       return `<circle cx="${p.x}" cy="${p.y}" r="${r}" fill="${color}" stroke="white" stroke-width="3"/>`;
     };
     return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(file.name)}\u7684 GPX \u8ECC\u8DE1\u5716" class="gpx-map"><rect width="${width}" height="${height}" fill="#edf3ed"/>
@@ -1334,9 +1861,9 @@
     ${file.segments.map((segment) => line(segment, "white", 8)).join("")}${file.segments.map((segment) => line(segment, "#326753", 4)).join("")}
     ${live.map((segment) => line(segment, "#4388b7", 3)).join("")}
     ${file.points.length ? dot(file.points[0], "#183e35") + dot(file.points.at(-1), "#8daa64") : ""}
-    ${position ? dot(position, "#d3a34c", 9) : ""}${live.at(-1)?.length ? dot(live.at(-1).at(-1), "#4388b7", 8) : ""}
+    ${position2 ? dot(position2, "#d3a34c", 9) : ""}${live.at(-1)?.length ? dot(live.at(-1).at(-1), "#4388b7", 8) : ""}
     ${stations.map((station) => {
-      const p = project(station);
+      const p = project2(station);
       return `<g>${dot(station, station.next ? "#b87930" : "#326753", 7)}<title>${esc(station.name)} ${esc(station.arrivalLabel || "")}</title><text x="${p.x + 10}" y="${p.y - 7}" fill="#183e35" font-size="12">${esc(station.name)}</text></g>`;
     }).join("")}
     <text x="20" y="27" fill="#527062" font-size="13">N \u2191</text></svg>`;
@@ -1372,8 +1899,8 @@
   function recordingElapsed(gps, now = Date.now()) {
     return gps.startedAt == null ? 0 : Math.max(0, (gps.endedAt ?? gps.pauseAt ?? now) - gps.startedAt - (gps.pausedMs || 0));
   }
-  function positiveMinutes(value) {
-    const number = Number(value);
+  function positiveMinutes(value2) {
+    const number = Number(value2);
     return Number.isFinite(number) && number > 0 && number <= 10080 ? number : null;
   }
   function shangheFactor(completed = []) {
@@ -1391,13 +1918,17 @@
       reference.baseMinutes * reference.factor * 6e4 - Math.max(0, elapsed - reference.elapsedMs)
     );
   }
-  var xmlText = (value) => String(value).replace(
+  var xmlText = (value2) => String(value2).replace(
     /[&<>"']/g,
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[c]
   );
+  var qualityXml = (point) => {
+    const values = ["accuracy", "altitudeAccuracy"].filter((key) => Number.isFinite(point[key]) && point[key] >= 0).map((key) => "<rw:" + key + ">" + point[key] + "</rw:" + key + ">").join("");
+    return values ? "<extensions>" + values + "</extensions>" : "";
+  };
   function recordingGpx(gps) {
-    return `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="Ridgewise" xmlns="http://www.topografix.com/GPX/1/1"><metadata><name>${xmlText(gps.name || "\u6211\u7684\u8ECC\u8DE1")}</name><time>${new Date(gps.startedAt).toISOString()}</time></metadata><trk><name>${xmlText(gps.name || "\u6211\u7684\u8ECC\u8DE1")}</name>${gps.segments.filter((segment) => segment.length).map(
-      (segment) => `<trkseg>${segment.map((point) => `<trkpt lat="${point.lat}" lon="${point.lon}">${Number.isFinite(point.elevation) ? `<ele>${point.elevation}</ele>` : ""}<time>${new Date(point.time).toISOString()}</time></trkpt>`).join("")}</trkseg>`
+    return `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="Ridgewise" xmlns="http://www.topografix.com/GPX/1/1" xmlns:rw="${RIDGEWISE_GPX_NAMESPACE}"><metadata><name>${xmlText(gps.name || "\u6211\u7684\u8ECC\u8DE1")}</name><time>${new Date(gps.startedAt).toISOString()}</time></metadata><trk><name>${xmlText(gps.name || "\u6211\u7684\u8ECC\u8DE1")}</name>${gps.segments.filter((segment) => segment.length).map(
+      (segment) => `<trkseg>${segment.map((point) => `<trkpt lat="${point.lat}" lon="${point.lon}">${Number.isFinite(point.elevation) ? `<ele>${point.elevation}</ele>` : ""}<time>${new Date(point.time).toISOString()}</time>${qualityXml(point)}</trkpt>`).join("")}</trkseg>`
     ).join("")}</trk></gpx>`;
   }
   function recordingSnapshot(gps, now = Date.now()) {
@@ -1412,21 +1943,21 @@
       })
     );
   }
-  function restoreRecording(snapshot, now = Date.now()) {
-    const finished = snapshot.status === "finished";
-    const stopped = finished || ["review", "stopping", "finishing"].includes(snapshot.status) || Boolean(snapshot.finalizePending && snapshot.endedAt != null);
+  function restoreRecording(snapshot3, now = Date.now()) {
+    const finished = snapshot3.status === "finished";
+    const stopped = finished || ["review", "stopping", "finishing"].includes(snapshot3.status) || Boolean(snapshot3.finalizePending && snapshot3.endedAt != null);
     return {
-      ...snapshot,
+      ...snapshot3,
       status: finished ? "finished" : stopped ? "review" : "paused",
-      endedAt: stopped ? snapshot.endedAt : null,
-      pauseAt: stopped ? snapshot.pauseAt : now,
-      pausedMs: stopped ? snapshot.pausedMs : Math.max(0, now - snapshot.startedAt - snapshot.elapsedMs),
+      endedAt: stopped ? snapshot3.endedAt : null,
+      pauseAt: stopped ? snapshot3.pauseAt : now,
+      pausedMs: stopped ? snapshot3.pausedMs : Math.max(0, now - snapshot3.startedAt - snapshot3.elapsedMs),
       watchId: null,
       accuracy: null,
       error: "",
       saveError: "",
       saving: false,
-      savedAt: snapshot.updatedAt
+      savedAt: snapshot3.updatedAt
     };
   }
   function recordedFile(gps, now = Date.now()) {
@@ -1452,7 +1983,10 @@
   function recordedTrack(file) {
     return {
       ...file,
-      ...parseGpx(file.raw, file.fileName, globalThis.DOMParser, { allowSinglePoint: true })
+      ...parseGpx(file.raw, file.fileName, globalThis.DOMParser, {
+        allowSinglePoint: true,
+        filter: true
+      })
     };
   }
 
@@ -1502,14 +2036,14 @@
       const gps = state.gps;
       if (disposed || !gps.id || !gpsActive2() || ["finishing", "discarding"].includes(gps.status))
         return Promise.resolve(false);
-      const snapshot = recordingSnapshot(gps), revision = ++saveRevision;
+      const snapshot3 = recordingSnapshot(gps), revision = ++saveRevision;
       gps.saving = true;
       onStatus();
       const write = saveQueue.then(async () => {
         try {
-          await repository.saveDraft(snapshot);
+          await repository.saveDraft(snapshot3);
           if (state.gps === gps) {
-            gps.savedAt = snapshot.updatedAt;
+            gps.savedAt = snapshot3.updatedAt;
             gps.saveError = "";
           }
           return true;
@@ -1568,6 +2102,216 @@
     };
   }
 
+  // src/domain/track-stream.js
+  function createTrackProcessor({ windowSize = 128, overlap = 32, filterOptions = {} } = {}) {
+    if (!Number.isInteger(windowSize) || windowSize < 32 || windowSize > 512 || !Number.isInteger(overlap) || overlap < 2 || overlap >= windowSize) {
+      throw new RangeError("Expected a window of 32\u2013512 points and an overlap of 2\u2013windowSize-1");
+    }
+    const { options: config, version } = filterTrack([], filterOptions);
+    const rawSegments = [], correctedSegments = [], points = [];
+    let loaded = false;
+    let active = null, withElevation = 0, excludedPoints = 0;
+    let rawKm = 0, rawUp = 0, rawDown = 0, rawElevation = 0, rawExcluded = 0, lastRaw = null;
+    const display = [];
+    const work = { appendCalls: 0, tailPoints: 0, maxTailPoints: 0, finalizations: 0 };
+    const hasHeight = (p) => Boolean(p && !p.excluded && Number.isFinite(p.elevation));
+    function stats() {
+      const last = points.at(-1), complete = points.length > 0 && points.length === withElevation;
+      return {
+        km: last?.km ?? 0,
+        up: complete ? last.up : null,
+        down: complete ? last.down : null,
+        points: points.length,
+        withElevation,
+        segments: rawSegments.length,
+        excludedPoints
+      };
+    }
+    function rawStats() {
+      const complete = points.length > 0 && points.length === rawElevation;
+      return {
+        km: rawKm,
+        up: complete ? rawUp : null,
+        down: complete ? rawDown : null,
+        points: points.length,
+        withElevation: rawElevation,
+        segments: rawSegments.length,
+        excludedPoints: rawExcluded
+      };
+    }
+    function accountRaw(point, previous) {
+      if (point.excluded) rawExcluded++;
+      if (!point.excluded && Number.isFinite(point.elevation)) rawElevation++;
+      if (previous && !previous.excluded && !point.excluded) {
+        rawKm += haversine(previous, point);
+        if (Number.isFinite(previous.elevation) && Number.isFinite(point.elevation)) {
+          const delta = point.elevation - previous.elevation;
+          rawUp += Math.max(0, delta);
+          rawDown += Math.max(0, -delta);
+        }
+      }
+      lastRaw = point;
+    }
+    function patch(start, result) {
+      const segmentIndex = active.index, output = correctedSegments[segmentIndex];
+      const from = start > 0 ? start + 1 : 0;
+      const cursor = from ? active.cursors[from - 1] : active.displayBefore;
+      display.length = cursor.count;
+      if (display.length) display.at(-1).length = cursor.lastLength;
+      result.correctedSegments[0].forEach((point, i) => {
+        const sourceIndex = start + i, index = active.flatOffset + sourceIndex;
+        if (start > 0 && i === 0) return;
+        const old = points[index], previous = points[index - 1];
+        withElevation += Number(hasHeight(point)) - Number(hasHeight(old));
+        excludedPoints += Number(Boolean(point.excluded)) - Number(Boolean(old?.excluded));
+        const edge = previous?.segment === segmentIndex;
+        const usable = edge && !previous.excluded && !point.excluded;
+        const delta = usable && hasHeight(previous) && hasHeight(point) ? point.elevation - previous.elevation : 0;
+        const indexed = {
+          ...point,
+          segment: segmentIndex,
+          sourceIndex,
+          km: (previous?.km ?? 0) + (usable ? haversine(previous, point) : 0),
+          up: (previous?.up ?? 0) + Math.max(0, delta),
+          down: (previous?.down ?? 0) + Math.max(0, -delta),
+          elevationGapCount: (previous?.elevationGapCount ?? 0) + (edge && !(usable && hasHeight(previous) && hasHeight(point)) ? 1 : 0),
+          reasons: []
+        };
+        output[sourceIndex] = { ...point };
+        points[index] = indexed;
+        if (!point.excluded) {
+          if (!usable) display.push([]);
+          display.at(-1).push(output[sourceIndex]);
+        }
+        active.cursors[sourceIndex] = {
+          count: display.length,
+          lastLength: display.at(-1)?.length ?? 0
+        };
+      });
+      for (const diagnostic of result.diagnostics) {
+        if (start > 0 && diagnostic.sourceIndex === 0) continue;
+        points[active.flatOffset + start + diagnostic.sourceIndex].reasons = [...diagnostic.reasons];
+      }
+    }
+    function append(point) {
+      if (!active) throw new Error("Start a segment before appending a point");
+      if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lon) || Math.abs(point.lat) > 90 || Math.abs(point.lon) > 180)
+        throw new TypeError("Invalid coordinate");
+      const raw = rawSegments[active.index], previous = raw.at(-1), copy2 = { ...point };
+      raw.push(copy2);
+      accountRaw(copy2, previous);
+      const tail = raw.slice(active.start);
+      if (active.start > 0) tail[0] = { ...correctedSegments[active.index][active.start] };
+      const result = filterTrack([tail], config);
+      work.appendCalls++;
+      work.tailPoints += tail.length;
+      work.maxTailPoints = Math.max(work.maxTailPoints, tail.length);
+      patch(active.start, result);
+      if (tail.length === windowSize) active.start = raw.length - overlap;
+    }
+    function endSegment() {
+      if (!active) return;
+      const raw = rawSegments[active.index];
+      if (raw.length) {
+        patch(0, filterTrack([raw], config));
+        work.finalizations++;
+      }
+      active = null;
+    }
+    function startSegment() {
+      endSegment();
+      active = {
+        index: rawSegments.length,
+        start: 0,
+        flatOffset: points.length,
+        cursors: [],
+        displayBefore: { count: display.length, lastLength: display.at(-1)?.length ?? 0 }
+      };
+      rawSegments.push([]);
+      correctedSegments.push([]);
+    }
+    function load(segments) {
+      if (loaded || rawSegments.length) throw new Error("A processor may only be loaded once");
+      const result = filterTrack(segments, config);
+      loaded = true;
+      rawSegments.push(...result.rawSegments);
+      correctedSegments.push(...result.correctedSegments);
+      for (const point of result.points) points.push(point);
+      withElevation = result.stats.withElevation;
+      excludedPoints = points.reduce((sum, p) => sum + Number(Boolean(p.excluded)), 0);
+      points.forEach((p) => {
+        p.reasons = [];
+      });
+      for (const diagnostic of result.diagnostics) {
+        const p = correctedSegments[diagnostic.segment];
+        p[diagnostic.sourceIndex].reasons = [...diagnostic.reasons];
+      }
+      let offset = 0;
+      rawSegments.forEach((segment, index) => {
+        segment.forEach((point, i) => {
+          accountRaw(point, segment[i - 1]);
+          const corrected = correctedSegments[index][i];
+          if (!corrected.excluded) {
+            if (!i || correctedSegments[index][i - 1].excluded) display.push([]);
+            display.at(-1).push(corrected);
+          }
+          points[offset + i].reasons = [...correctedSegments[index][i].reasons ?? []];
+        });
+        offset += segment.length;
+      });
+    }
+    const displaySegments = () => display;
+    function analysis() {
+      return {
+        points,
+        segments: correctedSegments,
+        rawSegments,
+        stats: stats(),
+        rawStats: rawStats(),
+        processing: {
+          version,
+          mode: active ? "incremental" : "batch",
+          windowSize,
+          overlap,
+          options: config
+        }
+      };
+    }
+    return {
+      startSegment,
+      endSegment,
+      append,
+      load,
+      stats,
+      rawStats,
+      analysis,
+      displaySegments,
+      lastRawPoint: () => lastRaw,
+      latestPoint: () => points.at(-1),
+      work: () => ({ ...work })
+    };
+  }
+
+  // src/features/recording/analysis.js
+  var processors = /* @__PURE__ */ new WeakMap();
+  function recordingProcessor(gps) {
+    if (!processors.has(gps)) {
+      const processor = createTrackProcessor();
+      processor.load(gps.segments);
+      processors.set(gps, processor);
+    }
+    return processors.get(gps);
+  }
+  var recordingAnalysis = (gps) => recordingProcessor(gps).analysis();
+  var recordingStats = (gps) => recordingProcessor(gps).stats();
+  var recordingSegments = (gps) => recordingProcessor(gps).displaySegments();
+  var settleRecording = (gps) => processors.get(gps)?.endSegment();
+  function recordingFix(gps) {
+    const point = processors.get(gps)?.latestPoint();
+    if (point) return point.excluded ? null : point;
+    return gps.segments.findLast((segment) => segment.length)?.at(-1) ?? null;
+  }
+
   // src/features/recording/completion.js
   function createRecordingCompletion({
     state,
@@ -1598,7 +2342,7 @@
     async function save() {
       const gps = state.gps;
       if (!gps.id || gps.status !== "review") return;
-      if (!trackStats(gps.segments).points) {
+      if (!recordingStats(gps).points) {
         feedback.toast("\u5C1A\u672A\u53D6\u5F97 GPS \u5EA7\u6A19\uFF0C\u7121\u6CD5\u4FDD\u5B58 GPX\uFF1B\u53EF\u4EE5\u9078\u64C7\u4E0D\u4FDD\u5B58\u8FD4\u56DE\u3002");
         return;
       }
@@ -1647,6 +2391,20 @@
     return { stop, save, discard };
   }
 
+  // src/features/location/provider.js
+  function normalizeLocationFix(fix) {
+    if (!fix || !Number.isFinite(fix.lat) || Math.abs(fix.lat) > 90 || !Number.isFinite(fix.lon) || Math.abs(fix.lon) > 180 || !Number.isFinite(fix.time) || !Number.isFinite(fix.accuracy) || fix.accuracy < 0)
+      return null;
+    return {
+      lat: fix.lat,
+      lon: fix.lon,
+      elevation: Number.isFinite(fix.elevation) ? fix.elevation : null,
+      time: fix.time,
+      accuracy: fix.accuracy,
+      altitudeAccuracy: Number.isFinite(fix.altitudeAccuracy) && fix.altitudeAccuracy >= 0 ? fix.altitudeAccuracy : null
+    };
+  }
+
   // src/features/recording/geolocation.js
   function createGeolocationTracker({
     getRecording,
@@ -1654,81 +2412,79 @@
     onSave,
     onPoint,
     onLimit,
-    navigator = globalThis.navigator
+    locationProvider
   }) {
-    let gpsGeneration = 0;
+    let gpsGeneration = 0, cancelWatch = null;
     function stop() {
       gpsGeneration++;
-      if (getRecording().watchId !== null) navigator.geolocation?.clearWatch(getRecording().watchId);
+      settleRecording(getRecording());
+      const cancel = cancelWatch;
+      cancelWatch = null;
       getRecording().watchId = null;
+      cancel?.();
     }
     function start() {
       stop();
       const generation = gpsGeneration, gps = getRecording();
-      if (!navigator.geolocation) {
-        gps.status = "error";
-        gps.pauseAt = Date.now();
-        gps.error = "\u6B64\u700F\u89BD\u5668\u4E0D\u652F\u63F4\u5B9A\u4F4D\u3002\u8ACB\u4F7F\u7528\u652F\u63F4\u5B9A\u4F4D\u7684\u700F\u89BD\u5668\u3002";
-        onSave();
-        onChange();
-        return;
-      }
-      gps.status = "requesting";
-      gps.error = "";
-      gps.segments.push([]);
-      const segment = gps.segments.at(-1), requestedAt = Date.now();
-      try {
-        gps.watchId = navigator.geolocation.watchPosition(
-          (position) => {
-            if (generation !== gpsGeneration) return;
-            const { latitude: lat, longitude: lon, altitude: elevation, accuracy } = position.coords;
-            if (!Number.isFinite(lat) || Math.abs(lat) > 90 || !Number.isFinite(lon) || Math.abs(lon) > 180 || !Number.isFinite(position.timestamp) || position.timestamp < requestedAt - 5e3 || position.timestamp > Date.now() + 6e4 || !Number.isFinite(accuracy) || accuracy < 0)
-              return;
-            gps.accuracy = accuracy;
-            if (accuracy > 100) {
-              gps.error = "\u76EE\u524D\u5B9A\u4F4D\u7CBE\u5EA6\u4E0D\u8DB3\uFF0C\u7B49\u5F85\u8F03\u6E96\u78BA\u7684\u4F4D\u7F6E\u3002";
-              onChange();
-              return;
-            }
-            gps.status = "tracking";
-            gps.error = "";
-            const point = {
-              lat,
-              lon,
-              elevation: Number.isFinite(elevation) ? elevation : null,
-              time: position.timestamp
-            };
-            const last = segment.at(-1);
-            const previous = gps.segments.findLast((entry) => entry.length)?.at(-1);
-            if ((!previous || point.time > previous.time) && (!last || haversine(last, point) >= 3e-3 || point.time - last.time >= 3e4)) {
-              if (trackStats(gps.segments).points >= 1e5) {
-                onLimit("\u5DF2\u9054 100,000 \u500B\u7D00\u9304\u9EDE\uFF0C\u8ACB\u7D50\u675F\u6B64\u4EFD\u7D00\u9304\u5F8C\u518D\u958B\u65B0\u7D00\u9304\u3002");
-                return;
-              }
-              segment.push(point);
-              onPoint();
-            }
-            onChange();
-          },
-          (error) => {
-            if (generation !== gpsGeneration) return;
-            stop();
-            gps.status = "error";
-            gps.pauseAt = Date.now();
-            gps.error = error.code === 1 ? "\u5B9A\u4F4D\u6B0A\u9650\u672A\u958B\u555F\u3002\u8ACB\u5141\u8A31\u6B64\u7DB2\u7AD9\u4F7F\u7528\u5B9A\u4F4D\u5F8C\uFF0C\u518D\u6309\u7E7C\u7E8C\u7D00\u9304\u3002" : error.code === 2 ? "\u76EE\u524D\u7121\u6CD5\u53D6\u5F97\u4F4D\u7F6E\uFF0C\u8ACB\u5230\u8A0A\u865F\u8F03\u597D\u7684\u5730\u65B9\u518D\u8A66\u3002" : "\u5B9A\u4F4D\u903E\u6642\uFF0C\u6309\u7E7C\u7E8C\u7D00\u9304\u91CD\u8A66\u3002";
-            onSave();
-            onChange();
-          },
-          { enableHighAccuracy: true, maximumAge: 5e3, timeout: 2e4 }
-        );
-      } catch {
+      const isCurrent = () => generation === gpsGeneration && getRecording() === gps;
+      const fail = (error) => {
+        if (!isCurrent()) return;
         stop();
         gps.status = "error";
         gps.pauseAt = Date.now();
-        gps.error = "\u7121\u6CD5\u555F\u52D5\u5B9A\u4F4D\uFF0C\u8ACB\u78BA\u8A8D\u7DB2\u7AD9\u5B9A\u4F4D\u6B0A\u9650\uFF0C\u4E26\u7531 HTTPS \u6216 localhost \u958B\u555F\u3002";
+        gps.error = error?.code === "unsupported" ? "\u6B64\u700F\u89BD\u5668\u4E0D\u652F\u63F4\u5B9A\u4F4D\u3002\u8ACB\u4F7F\u7528\u652F\u63F4\u5B9A\u4F4D\u7684\u700F\u89BD\u5668\u3002" : error?.code === "permission-denied" ? error.source === "ios" ? "\u5B9A\u4F4D\u6B0A\u9650\u672A\u958B\u555F\u3002\u8ACB\u5230 iOS\u300C\u8A2D\u5B9A \u2192 Ridgewise \u2192 \u5B9A\u4F4D\u300D\u5141\u8A31\u4F7F\u7528 App \u671F\u9593\u5B9A\u4F4D\uFF0C\u518D\u6309\u300C\u7E7C\u7E8C\u7D00\u9304\u300D\u3002" : "\u5B9A\u4F4D\u6B0A\u9650\u672A\u958B\u555F\u3002\u8ACB\u5141\u8A31\u6B64\u7DB2\u7AD9\u4F7F\u7528\u5B9A\u4F4D\u5F8C\uFF0C\u518D\u6309\u7E7C\u7E8C\u7D00\u9304\u3002" : error?.code === "position-unavailable" ? "\u76EE\u524D\u7121\u6CD5\u53D6\u5F97\u4F4D\u7F6E\uFF0C\u8ACB\u5230\u8A0A\u865F\u8F03\u597D\u7684\u5730\u65B9\u518D\u8A66\u3002" : error?.code === "timeout" ? "\u5B9A\u4F4D\u903E\u6642\uFF0C\u6309\u7E7C\u7E8C\u7D00\u9304\u91CD\u8A66\u3002" : error?.code === "foreground-required" ? "\u5B9A\u4F4D\u5DF2\u5728\u80CC\u666F\u505C\u6B62\uFF0C\u8ACB\u56DE\u5230 App \u5F8C\u6309\u300C\u7E7C\u7E8C\u7D00\u9304\u300D\u3002" : error?.source === "ios" ? "\u7121\u6CD5\u555F\u52D5\u539F\u751F\u5B9A\u4F4D\uFF0C\u8ACB\u78BA\u8A8D iOS \u5B9A\u4F4D\u6B0A\u9650\uFF0C\u6216\u91CD\u65B0\u958B\u555F App \u5F8C\u91CD\u8A66\u3002" : "\u7121\u6CD5\u555F\u52D5\u5B9A\u4F4D\uFF0C\u8ACB\u78BA\u8A8D\u7DB2\u7AD9\u5B9A\u4F4D\u6B0A\u9650\uFF0C\u4E26\u7531 HTTPS \u6216 localhost \u958B\u555F\u3002";
+        onSave();
+        onChange();
+      };
+      gps.status = "requesting";
+      gps.error = "";
+      const processor = recordingProcessor(gps);
+      gps.segments.push([]);
+      processor.startSegment();
+      const segment = gps.segments.at(-1), requestedAt = Date.now();
+      let latestTimestamp = processor.lastRawPoint()?.time ?? -Infinity;
+      try {
+        const subscription = locationProvider.watch((fix) => {
+          if (!isCurrent()) return;
+          const point = normalizeLocationFix(fix);
+          if (!point || point.time < Math.max(requestedAt - 5e3, Date.now() - 6e4) || point.time > Date.now() + 6e4 || point.time <= latestTimestamp)
+            return;
+          latestTimestamp = point.time;
+          gps.accuracy = point.accuracy;
+          const last = segment.at(-1);
+          if (!last || haversine(last, point) >= 3e-3 || point.time - last.time >= 3e4 || positionReliable(last) !== positionReliable(point) || elevationReliable(last) !== elevationReliable(point)) {
+            if (processor.stats().points >= 1e5) {
+              onLimit("\u5DF2\u9054 100,000 \u500B\u7D00\u9304\u9EDE\uFF0C\u8ACB\u7D50\u675F\u6B64\u4EFD\u7D00\u9304\u5F8C\u518D\u958B\u65B0\u7D00\u9304\u3002");
+              return;
+            }
+            segment.push(point);
+            processor.append(point);
+            onPoint();
+          }
+          const latest = processor.latestPoint();
+          const reliable = positionReliable(point) && !latest?.excluded;
+          gps.status = reliable ? "tracking" : "requesting";
+          gps.error = !positionReliable(point) ? "\u76EE\u524D\u5B9A\u4F4D\u7CBE\u5EA6\u4E0D\u8DB3\uFF0C\u539F\u59CB\u4F4D\u7F6E\u5DF2\u4FDD\u7559\uFF0C\u8A72\u6BB5\u66AB\u4E0D\u8A08\u5165\u8DDD\u96E2\u3002" : latest?.excluded ? "\u4F4D\u7F6E\u8DF3\u52D5\u5F85\u78BA\u8A8D\uFF0C\u539F\u59CB\u4F4D\u7F6E\u5DF2\u4FDD\u7559\uFF0C\u66AB\u4E0D\u8A08\u5165\u8DDD\u96E2\u3002" : !elevationReliable(point) ? "\u6D77\u62D4\u7CBE\u5EA6\u4E0D\u8DB3\uFF0C\u539F\u59CB\u9AD8\u5EA6\u5DF2\u4FDD\u7559\uFF0C\u722C\u5347\u8CC7\u6599\u66AB\u4E0D\u5B8C\u6574\u3002" : "";
+          onChange();
+        }, fail);
+        const attach = (cancel) => {
+          if (typeof cancel !== "function") {
+            fail({ code: "start-failed" });
+            return;
+          }
+          if (isCurrent()) cancelWatch = cancel;
+          else cancel();
+        };
+        if (subscription && typeof subscription.then === "function")
+          subscription.then(attach, () => fail({ code: "start-failed" }));
+        else attach(subscription);
+      } catch {
+        fail({ code: "start-failed" });
       }
-      onSave();
-      onChange();
+      if (isCurrent()) {
+        onSave();
+        onChange();
+      }
     }
     return { start, stop };
   }
@@ -1756,7 +2512,8 @@
     },
     onJourneyProgress = () => {
     },
-    navigator = globalThis.navigator
+    navigator = globalThis.navigator,
+    locationProvider
   }) {
     let disposed = false;
     const pending = /* @__PURE__ */ new Set();
@@ -1771,7 +2528,7 @@
       },
       onSave: saveDraft,
       onPoint: persistence.schedule,
-      navigator,
+      locationProvider,
       onLimit: (message) => {
         pauseGps();
         state.gps.error = message;
@@ -1779,11 +2536,11 @@
       }
     });
     const stopWatch = tracker.stop, startWatch = tracker.start;
-    function restoreDraft(snapshot) {
+    function restoreDraft(snapshot3) {
       if (disposed) return;
-      state.gps = restoreRecording(snapshot);
-      state.directMap.id = `direct-${snapshot.id}`;
-      if (snapshot.sourceRouteId) state.selected = snapshot.sourceRouteId;
+      state.gps = restoreRecording(snapshot3);
+      state.directMap.id = `direct-${snapshot3.id}`;
+      if (snapshot3.sourceRouteId) state.selected = snapshot3.sourceRouteId;
       navigate("record");
     }
     async function startGps(direct = false) {
@@ -1873,7 +2630,7 @@
         return;
       }
       if (disposed) return;
-      if (trackStats(state.gps.segments).points >= 1e5) {
+      if (recordingStats(state.gps).points >= 1e5) {
         toast("\u8ACB\u7D50\u675F\u6B64\u4EFD\u7D00\u9304\u5F8C\u518D\u958B\u65B0\u7D00\u9304\u3002");
         return;
       }
@@ -1958,6 +2715,645 @@
     };
   }
 
+  // node_modules/@capacitor/core/dist/index.js
+  var ExceptionCode;
+  (function(ExceptionCode2) {
+    ExceptionCode2["Unimplemented"] = "UNIMPLEMENTED";
+    ExceptionCode2["Unavailable"] = "UNAVAILABLE";
+  })(ExceptionCode || (ExceptionCode = {}));
+  var CapacitorException = class extends Error {
+    constructor(message, code, data) {
+      super(message);
+      this.message = message;
+      this.code = code;
+      this.data = data;
+    }
+  };
+  var getPlatformId = (win) => {
+    var _a, _b;
+    if (win === null || win === void 0 ? void 0 : win.androidBridge) {
+      return "android";
+    } else if ((_b = (_a = win === null || win === void 0 ? void 0 : win.webkit) === null || _a === void 0 ? void 0 : _a.messageHandlers) === null || _b === void 0 ? void 0 : _b.bridge) {
+      return "ios";
+    } else {
+      return "web";
+    }
+  };
+  var createCapacitor = (win) => {
+    const capCustomPlatform = win.CapacitorCustomPlatform || null;
+    const cap = win.Capacitor || {};
+    const Plugins = cap.Plugins = cap.Plugins || {};
+    const getPlatform = () => {
+      return capCustomPlatform !== null ? capCustomPlatform.name : getPlatformId(win);
+    };
+    const isNativePlatform = () => getPlatform() !== "web";
+    const isPluginAvailable = (pluginName) => {
+      const plugin = registeredPlugins.get(pluginName);
+      if (plugin === null || plugin === void 0 ? void 0 : plugin.platforms.has(getPlatform())) {
+        return true;
+      }
+      if (getPluginHeader(pluginName)) {
+        return true;
+      }
+      return false;
+    };
+    const getPluginHeader = (pluginName) => {
+      var _a;
+      return (_a = cap.PluginHeaders) === null || _a === void 0 ? void 0 : _a.find((h) => h.name === pluginName);
+    };
+    const handleError = (err) => win.console.error(err);
+    const registeredPlugins = /* @__PURE__ */ new Map();
+    const registerPlugin2 = (pluginName, jsImplementations = {}) => {
+      const registeredPlugin = registeredPlugins.get(pluginName);
+      if (registeredPlugin) {
+        console.warn(`Capacitor plugin "${pluginName}" already registered. Cannot register plugins twice.`);
+        return registeredPlugin.proxy;
+      }
+      const platform = getPlatform();
+      const pluginHeader = getPluginHeader(pluginName);
+      let jsImplementation;
+      const loadPluginImplementation = async () => {
+        if (!jsImplementation && platform in jsImplementations) {
+          jsImplementation = typeof jsImplementations[platform] === "function" ? jsImplementation = await jsImplementations[platform]() : jsImplementation = jsImplementations[platform];
+        } else if (capCustomPlatform !== null && !jsImplementation && "web" in jsImplementations) {
+          jsImplementation = typeof jsImplementations["web"] === "function" ? jsImplementation = await jsImplementations["web"]() : jsImplementation = jsImplementations["web"];
+        }
+        return jsImplementation;
+      };
+      const createPluginMethod = (impl, prop) => {
+        var _a, _b;
+        if (pluginHeader) {
+          const methodHeader = pluginHeader === null || pluginHeader === void 0 ? void 0 : pluginHeader.methods.find((m) => prop === m.name);
+          if (methodHeader) {
+            if (methodHeader.rtype === "promise") {
+              return (options) => cap.nativePromise(pluginName, prop.toString(), options);
+            } else {
+              return (options, callback) => cap.nativeCallback(pluginName, prop.toString(), options, callback);
+            }
+          } else if (impl) {
+            return (_a = impl[prop]) === null || _a === void 0 ? void 0 : _a.bind(impl);
+          }
+        } else if (impl) {
+          return (_b = impl[prop]) === null || _b === void 0 ? void 0 : _b.bind(impl);
+        } else {
+          throw new CapacitorException(`"${pluginName}" plugin is not implemented on ${platform}`, ExceptionCode.Unimplemented);
+        }
+      };
+      const createPluginMethodWrapper = (prop) => {
+        let remove;
+        const wrapper = (...args) => {
+          const p = loadPluginImplementation().then((impl) => {
+            const fn = createPluginMethod(impl, prop);
+            if (fn) {
+              const p2 = fn(...args);
+              remove = p2 === null || p2 === void 0 ? void 0 : p2.remove;
+              return p2;
+            } else {
+              throw new CapacitorException(`"${pluginName}.${prop}()" is not implemented on ${platform}`, ExceptionCode.Unimplemented);
+            }
+          });
+          if (prop === "addListener") {
+            p.remove = async () => remove();
+          }
+          return p;
+        };
+        wrapper.toString = () => `${prop.toString()}() { [capacitor code] }`;
+        Object.defineProperty(wrapper, "name", {
+          value: prop,
+          writable: false,
+          configurable: false
+        });
+        return wrapper;
+      };
+      const addListener = createPluginMethodWrapper("addListener");
+      const removeListener = createPluginMethodWrapper("removeListener");
+      const addListenerNative = (eventName, callback) => {
+        const call = addListener({ eventName }, callback);
+        const remove = async () => {
+          const callbackId = await call;
+          removeListener({
+            eventName,
+            callbackId
+          }, callback);
+        };
+        const p = new Promise((resolve) => call.then(() => resolve({ remove })));
+        p.remove = async () => {
+          console.warn(`Using addListener() without 'await' is deprecated.`);
+          await remove();
+        };
+        return p;
+      };
+      const proxy = new Proxy({}, {
+        get(_, prop) {
+          switch (prop) {
+            // https://github.com/facebook/react/issues/20030
+            case "$$typeof":
+              return void 0;
+            case "toJSON":
+              return () => ({});
+            case "addListener":
+              return pluginHeader ? addListenerNative : addListener;
+            case "removeListener":
+              return removeListener;
+            default:
+              return createPluginMethodWrapper(prop);
+          }
+        }
+      });
+      Plugins[pluginName] = proxy;
+      registeredPlugins.set(pluginName, {
+        name: pluginName,
+        proxy,
+        platforms: /* @__PURE__ */ new Set([...Object.keys(jsImplementations), ...pluginHeader ? [platform] : []])
+      });
+      return proxy;
+    };
+    if (!cap.convertFileSrc) {
+      cap.convertFileSrc = (filePath) => filePath;
+    }
+    cap.getPlatform = getPlatform;
+    cap.handleError = handleError;
+    cap.isNativePlatform = isNativePlatform;
+    cap.isPluginAvailable = isPluginAvailable;
+    cap.registerPlugin = registerPlugin2;
+    cap.Exception = CapacitorException;
+    cap.DEBUG = !!cap.DEBUG;
+    cap.isLoggingEnabled = !!cap.isLoggingEnabled;
+    return cap;
+  };
+  var initCapacitorGlobal = (win) => win.Capacitor = createCapacitor(win);
+  var Capacitor = /* @__PURE__ */ initCapacitorGlobal(typeof globalThis !== "undefined" ? globalThis : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : typeof global !== "undefined" ? global : {});
+  var registerPlugin = Capacitor.registerPlugin;
+  var WebPlugin = class {
+    constructor() {
+      this.listeners = {};
+      this.retainedEventArguments = {};
+      this.windowListeners = {};
+    }
+    addListener(eventName, listenerFunc) {
+      let firstListener = false;
+      const listeners = this.listeners[eventName];
+      if (!listeners) {
+        this.listeners[eventName] = [];
+        firstListener = true;
+      }
+      this.listeners[eventName].push(listenerFunc);
+      const windowListener = this.windowListeners[eventName];
+      if (windowListener && !windowListener.registered) {
+        this.addWindowListener(windowListener);
+      }
+      if (firstListener) {
+        this.sendRetainedArgumentsForEvent(eventName);
+      }
+      const remove = async () => this.removeListener(eventName, listenerFunc);
+      const p = Promise.resolve({ remove });
+      return p;
+    }
+    async removeAllListeners() {
+      this.listeners = {};
+      for (const listener in this.windowListeners) {
+        this.removeWindowListener(this.windowListeners[listener]);
+      }
+      this.windowListeners = {};
+    }
+    notifyListeners(eventName, data, retainUntilConsumed) {
+      const listeners = this.listeners[eventName];
+      if (!listeners) {
+        if (retainUntilConsumed) {
+          let args = this.retainedEventArguments[eventName];
+          if (!args) {
+            args = [];
+          }
+          args.push(data);
+          this.retainedEventArguments[eventName] = args;
+        }
+        return;
+      }
+      listeners.forEach((listener) => listener(data));
+    }
+    hasListeners(eventName) {
+      var _a;
+      return !!((_a = this.listeners[eventName]) === null || _a === void 0 ? void 0 : _a.length);
+    }
+    registerWindowListener(windowEventName, pluginEventName) {
+      this.windowListeners[pluginEventName] = {
+        registered: false,
+        windowEventName,
+        pluginEventName,
+        handler: (event) => {
+          this.notifyListeners(pluginEventName, event);
+        }
+      };
+    }
+    unimplemented(msg = "not implemented") {
+      return new Capacitor.Exception(msg, ExceptionCode.Unimplemented);
+    }
+    unavailable(msg = "not available") {
+      return new Capacitor.Exception(msg, ExceptionCode.Unavailable);
+    }
+    async removeListener(eventName, listenerFunc) {
+      const listeners = this.listeners[eventName];
+      if (!listeners) {
+        return;
+      }
+      const index = listeners.indexOf(listenerFunc);
+      if (index !== -1) {
+        this.listeners[eventName].splice(index, 1);
+      }
+      if (!this.listeners[eventName].length) {
+        this.removeWindowListener(this.windowListeners[eventName]);
+      }
+    }
+    addWindowListener(handle) {
+      window.addEventListener(handle.windowEventName, handle.handler);
+      handle.registered = true;
+    }
+    removeWindowListener(handle) {
+      if (!handle) {
+        return;
+      }
+      window.removeEventListener(handle.windowEventName, handle.handler);
+      handle.registered = false;
+    }
+    sendRetainedArgumentsForEvent(eventName) {
+      const args = this.retainedEventArguments[eventName];
+      if (!args) {
+        return;
+      }
+      delete this.retainedEventArguments[eventName];
+      args.forEach((arg) => {
+        this.notifyListeners(eventName, arg);
+      });
+    }
+  };
+  var encode = (str) => encodeURIComponent(str).replace(/%(2[346B]|5E|60|7C)/g, decodeURIComponent).replace(/[()]/g, escape);
+  var decode = (str) => str.replace(/(%[\dA-F]{2})+/gi, decodeURIComponent);
+  var CapacitorCookiesPluginWeb = class extends WebPlugin {
+    async getCookies() {
+      const cookies = document.cookie;
+      const cookieMap = {};
+      cookies.split(";").forEach((cookie) => {
+        if (cookie.length <= 0)
+          return;
+        let [key, value2] = cookie.replace(/=/, "CAP_COOKIE").split("CAP_COOKIE");
+        key = decode(key).trim();
+        value2 = decode(value2).trim();
+        cookieMap[key] = value2;
+      });
+      return cookieMap;
+    }
+    async setCookie(options) {
+      try {
+        const encodedKey = encode(options.key);
+        const encodedValue = encode(options.value);
+        const expires = options.expires ? `; expires=${options.expires.replace("expires=", "")}` : "";
+        const path = (options.path || "/").replace("path=", "");
+        const domain = options.url != null && options.url.length > 0 ? `domain=${options.url}` : "";
+        document.cookie = `${encodedKey}=${encodedValue || ""}${expires}; path=${path}; ${domain};`;
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    }
+    async deleteCookie(options) {
+      try {
+        document.cookie = `${options.key}=; Max-Age=0`;
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    }
+    async clearCookies() {
+      try {
+        const cookies = document.cookie.split(";") || [];
+        for (const cookie of cookies) {
+          document.cookie = cookie.replace(/^ +/, "").replace(/=.*/, `=;expires=${(/* @__PURE__ */ new Date()).toUTCString()};path=/`);
+        }
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    }
+    async clearAllCookies() {
+      try {
+        await this.clearCookies();
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    }
+  };
+  var CapacitorCookies = registerPlugin("CapacitorCookies", {
+    web: () => new CapacitorCookiesPluginWeb()
+  });
+  var readBlobAsBase64 = async (blob) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64String = reader.result;
+      resolve(base64String.indexOf(",") >= 0 ? base64String.split(",")[1] : base64String);
+    };
+    reader.onerror = (error) => reject(error);
+    reader.readAsDataURL(blob);
+  });
+  var normalizeHttpHeaders = (headers = {}) => {
+    const originalKeys = Object.keys(headers);
+    const loweredKeys = Object.keys(headers).map((k) => k.toLocaleLowerCase());
+    const normalized = loweredKeys.reduce((acc, key, index) => {
+      acc[key] = headers[originalKeys[index]];
+      return acc;
+    }, {});
+    return normalized;
+  };
+  var buildUrlParams = (params, shouldEncode = true) => {
+    if (!params)
+      return null;
+    const output = Object.entries(params).reduce((accumulator, entry) => {
+      const [key, value2] = entry;
+      let encodedValue;
+      let item;
+      if (Array.isArray(value2)) {
+        item = "";
+        value2.forEach((str) => {
+          encodedValue = shouldEncode ? encodeURIComponent(str) : str;
+          item += `${key}=${encodedValue}&`;
+        });
+        item.slice(0, -1);
+      } else {
+        encodedValue = shouldEncode ? encodeURIComponent(value2) : value2;
+        item = `${key}=${encodedValue}`;
+      }
+      return `${accumulator}&${item}`;
+    }, "");
+    return output.substr(1);
+  };
+  var buildRequestInit = (options, extra = {}) => {
+    const output = Object.assign({ method: options.method || "GET", headers: options.headers }, extra);
+    const headers = normalizeHttpHeaders(options.headers);
+    const type = headers["content-type"] || "";
+    if (typeof options.data === "string") {
+      output.body = options.data;
+    } else if (type.includes("application/x-www-form-urlencoded")) {
+      const params = new URLSearchParams();
+      for (const [key, value2] of Object.entries(options.data || {})) {
+        params.set(key, value2);
+      }
+      output.body = params.toString();
+    } else if (type.includes("multipart/form-data") || options.data instanceof FormData) {
+      const form = new FormData();
+      if (options.data instanceof FormData) {
+        options.data.forEach((value2, key) => {
+          form.append(key, value2);
+        });
+      } else {
+        for (const key of Object.keys(options.data)) {
+          form.append(key, options.data[key]);
+        }
+      }
+      output.body = form;
+      const headers2 = new Headers(output.headers);
+      headers2.delete("content-type");
+      output.headers = headers2;
+    } else if (type.includes("application/json") || typeof options.data === "object") {
+      output.body = JSON.stringify(options.data);
+    }
+    return output;
+  };
+  var CapacitorHttpPluginWeb = class extends WebPlugin {
+    /**
+     * Perform an Http request given a set of options
+     * @param options Options to build the HTTP request
+     */
+    async request(options) {
+      const requestInit = buildRequestInit(options, options.webFetchExtra);
+      const urlParams = buildUrlParams(options.params, options.shouldEncodeUrlParams);
+      const url = urlParams ? `${options.url}?${urlParams}` : options.url;
+      const response = await fetch(url, requestInit);
+      const contentType = response.headers.get("content-type") || "";
+      let { responseType = "text" } = response.ok ? options : {};
+      if (contentType.includes("application/json")) {
+        responseType = "json";
+      }
+      let data;
+      let blob;
+      switch (responseType) {
+        case "arraybuffer":
+        case "blob":
+          blob = await response.blob();
+          data = await readBlobAsBase64(blob);
+          break;
+        case "json":
+          data = await response.json();
+          break;
+        case "document":
+        case "text":
+        default:
+          data = await response.text();
+      }
+      const headers = {};
+      response.headers.forEach((value2, key) => {
+        headers[key] = value2;
+      });
+      return {
+        data,
+        headers,
+        status: response.status,
+        url: response.url
+      };
+    }
+    /**
+     * Perform an Http GET request given a set of options
+     * @param options Options to build the HTTP request
+     */
+    async get(options) {
+      return this.request(Object.assign(Object.assign({}, options), { method: "GET" }));
+    }
+    /**
+     * Perform an Http POST request given a set of options
+     * @param options Options to build the HTTP request
+     */
+    async post(options) {
+      return this.request(Object.assign(Object.assign({}, options), { method: "POST" }));
+    }
+    /**
+     * Perform an Http PUT request given a set of options
+     * @param options Options to build the HTTP request
+     */
+    async put(options) {
+      return this.request(Object.assign(Object.assign({}, options), { method: "PUT" }));
+    }
+    /**
+     * Perform an Http PATCH request given a set of options
+     * @param options Options to build the HTTP request
+     */
+    async patch(options) {
+      return this.request(Object.assign(Object.assign({}, options), { method: "PATCH" }));
+    }
+    /**
+     * Perform an Http DELETE request given a set of options
+     * @param options Options to build the HTTP request
+     */
+    async delete(options) {
+      return this.request(Object.assign(Object.assign({}, options), { method: "DELETE" }));
+    }
+  };
+  var CapacitorHttp = registerPlugin("CapacitorHttp", {
+    web: () => new CapacitorHttpPluginWeb()
+  });
+  var SystemBarsStyle;
+  (function(SystemBarsStyle2) {
+    SystemBarsStyle2["Dark"] = "DARK";
+    SystemBarsStyle2["Light"] = "LIGHT";
+    SystemBarsStyle2["Default"] = "DEFAULT";
+  })(SystemBarsStyle || (SystemBarsStyle = {}));
+  var SystemBarType;
+  (function(SystemBarType2) {
+    SystemBarType2["StatusBar"] = "StatusBar";
+    SystemBarType2["NavigationBar"] = "NavigationBar";
+  })(SystemBarType || (SystemBarType = {}));
+  var SystemBarsPluginWeb = class extends WebPlugin {
+    async setStyle() {
+      this.unavailable("not available for web");
+    }
+    async setAnimation() {
+      this.unavailable("not available for web");
+    }
+    async show() {
+      this.unavailable("not available for web");
+    }
+    async hide() {
+      this.unavailable("not available for web");
+    }
+  };
+  var SystemBars = registerPlugin("SystemBars", {
+    web: () => new SystemBarsPluginWeb()
+  });
+
+  // src/features/location/web.js
+  function createWebLocationProvider({ navigator = globalThis.navigator } = {}) {
+    return {
+      watch(onFix, onError) {
+        const geolocation = navigator?.geolocation;
+        if (!geolocation?.watchPosition) {
+          onError({ code: "unsupported" });
+          return () => {
+          };
+        }
+        let active = true, watchId;
+        const stop = () => {
+          if (!active) return;
+          active = false;
+          geolocation.clearWatch(watchId);
+        };
+        watchId = geolocation.watchPosition(
+          (position2) => {
+            if (!active) return;
+            const coords = position2?.coords;
+            const fix = normalizeLocationFix({
+              lat: coords?.latitude,
+              lon: coords?.longitude,
+              elevation: coords?.altitude,
+              time: position2?.timestamp,
+              accuracy: coords?.accuracy,
+              altitudeAccuracy: coords?.altitudeAccuracy
+            });
+            if (fix) onFix(fix);
+          },
+          (error) => {
+            if (active)
+              onError({
+                code: error?.code === 1 ? "permission-denied" : error?.code === 2 ? "position-unavailable" : "timeout"
+              });
+          },
+          { enableHighAccuracy: true, maximumAge: 5e3, timeout: 2e4 }
+        );
+        return stop;
+      }
+    };
+  }
+
+  // src/features/location/ios.js
+  function normalizeCoreLocation(location) {
+    if (!location) return null;
+    const hasAltitude = Number.isFinite(location.verticalAccuracy) && location.verticalAccuracy > 0;
+    return normalizeLocationFix({
+      lat: location.latitude,
+      lon: location.longitude,
+      elevation: hasAltitude ? location.ellipsoidalAltitude : null,
+      time: Number.isFinite(location.timestampSeconds) ? Math.round(location.timestampSeconds * 1e3) : null,
+      accuracy: location.horizontalAccuracy,
+      altitudeAccuracy: hasAltitude ? location.verticalAccuracy : null
+    });
+  }
+
+  // src/features/location/native-ios.js
+  var errorCodes = /* @__PURE__ */ new Set([
+    "permission-denied",
+    "position-unavailable",
+    "timeout",
+    "foreground-required"
+  ]);
+  var nativeError = (error) => ({
+    code: errorCodes.has(error?.code) ? error.code : "start-failed",
+    source: "ios"
+  });
+  function createIOSLocationProvider({ plugin, newWatchId = () => crypto.randomUUID() }) {
+    return {
+      watch(onFix, onError) {
+        const watchId = newWatchId();
+        let active = true, listener = null;
+        const stopNative = () => Promise.resolve().then(() => plugin.stop({ watchId })).catch(() => {
+        });
+        const removeListener = () => {
+          const handle = listener;
+          listener = null;
+          if (handle)
+            void Promise.resolve().then(() => handle.remove()).catch(() => {
+            });
+        };
+        const stop = () => {
+          if (!active) return;
+          active = false;
+          removeListener();
+          void stopNative();
+        };
+        const fail = (error) => {
+          if (!active) return;
+          stop();
+          onError(nativeError(error));
+        };
+        void (async () => {
+          try {
+            listener = await plugin.addListener("location", (event) => {
+              if (!active || event?.watchId !== watchId) return;
+              if (event.error) {
+                fail(event.error);
+                return;
+              }
+              const fix = normalizeCoreLocation(event.location);
+              if (fix) onFix(fix);
+            });
+            if (!active) {
+              removeListener();
+              return;
+            }
+            await plugin.start({ watchId });
+            if (!active) await stopNative();
+          } catch (error) {
+            fail(error);
+          }
+        })();
+        return stop;
+      }
+    };
+  }
+
+  // src/features/location/select.js
+  function createLocationProvider({
+    navigator = globalThis.navigator,
+    capacitor = Capacitor,
+    register = registerPlugin
+  } = {}) {
+    if (capacitor.isNativePlatform() && capacitor.getPlatform() === "ios")
+      return createIOSLocationProvider({ plugin: register("RidgewiseLocation") });
+    return createWebLocationProvider({ navigator });
+  }
+
   // src/features/recording/estimates.js
   function createEstimateController({
     state,
@@ -2026,12 +3422,12 @@
       ["forward", "\u539F\u5411\u8D70"],
       ["reverse", "\u53CD\u5411\u8D70"]
     ].map(
-      ([value, label]) => button(
+      ([value2, label]) => button(
         label,
         "route-direction",
         "",
         "",
-        `data-direction="${value}" aria-pressed="${direction === value}" ${locked ? "disabled" : ""}`
+        `data-direction="${value2}" aria-pressed="${direction === value2}" ${locked ? "disabled" : ""}`
       )
     ).join("")}</div>
     <p class="small muted">${direction === "reverse" ? "\u5F9E GPX \u7D42\u9EDE\u51FA\u767C\uFF0C\u6CBF\u539F\u8DEF\u7DDA\u53CD\u5411\u8D70\u3002" : "\u5F9E GPX \u8D77\u9EDE\u51FA\u767C\uFF0C\u4F9D\u539F\u59CB\u8ECC\u8DE1\u9806\u5E8F\u8D70\u3002"}\u7AD9\u5E8F\u3001\u8D77\u7D42\u9EDE\u3001\u4E0A\u6CB3\u6642\u9593\u8207\u65E5\u591C\u9810\u4F30\u4E00\u8D77\u66F4\u65B0\uFF1B\u539F\u59CB GPX \u4FDD\u7559\u3002</p>
@@ -2041,8 +3437,8 @@
 
   // src/features/recording/completion-view.js
   function completionView(gps, elapsed) {
-    const stats = trackStats(gps.segments), busy = ["stopping", "finishing", "discarding"].includes(gps.status);
-    return `<section class="completion-sheet" aria-labelledby="completion-title"><div class="sheet-handle"></div><span class="eyebrow">\u9019\u6B21\u5C71\u884C\u5DF2\u7D50\u675F</span><h2 id="completion-title">\u8981\u4FDD\u5B58\u9019\u6B21\u7D00\u9304\u55CE\uFF1F</h2><p>GPS \u5DF2\u505C\u6B62\u3002\u4F60\u53EF\u4EE5\u6C7A\u5B9A\u662F\u5426\u7559\u4E0B\u9019\u6BB5\u8ECC\u8DE1\u3002</p><div class="completion-stats"><div><small>\u7D00\u9304\u6642\u9593</small><strong>${elapsedLabel(elapsed)}</strong></div><div><small>\u5BE6\u969B\u8DDD\u96E2</small><strong>${stats.km.toFixed(2)} <small>km</small></strong></div></div>${gps.saveError ? `<p id="gps-save-status" class="error-message" role="status">${esc(gps.saveError)}</p>` : '<p id="gps-save-status" class="small muted">\u5C1A\u672A\u52A0\u5165\u300C\u6211\u7684 GPX\u300D</p>'}${button(busy ? "\u8655\u7406\u4E2D\u2026" : "\u4FDD\u5B58\u81F3\u6211\u7684 GPX", "gps-save", "primary", "folder", busy || !stats.points ? "disabled" : "")}${button("\u4E0D\u4FDD\u5B58\uFF0C\u8FD4\u56DE", "gps-no-save", "", "", busy ? "disabled" : "")}${stats.points ? button("\u4E0B\u8F09 GPX \u5099\u4EFD", "gps-download", "ghost", "download", busy ? "disabled" : "") : '<p class="small muted">\u672A\u53D6\u5F97\u5EA7\u6A19\uFF0C\u6C92\u6709\u53EF\u4EE5\u4FDD\u5B58\u7684\u8ECC\u8DE1\u3002</p>'}<p class="small muted">\u4E0D\u4FDD\u5B58\u53EA\u6703\u79FB\u9664\u9019\u6B21\u7D00\u9304\uFF0C\u5DF2\u532F\u5165\u8207\u5DF2\u4FDD\u5B58\u7684\u8CC7\u6599\u6703\u4FDD\u7559\u3002</p></section>`;
+    const stats = recordingStats(gps), busy = ["stopping", "finishing", "discarding"].includes(gps.status);
+    return `<section class="completion-sheet" aria-labelledby="completion-title"><div class="sheet-handle"></div><span class="eyebrow">\u9019\u6B21\u5C71\u884C\u5DF2\u7D50\u675F</span><h2 id="completion-title">\u8981\u4FDD\u5B58\u9019\u6B21\u7D00\u9304\u55CE\uFF1F</h2><p>GPS \u5DF2\u505C\u6B62\u3002\u4F60\u53EF\u4EE5\u6C7A\u5B9A\u662F\u5426\u7559\u4E0B\u9019\u6BB5\u8ECC\u8DE1\u3002</p><div class="completion-stats"><div><small>\u7D00\u9304\u6642\u9593</small><strong>${elapsedLabel(elapsed)}</strong></div><div><small>\u6821\u6B63\u8DDD\u96E2</small><strong>${stats.km.toFixed(2)} <small>km</small></strong></div></div>${gps.saveError ? `<p id="gps-save-status" class="error-message" role="status">${esc(gps.saveError)}</p>` : '<p id="gps-save-status" class="small muted">\u5C1A\u672A\u52A0\u5165\u300C\u6211\u7684 GPX\u300D</p>'}${button(busy ? "\u8655\u7406\u4E2D\u2026" : "\u4FDD\u5B58\u81F3\u6211\u7684 GPX", "gps-save", "primary", "folder", busy || !stats.points ? "disabled" : "")}${button("\u4E0D\u4FDD\u5B58\uFF0C\u8FD4\u56DE", "gps-no-save", "", "", busy ? "disabled" : "")}${stats.points ? button("\u4E0B\u8F09 GPX \u5099\u4EFD", "gps-download", "ghost", "download", busy ? "disabled" : "") : '<p class="small muted">\u672A\u53D6\u5F97\u5EA7\u6A19\uFF0C\u6C92\u6709\u53EF\u4EE5\u4FDD\u5B58\u7684\u8ECC\u8DE1\u3002</p>'}<p class="small muted">\u4E0D\u4FDD\u5B58\u53EA\u6703\u79FB\u9664\u9019\u6B21\u7D00\u9304\uFF0C\u5DF2\u532F\u5165\u8207\u5DF2\u4FDD\u5B58\u7684\u8CC7\u6599\u6703\u4FDD\u7559\u3002</p></section>`;
   }
 
   // src/features/recording/view.js
@@ -2065,7 +3461,7 @@
       return `<div class="record-ready"><section class="panel panel-body stack"><span class="eyebrow">YOUR NEXT WALK</span><h2>${file ? esc(file.name) : "\u4E0D\u532F\u5165\u8DEF\u7DDA\u4E5F\u80FD\u958B\u59CB\u7D00\u9304"}</h2><p class="muted">${file ? "\u53C3\u7167\u9019\u689D\u8DEF\u7DDA\uFF0C\u8A18\u9304\u4F60\u771F\u6B63\u8D70\u904E\u7684\u8ECC\u8DE1\u3002" : "\u5141\u8A31 GPS \u5B9A\u4F4D\uFF0C\u958B\u59CB\u4ECA\u5929\u7684\u5C71\u884C\u3002"}</p><label for="recording-name">\u7D00\u9304\u540D\u7A31\uFF08\u9078\u586B\uFF09</label><input id="recording-name" maxlength="120" placeholder="\u4F8B\u5982\uFF1A\u4ECA\u5929\u7684\u767B\u5C71\u7D00\u9304" value="${esc(state.recordingName)}">${file ? button("\u958B\u59CB\u767B\u5C71\u7D00\u9304", "gps-start", "primary", "locate", state.starting ? "disabled" : "") : button(state.starting ? "\u6E96\u5099\u7D00\u9304\u2026" : "\u76F4\u63A5\u958B\u59CB\u7D00\u9304", "gps-direct", "primary", "locate", state.starting ? "disabled" : "")}${file ? button("\u4E0D\u4F7F\u7528\u8DEF\u7DDA\uFF0C\u76F4\u63A5\u7D00\u9304", "gps-direct", "ghost") : '<button class="button" data-view="routes">\u524D\u5F80\u6211\u7684\u8DEF\u7DDA</button>'}<p class="small muted">\u7D50\u675F\u6642\u518D\u9078\u64C7\u662F\u5426\u4FDD\u5B58\u81F3\u300C\u6211\u7684 GPX\u300D\u3002</p>${state.recordingBlocked || state.storageError ? `<p class="error-message">${esc(state.recordingBlocked || state.storageError)}</p>` : ""}</section>${file ? `${directionPanel(file, { locked: state.starting, error: state.directionError })}${itineraryViews?.resourcesPanel() ?? ""}${mapPanel(file)}` : ""}</div>`;
     }
     function gpsView(file) {
-      const gps = state.gps, stats = trackStats(gps.segments);
+      const gps = state.gps, stats = recordingStats(gps);
       const stopped = ["review", "stopping", "finishing", "discarding", "finished"].includes(
         gps.status
       );
@@ -2080,7 +3476,7 @@
         discarding: "\u79FB\u9664\u8349\u7A3F\u4E2D",
         finished: "\u7D00\u9304\u5B8C\u6210"
       }[gps.status];
-      return `<section class="recording-scene ${stopped ? "recording-stopped" : ""}"><header class="recording-heading"><div><span class="eyebrow">${stopped ? "YOUR WALK" : "LIVE GPS"}${gps.sourceRouteId ? gps.sourceRouteDirection === "reverse" ? " \xB7 \u53CD\u5411\u8D70" : " \xB7 \u539F\u5411\u8D70" : ""}</span><h2>${esc(gps.name || file.name)}</h2></div><span class="record-status">${status}</span></header><div class="recording-map">${mapPanel(file, null, gps.segments, { compact: true })}</div>${stopped ? completionView(gps, gpsElapsed()) : `<section class="recording-sheet"><div class="sheet-handle"></div>${itineraryViews && gps.sourceRouteId ? itineraryViews.nextCard() : '<div class="direct-next"><span class="eyebrow">\u8A18\u4E0B\u81EA\u5DF1\u7684\u8DEF</span><h2>\u81EA\u7531\u7D00\u9304\u4E2D</h2><p class="small muted">\u85CD\u7DDA\u662F\u4F60\u7684\u5BE6\u969B\u8ECC\u8DE1\uFF0C\u76EE\u524D\u672A\u4F7F\u7528\u9810\u5B9A\u8DEF\u7DDA\u3002</p></div>'}<div class="live-stats"><div><small>\u7D00\u9304\u6642\u9593</small><strong id="gps-clock">${elapsedLabel(gpsElapsed())}</strong></div><div><small>\u5BE6\u969B\u8DDD\u96E2</small><strong>${stats.km.toFixed(2)} <small>km</small></strong></div><div><small>GPS \u7CBE\u5EA6</small><strong>${gps.accuracy === null ? "\u2014" : Math.round(gps.accuracy)} <small>m</small></strong></div></div>${gps.error ? `<p class="error-message" role="status">${esc(gps.error)}</p>` : ""}<div class="live-controls">${button(["paused", "error"].includes(gps.status) ? "\u7E7C\u7E8C\u7D00\u9304" : "\u66AB\u505C\u7D00\u9304", ["paused", "error"].includes(gps.status) ? "gps-resume" : "gps-pause", "", ["paused", "error"].includes(gps.status) ? "play" : "pause")}${button("\u7D50\u675F\u7D00\u9304", "gps-finish", "end-recording", "stop")}</div><details class="recording-more" id="recording-more"><summary>\u7D00\u9304\u72C0\u614B\u8207\u66F4\u591A\u8CC7\u8A0A</summary><div class="stack"><p id="gps-save-status" class="small muted" role="status">${esc(saveStatus())}</p>${button("\u91CD\u8A66\u4FDD\u5B58", "gps-save-retry", "", "refresh", `id="gps-save-retry" ${gps.saveError ? "" : "hidden"}`)}<p class="small muted">\u8ACB\u4FDD\u6301\u5206\u9801\u958B\u555F\uFF1B\u9396\u5C4F\u8207\u80CC\u666F\u5B9A\u4F4D\u53EF\u80FD\u4E2D\u65B7\u3002\u8349\u7A3F\u53EA\u4F9B\u6062\u5FA9\uFF0C\u4E0D\u6703\u81EA\u52D5\u52A0\u5165\u300C\u6211\u7684 GPX\u300D\u3002</p>${button("\u4E0B\u8F09\u5099\u4EFD", "gps-download", "ghost", "download")}${button(stats.points ? "\u653E\u68C4\u9019\u6B21\u7D00\u9304" : "\u53D6\u6D88\u7A7A\u767D\u7D00\u9304", "gps-discard", "ghost", "close")}<p class="small muted">\u5DF2\u8A18\u9304 ${stats.points} \u500B\u9EDE \xB7 ${gps.segments.filter((segment) => segment.length).length} \u6BB5\u8ECC\u8DE1</p><p class="small muted">\u722C\u5347 ${meters(stats.up)} m \uFF0F\u4E0B\u964D ${meters(stats.down)} m \xB7 \u5E73\u5747\u901F\u5EA6 <span id="gps-average">\u2014</span></p></div></details></section>`}</section>${heightPanel ? `<details class="recording-height-profile" id="recording-height-profile"><summary>\u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762\u30FB\u65E5\u591C\u8DEF\u6BB5</summary>${heightPanel(file, gps.segments)}</details>` : ""}${!stopped && file === directMap ? `<details class="manual-reference" id="manual-reference"><summary>\u9032\u968E\uFF1A\u624B\u52D5\u4E0A\u6CB3\u8DEF\u6BB5\u8A08\u6642</summary>${shanghePanel()}</details>` : ""}`;
+      return `<section class="recording-scene ${stopped ? "recording-stopped" : ""}"><header class="recording-heading"><div><span class="eyebrow">${stopped ? "YOUR WALK" : "LIVE GPS"}${gps.sourceRouteId ? gps.sourceRouteDirection === "reverse" ? " \xB7 \u53CD\u5411\u8D70" : " \xB7 \u539F\u5411\u8D70" : ""}</span><h2>${esc(gps.name || file.name)}</h2></div><span class="record-status">${status}</span></header><div class="recording-map">${mapPanel(file, null, recordingSegments(gps), { compact: true })}</div>${stopped ? completionView(gps, gpsElapsed()) : `<section class="recording-sheet"><div class="sheet-handle"></div>${itineraryViews && gps.sourceRouteId ? itineraryViews.nextCard() : '<div class="direct-next"><span class="eyebrow">\u8A18\u4E0B\u81EA\u5DF1\u7684\u8DEF</span><h2>\u81EA\u7531\u7D00\u9304\u4E2D</h2><p class="small muted">\u85CD\u7DDA\u662F\u4F60\u7684\u5BE6\u969B\u8ECC\u8DE1\uFF0C\u76EE\u524D\u672A\u4F7F\u7528\u9810\u5B9A\u8DEF\u7DDA\u3002</p></div>'}<div class="live-stats"><div><small>\u7D00\u9304\u6642\u9593</small><strong id="gps-clock">${elapsedLabel(gpsElapsed())}</strong></div><div><small>\u6821\u6B63\u8DDD\u96E2</small><strong id="gps-distance">${stats.km.toFixed(2)} <small>km</small></strong></div><div><small>GPS \u7CBE\u5EA6</small><strong>${gps.accuracy === null ? "\u2014" : Math.round(gps.accuracy)} <small>m</small></strong></div></div>${gps.error ? `<p class="error-message" role="status">${esc(gps.error)}</p>` : ""}<div class="live-controls">${button(["paused", "error"].includes(gps.status) ? "\u7E7C\u7E8C\u7D00\u9304" : "\u66AB\u505C\u7D00\u9304", ["paused", "error"].includes(gps.status) ? "gps-resume" : "gps-pause", "", ["paused", "error"].includes(gps.status) ? "play" : "pause")}${button("\u7D50\u675F\u7D00\u9304", "gps-finish", "end-recording", "stop")}</div><details class="recording-more" id="recording-more"><summary>\u7D00\u9304\u72C0\u614B\u8207\u66F4\u591A\u8CC7\u8A0A</summary><div class="stack"><p id="gps-save-status" class="small muted" role="status">${esc(saveStatus())}</p>${button("\u91CD\u8A66\u4FDD\u5B58", "gps-save-retry", "", "refresh", `id="gps-save-retry" ${gps.saveError ? "" : "hidden"}`)}<p class="small muted">\u8ACB\u4FDD\u6301\u5206\u9801\u958B\u555F\uFF1B\u9396\u5C4F\u8207\u80CC\u666F\u5B9A\u4F4D\u53EF\u80FD\u4E2D\u65B7\u3002\u8349\u7A3F\u53EA\u4F9B\u6062\u5FA9\uFF0C\u4E0D\u6703\u81EA\u52D5\u52A0\u5165\u300C\u6211\u7684 GPX\u300D\u3002\u8DDD\u96E2\u8207\u9AD8\u5EA6\u6703\u96A8\u5F8C\u7E8C\u5B9A\u4F4D\u6821\u6B63\uFF0C\u539F\u59CB GPX \u4FDD\u7559\u3002</p>${button("\u4E0B\u8F09\u5099\u4EFD", "gps-download", "ghost", "download")}${button(stats.points ? "\u653E\u68C4\u9019\u6B21\u7D00\u9304" : "\u53D6\u6D88\u7A7A\u767D\u7D00\u9304", "gps-discard", "ghost", "close")}<p class="small muted">\u5DF2\u4FDD\u7559 ${stats.points} \u500B\u539F\u59CB\u9EDE \xB7 ${gps.segments.filter((segment) => segment.length).length} \u6BB5\u8ECC\u8DE1</p><p class="small muted">\u6821\u6B63\u722C\u5347 <span id="gps-ascent">${meters(stats.up)}</span> m \uFF0F\u4E0B\u964D <span id="gps-descent">${meters(stats.down)}</span> m \xB7 \u5E73\u5747\u901F\u5EA6 <span id="gps-average">\u2014</span></p></div></details></section>`}</section>${heightPanel ? `<details class="recording-height-profile" id="recording-height-profile"><summary>\u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762\u30FB\u65E5\u591C\u8DEF\u6BB5</summary>${heightPanel(file, recordingSegments(gps))}</details>` : ""}${!stopped && file === directMap ? `<details class="manual-reference" id="manual-reference"><summary>\u9032\u968E\uFF1A\u624B\u52D5\u4E0A\u6CB3\u8DEF\u6BB5\u8A08\u6642</summary>${shanghePanel()}</details>` : ""}`;
     }
     function shanghePanel(readonly = false) {
       const gps = state.gps, calibration = gps.calibration || { completed: [] }, active = calibration.active, factor = shangheFactor(calibration.completed);
@@ -2091,16 +3487,16 @@
     <div class="estimate-result"><span class="small muted">\u9810\u4F30\u5269\u9918\u6642\u9593</span><strong id="remaining-time">\u2014</strong><span class="small muted">\u9810\u4F30\u62B5\u9054\uFF08\u53F0\u5317\u6642\u9593\uFF09</span><strong id="arrival-time">\u2014</strong></div><p class="small muted">\u5C1A\u7121 GPS \u8207\u4E0A\u6CB3\u8DEF\u6BB5\u81EA\u52D5\u914D\u5C0D\uFF0C\u57FA\u6E96\u7531\u4F60\u78BA\u8A8D\u3002\u4F30\u7B97\u5957\u7528\u5DF2\u8D70\u8DEF\u6BB5\u500D\u7387\u4E26\u6309\u7D00\u9304\u6642\u9593\u5012\u6578\uFF1B\u66AB\u505C\u6703\u9806\u5EF6\u3002\u66F4\u65B0\u5269\u9918\u57FA\u6E96\u53EF\u6821\u6B63\u9032\u5EA6\uFF1B\u5730\u5F62\u8207\u8DEF\u6CC1\u8B8A\u5316\u53EF\u80FD\u9020\u6210\u8AA4\u5DEE\u3002</p></section>`;
     }
     function updateRecordingNumbers() {
-      const gps = state.gps, elapsed = gpsElapsed(), set = (id2, value) => {
+      const gps = state.gps, elapsed = gpsElapsed(), set = (id2, value2) => {
         const el = document2.getElementById(id2);
-        if (el) el.textContent = value;
+        if (el) el.textContent = value2;
       };
       itineraryViews?.updateNumbers();
       set("gps-clock", elapsedLabel(elapsed));
       if (gps.status !== "review") set("gps-save-status", saveStatus());
       set(
         "gps-average",
-        `${elapsed > 0 ? (trackStats(gps.segments).km / (elapsed / 36e5)).toFixed(2) : "\u2014"} km/h`
+        `${elapsed > 0 ? (recordingStats(gps).km / (elapsed / 36e5)).toFixed(2) : "\u2014"} km/h`
       );
       if (gps.calibration?.active)
         set("calibration-clock", elapsedLabel(elapsed - gps.calibration.active.startElapsed));
@@ -2552,7 +3948,7 @@
       fit,
       retry,
       pitch: () => map?.getPitch() ?? 55,
-      tilt: (value) => map?.setPitch(Math.max(0, Math.min(75, value))),
+      tilt: (value2) => map?.setPitch(Math.max(0, Math.min(75, value2))),
       rotate: (degrees) => {
         if (map) map.setBearing(map.getBearing() + degrees);
       },
@@ -3028,10 +4424,10 @@
         const point = { lat: a.lat + (b.lat - a.lat) * fraction, lon: deltaLon(a.lon + deltaLon(b.lon - a.lon) * fraction) };
         const offsetM = distanceM(station, point);
         if (offsetM > maxOffsetM) continue;
-        const position = { segmentIndex, routeProgressM: startM + length * fraction, offsetM };
+        const position2 = { segmentIndex, routeProgressM: startM + length * fraction, offsetM };
         const group = groups.at(-1), last = group?.at(-1);
-        if (last && last.segmentIndex === segmentIndex && position.routeProgressM - last.routeProgressM <= mergeWithinM) group.push(position);
-        else groups.push([position]);
+        if (last && last.segmentIndex === segmentIndex && position2.routeProgressM - last.routeProgressM <= mergeWithinM) group.push(position2);
+        else groups.push([position2]);
       }
       const routePositions = groups.map((group) => group.reduce((a, b) => a.offsetM <= b.offsetM ? a : b));
       if (!routePositions.length) continue;
@@ -3055,7 +4451,7 @@
   // src/features/itinerary/route-progress.js
   function remainingRouteProgress(file, data, gps, now = Date.now()) {
     const next = data?.next;
-    const fix = gps?.segments?.findLast((segment) => segment.length)?.at(-1);
+    const fix = gps ? recordingFix(gps) : null;
     if (!file || !data?.active || !data.compatible || data.finished || !next || next.gap || !fix || !Number.isFinite(fix.lat) || Math.abs(fix.lat) > 90 || !Number.isFinite(fix.lon) || Math.abs(fix.lon) > 180 || !Number.isFinite(gps.accuracy) || gps.accuracy < 0 || gps.accuracy > 50 || !Number.isFinite(fix.time) || !Number.isFinite(now) || now - fix.time > 6e4 || fix.time > now + 5e3)
       return null;
     const previous = data.rows[Math.max(0, data.nextIndex - 1)];
@@ -3087,48 +4483,43 @@
   function indexFor(file) {
     if (!cache.has(file)) {
       const groups = /* @__PURE__ */ new Map();
-      for (const point of file.points) {
-        if (!groups.has(point.segment)) groups.set(point.segment, []);
-        groups.get(point.segment).push({ distance: point.km * 1e3, height: point.elevation });
-      }
-      for (const [key, points] of groups) {
-        const up = [0], down = [0], missing = [0];
-        for (let i = 1; i < points.length; i++) {
-          const valid = Number.isFinite(points[i - 1].height) && Number.isFinite(points[i].height);
-          const delta = valid ? points[i].height - points[i - 1].height : 0;
-          up.push(up[i - 1] + Math.max(0, delta));
-          down.push(down[i - 1] + Math.max(0, -delta));
-          missing.push(missing[i - 1] + (valid ? 0 : 1));
-        }
-        groups.set(key, { points, up, down, missing });
-      }
+      const prefixes = elevationPrefixes(file.points);
+      file.points.forEach((point, i) => {
+        if (!groups.has(point.segment))
+          groups.set(point.segment, { points: [], up: [], down: [], missing: [] });
+        const group = groups.get(point.segment);
+        group.points.push({ distance: point.km * 1e3, height: point.elevation });
+        group.up.push(prefixes.up[i]);
+        group.down.push(prefixes.down[i]);
+        group.missing.push(prefixes.missing[i]);
+      });
       cache.set(file, groups);
     }
     return cache.get(file);
   }
-  function bound(points, distance, upper = false) {
+  function bound(points, distance2, upper = false) {
     let low = 0, high = points.length;
     while (low < high) {
       const middle = low + high >>> 1;
-      if (points[middle].distance < distance || upper && points[middle].distance === distance)
+      if (points[middle].distance < distance2 || upper && points[middle].distance === distance2)
         low = middle + 1;
       else high = middle;
     }
     return low;
   }
-  function heightAt(points, distance, start = false) {
-    let right = bound(points, distance);
-    if (right < points.length && Math.abs(points[right].distance - distance) <= EPSILON)
-      distance = points[right].distance;
-    else if (right > 0 && Math.abs(points[right - 1].distance - distance) <= EPSILON)
-      distance = points[right - 1].distance;
-    right = bound(points, distance);
-    if (right < points.length && points[right].distance === distance)
-      return points[start ? bound(points, distance, true) - 1 : right].height;
+  function heightAt(points, distance2, start = false) {
+    let right = bound(points, distance2);
+    if (right < points.length && Math.abs(points[right].distance - distance2) <= EPSILON)
+      distance2 = points[right].distance;
+    else if (right > 0 && Math.abs(points[right - 1].distance - distance2) <= EPSILON)
+      distance2 = points[right - 1].distance;
+    right = bound(points, distance2);
+    if (right < points.length && points[right].distance === distance2)
+      return points[start ? bound(points, distance2, true) - 1 : right].height;
     if (!right || right === points.length) return null;
     const a = points[right - 1], b = points[right];
     if (!Number.isFinite(a.height) || !Number.isFinite(b.height)) return null;
-    return a.height + (b.height - a.height) * (distance - a.distance) / (b.distance - a.distance);
+    return a.height + (b.height - a.height) * (distance2 - a.distance) / (b.distance - a.distance);
   }
   function elevationBetween(file, { segmentIndex, fromM, toM }) {
     if (!file?.points?.length) return null;
@@ -3160,7 +4551,7 @@
       distanceM: progress ? Math.max(0, progress.toM - progress.fromM) : null,
       ascentM: elevation?.ascentM ?? null,
       descentM: elevation?.descentM ?? null,
-      message: data?.finished ? "\u7D00\u9304\u5DF2\u7D50\u675F\uFF0C\u4E0D\u518D\u986F\u793A\u5269\u9918\u9AD8\u5EA6\u3002" : !data?.next ? "\u5C1A\u7121\u53EF\u8A08\u7B97\u7684\u4E0B\u4E00\u7AD9\u3002" : !data?.active ? "\u958B\u59CB\u7D00\u9304\u4E26\u53D6\u5F97\u6709\u6548\u5B9A\u4F4D\u5F8C\u986F\u793A\u3002" : !progress ? "\u5B9A\u4F4D\u7121\u6548\u3001\u904E\u671F\u3001\u504F\u96E2\u8DEF\u7DDA\u6216 GPX \u4E2D\u65B7\uFF0C\u66AB\u7121\u6CD5\u63D0\u4F9B\u5269\u9918\u9AD8\u5EA6\u3002" : !elevation ? "\u5230\u4E0B\u4E00\u7AD9\u7684 GPX \u9AD8\u5EA6\u8CC7\u6599\u7F3A\u6F0F\uFF0C\u66AB\u7121\u6CD5\u63D0\u4F9B\u722C\u5347\uFF0F\u4E0B\u964D\u3002" : "\u4F9D\u5269\u9918 GPX \u8DEF\u6BB5\u9AD8\u5EA6\u7D2F\u52A0\uFF0C\u672A\u7D93\u53BB\u566A\uFF1B\u4E0D\u4F7F\u7528 GPS \u6D77\u62D4\u6216\u4E0A\u6CB3\u6642\u9593\u63DB\u7B97\u3002"
+      message: data?.finished ? "\u7D00\u9304\u5DF2\u7D50\u675F\uFF0C\u4E0D\u518D\u986F\u793A\u5269\u9918\u9AD8\u5EA6\u3002" : !data?.next ? "\u5C1A\u7121\u53EF\u8A08\u7B97\u7684\u4E0B\u4E00\u7AD9\u3002" : !data?.active ? "\u958B\u59CB\u7D00\u9304\u4E26\u53D6\u5F97\u6709\u6548\u5B9A\u4F4D\u5F8C\u986F\u793A\u3002" : !progress ? "\u5B9A\u4F4D\u7121\u6548\u3001\u904E\u671F\u3001\u504F\u96E2\u8DEF\u7DDA\u6216 GPX \u4E2D\u65B7\uFF0C\u66AB\u7121\u6CD5\u63D0\u4F9B\u5269\u9918\u9AD8\u5EA6\u3002" : !elevation ? "\u5230\u4E0B\u4E00\u7AD9\u7684 GPX \u9AD8\u5EA6\u8CC7\u6599\u7F3A\u6F0F\uFF0C\u66AB\u7121\u6CD5\u63D0\u4F9B\u722C\u5347\uFF0F\u4E0B\u964D\u3002" : file?.processing ? "\u4F9D\u6821\u6B63\u5F8C GPX \u8DEF\u6BB5\u9AD8\u5EA6\u7D2F\u52A0\uFF1B\u4E0D\u4F7F\u7528\u5373\u6642 GPS \u6D77\u62D4\u6216\u4E0A\u6CB3\u6642\u9593\u63DB\u7B97\u3002" : "\u4F9D\u5269\u9918 GPX \u8DEF\u6BB5\u9AD8\u5EA6\u7D2F\u52A0\uFF0C\u672A\u7D93\u53BB\u566A\uFF1B\u4E0D\u4F7F\u7528 GPS \u6D77\u62D4\u6216\u4E0A\u6CB3\u6642\u9593\u63DB\u7B97\u3002"
     };
   }
 
@@ -3204,7 +4595,7 @@
       const rows = data.rows.filter((row) => row.visible);
       return `<section class="panel panel-body stack itinerary-panel"><div><span class="eyebrow">YOUR STOPS</span><h2>\u6CBF\u9014\u7AD9\u9EDE\u8207 ETA</h2><p class="small muted">${data.active ? "\u62B5\u9054\u5F8C\u6703\u91CD\u65B0\u63A8\u7B97\u5F8C\u7E8C\u6642\u9593\uFF1B\u5F80\u8FD4\u7AD9\u9EDE\u5206\u6B21\u986F\u793A\u3002" : "\u6309\u300C\u958B\u59CB\u767B\u5C71\u7D00\u9304\u300D\u5F8C\uFF0C\u4EE5\u5BE6\u969B\u51FA\u767C\u6642\u9593\u986F\u793A\u62B5\u9054\u6642\u523B\u3002"}</p></div>${!data.compatible ? '<p class="error-message">\u7AD9\u9EDE\u8CC7\u6599\u5DF2\u66F4\u65B0\uFF1B\u7D50\u675F\u76EE\u524D\u7D00\u9304\u5F8C\uFF0C\u91CD\u65B0\u958B\u59CB\u624D\u80FD\u5957\u7528\u65B0\u7684 ETA\u3002</p>' : ""}<div class="itinerary-summary"><span>\u5168\u7A0B\u9810\u4F30</span><strong>${duration(data.totalSeconds)}</strong><small>\u500D\u7387 ${data.factor.toFixed(2)}</small></div>${!data.startCovered || !data.endCovered ? '<p class="soft-notice">GPX \u8D77\u9EDE\u6216\u7D42\u9EDE\u6C92\u6709\u5C0D\u61C9\u6642\u9593\u7AD9\u9EDE\uFF1B\u53EA\u986F\u793A\u6709\u57FA\u6E96\u7684\u7AD9\u9593\u6642\u9593\u3002</p>' : ""}${rows.length ? `<ol class="station-list">${rows.map((row) => `<li class="${data.active && row.index < data.nextIndex ? "station-passed" : ""}"><div class="station-number">${rows.indexOf(row) + 1}</div><div><strong>${esc(row.station.name)}</strong><span class="small muted">${typeLabels[row.station.type] ?? "\u7AD9\u9EDE"} \xB7 ${row.gap ? "GPX \u5206\u6BB5\u9593\u8DDD\u96E2\u672A\u77E5" : (row.routeProgressM / 1e3).toFixed(2) + " km"}${data.active && row.index < data.nextIndex ? " \xB7 \u5DF2\u901A\u904E" : ""}</span><span class="small">${row.index === 0 ? "\u4E0A\u6CB3\u8D77\u59CB\u7AD9" : `\u524D\u6BB5\u57FA\u6E96\uFF1A${duration(row.baselineSeconds)}`}</span>${row.reason ? `<span class="small error-message">${esc(row.reason)}</span>` : ""}${row.timeNodeNames?.length > 2 ? `<details class="small muted"><summary>\u542B ${row.timeNodeNames.length - 2} \u500B\u6642\u9593\u4E2D\u9593\u7BC0\u9EDE</summary>${row.timeNodeNames.map(esc).join(" \u2192 ")}<p>\u4E2D\u9593\u7BC0\u9EDE\u672A\u5FC5\u5DF2\u6709\u5EA7\u6A19\uFF0C\u4ECD\u9700\u6838\u5C0D\u8207 GPX \u540C\u4E00\u8DEF\u5F91\u3002</p></details>` : ""}</div><div class="station-eta"><small>${data.active ? "\u9810\u4F30\u62B5\u9054" : "\u7D2F\u8A08\u8017\u6642"}</small><strong>${data.active ? arrival(row.arrivalUtcMs) : duration(row.cumulativeSeconds)}</strong></div></li>`).join("")}</ol>` : '<p class="small muted">\u76EE\u524D GPX \u9644\u8FD1\u672A\u627E\u5230\u9019\u516D\u985E\u7AD9\u9EDE\uFF0C\u8ACB\u88DC\u9F4A\u7AD9\u9EDE\u5EA7\u6A19\u3002</p>'}${timingIssuesPanel(data)}<p class="small muted">\u4F9D\u4E0A\u6CB3\u6709\u5411\u6642\u9593\u8A08\u7B97\uFF0C\u4E0D\u4EE5 GPX \u6B77\u53F2\u6642\u9593\u6216\u8DDD\u96E2\u88DC\u6642\u9593\u3002\u7F3A\u503C\u6216\u591A\u689D\u53EF\u80FD\u8DEF\u5F91\u6703\u4FDD\u7559\u5F85\u88DC\u3002\u4F4D\u7F6E\u63A5\u8FD1\u4E0D\u4EE3\u8868\u5DF2\u9032\u5165\u5C71\u5C4B\uFF1B\u6C34\u6E90\u53EF\u7528\u6027\u8ACB\u53E6\u884C\u78BA\u8A8D\u3002</p><p class="small muted">\u7AD9\u9EDE\u5EA7\u6A19\u53C3\u8003\uFF1A\u653F\u5E9C\u516C\u958B\u8CC7\u6599\u53CA <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors\uFF08ODbL\uFF09</a>\uFF0C\u4EE5\u53CA <a href="https://joyhike.com/path/31" target="_blank" rel="noopener noreferrer">Joyhike \u5730\u9EDE\u6BD4\u5C0D\u8CC7\u6599</a>\u3002\u6EAA\u6E90\u5EA7\u6A19\u7531\u4F7F\u7528\u8005\u65BC OSM \u67E5\u627E\u63D0\u4F9B\u3002</p></section>`;
     }
-    const heightLabel = (value) => value === null ? "\u2014" : `${meters(value)} m`;
+    const heightLabel = (value2) => value2 === null ? "\u2014" : `${meters(value2)} m`;
     function nextCard() {
       const data = itinerary.snapshot(), next = data?.next, file = recordingRoute2?.() ?? state.library.find((entry) => entry.id === state.gps.sourceRouteId), metrics = remainingRouteMetrics(file, data, state.gps), remaining = metrics.distanceM;
       return `<section class="panel next-card itinerary-next"><span class="eyebrow">NEXT STOP</span><h2>${next ? esc(next.station.name) : data?.active ? "\u6CBF\u9014\u7AD9\u9EDE\u5DF2\u5B8C\u6210" : "\u4E0B\u4E00\u7AD9\u5F85\u63D0\u4F9B"}</h2><p class="small">${next ? typeLabels[next.station.type] ?? "\u6CBF\u9014\u7AD9\u9EDE" : "\u9078\u7528 GPX \u5F8C\u81EA\u52D5\u986F\u793A\u3002"}</p><div class="next-metrics"><div><strong id="itinerary-distance">${remaining !== null ? (remaining / 1e3).toFixed(2) + " km" : next ? (next.routeProgressM / 1e3).toFixed(2) + " km" : "\u2014"}</strong><small id="itinerary-distance-label">${remaining !== null ? "\u6CBF GPX \u5269\u9918\u8DDD\u96E2" : "GPX \u7D2F\u8A08\u4F4D\u7F6E"}</small></div><div><strong id="itinerary-next-arrival">${data?.active && next ? arrival(next.arrivalUtcMs) : "\u958B\u59CB\u5F8C\u986F\u793A"}</strong><small>\u9810\u4F30\u62B5\u9054\uFF08\u53F0\u5317\u6642\u9593\uFF09</small></div></div><div class="next-elevation" role="group" aria-label="\u5230\u4E0B\u4E00\u7AD9\u7684\u5269\u9918\u9AD8\u5EA6"><div><span>\u5269\u9918\u722C\u5347</span><strong id="itinerary-remaining-ascent" title="${esc(metrics.message)}">${heightLabel(metrics.ascentM)}</strong></div><div><span>\u5269\u9918\u4E0B\u964D</span><strong id="itinerary-remaining-descent" title="${esc(metrics.message)}">${heightLabel(metrics.descentM)}</strong></div></div><p id="itinerary-countdown" class="small"></p>${data?.offRoute ? '<p class="error-message">\u76EE\u524D\u4F4D\u7F6E\u504F\u96E2\u9810\u5B9A GPX\uFF0C\u8ACB\u78BA\u8A8D\u8DEF\u7DDA\u3002</p>' : ""}<details class="next-details" id="next-details"><summary>\u5230\u7AD9\u78BA\u8A8D\u8207\u5373\u6642\u500D\u7387</summary>${data?.active && !data.finished && next ? button("\u5DF2\u62B5\u9054\uFF0C\u5207\u63DB\u4E0B\u4E00\u7AD9", "itinerary-arrived", "", "") : ""}${next?.reason ? `<p class="small error-message">${esc(next.reason)}</p>` : ""}<p class="small muted">\u5373\u6642\u4E0A\u6CB3\u500D\u7387\uFF1A<strong>${data?.observedFactor === null || !data?.observedFactor ? "\u5C1A\u5F85\u6709\u6548\u5230\u7AD9\u7D00\u9304" : data.observedFactor.toFixed(2) + " \u500D"}</strong></p><p id="itinerary-elevation-status" class="small muted">${esc(metrics.message)}</p><p class="small muted">\u8A2D\u5B9A\u500D\u7387\u7528\u65BC\u9810\u6E2C\uFF1B\u5373\u6642\u500D\u7387\u5305\u542B\u51FA\u767C\u8207\u5230\u7AD9\u4E4B\u9593\u7684\u6240\u6709\u7D93\u904E\u6642\u9593\u3002</p></details></section>`;
@@ -3214,22 +4605,22 @@
       const file = recordingRoute2?.() ?? state.library.find((entry) => entry.id === state.gps.sourceRouteId);
       const metrics = remainingRouteMetrics(file, data, state.gps);
       const remaining = metrics.distanceM;
-      for (const [id2, value] of [
+      for (const [id2, value2] of [
         ["itinerary-remaining-ascent", metrics.ascentM],
         ["itinerary-remaining-descent", metrics.descentM]
       ]) {
         const field = document2.getElementById(id2);
         if (field) {
-          field.textContent = heightLabel(value);
+          field.textContent = heightLabel(value2);
           field.title = metrics.message;
         }
       }
       const heightStatus = document2.getElementById("itinerary-elevation-status");
       if (heightStatus) heightStatus.textContent = metrics.message;
-      const distance = document2.getElementById("itinerary-distance");
+      const distance2 = document2.getElementById("itinerary-distance");
       const label = document2.getElementById("itinerary-distance-label");
-      if (distance)
-        distance.textContent = remaining !== null ? (remaining / 1e3).toFixed(2) + " km" : next ? (next.routeProgressM / 1e3).toFixed(2) + " km" : "\u2014";
+      if (distance2)
+        distance2.textContent = remaining !== null ? (remaining / 1e3).toFixed(2) + " km" : next ? (next.routeProgressM / 1e3).toFixed(2) + " km" : "\u2014";
       if (label) label.textContent = remaining !== null ? "\u6CBF GPX \u5269\u9918\u8DDD\u96E2" : "GPX \u7D2F\u8A08\u4F4D\u7F6E";
       const element = document2.getElementById("itinerary-countdown");
       if (element && data?.finished) {
@@ -3665,16 +5056,16 @@
   // src/features/map/view.js
   function createMapView({ state, terrainMap, itinerary, heightProfile, offlineMaps }) {
     const directMap = state.directMap;
-    function heightPanel(file, live = []) {
+    function heightPanel(file, _live = []) {
       const plotted = file === directMap ? {
-        ...prepareTrack(live),
+        ...recordingAnalysis(state.gps),
         id: state.gps.id,
         kind: "recording"
       } : file;
       return `<section class="chart-wrap"><div class="chart-title"><span class="chart-heading">${icon("mountain")}${file === directMap ? "\u7D00\u9304\u7684" : "\u8DEF\u7DDA"}\u9AD8\u5EA6\u5256\u9762</span><span>\u6CBF\u9014\u7684\u9AD8\u5EA6\u8B8A\u5316</span></div>${heightProfile?.panel(plotted) ?? elevationSvg(plotted)}</section>`;
     }
-    function mapPanel(file, position = null, live = [], { compact = false } = {}) {
-      return `<section class="panel ${compact ? "compact-map" : ""}"><div class="panel-header"><div><h2>${file === directMap ? "\u6211\u7684\u8ECC\u8DE1" : "\u8DEF\u7DDA\u8207\u5730\u5F62"}</h2><p>${file === directMap ? "\u5BE6\u969B GPS \u4F4D\u7F6E" : "\u539F\u59CB GPX \u5EA7\u6A19"} \xB7 ${state.mapMode === "terrain" ? "\u53EF\u65CB\u8F49\u8996\u89D2" : "\u5317\u65B9\u671D\u4E0A"}</p></div><span class="chip">${(file === directMap ? live : file.segments).filter((segment) => segment.length).length} \u6BB5\u8ECC\u8DE1</span></div>
+    function mapPanel(file, position2 = null, live = [], { compact = false } = {}) {
+      return `<section class="panel ${compact ? "compact-map" : ""}"><div class="panel-header"><div><h2>${file === directMap ? "\u6211\u7684\u8ECC\u8DE1" : "\u8DEF\u7DDA\u8207\u5730\u5F62"}</h2><p>${file === directMap ? "\u5BE6\u969B GPS \u4F4D\u7F6E" : file.processing ? "\u6821\u6B63\u5F8C GPX \u8DEF\u7DDA" : "GPX \u8DEF\u7DDA"} \xB7 ${state.mapMode === "terrain" ? "\u53EF\u65CB\u8F49\u8996\u89D2" : "\u5317\u65B9\u671D\u4E0A"}</p></div><span class="chip">${(file === directMap ? live : file.segments).filter((segment) => segment.length).length} \u6BB5\u8ECC\u8DE1</span></div>
     <div class="terrain-toolbar"><div class="tab-group" role="group" aria-label="\u5730\u5716\u6A21\u5F0F">${[
         ["standard", "\u6A19\u6E96"],
         ["terrain", "3D \u5730\u5F62"],
@@ -3689,7 +5080,7 @@
         )
       ).join("")}</div>${button("\u770B\u5168\u7A0B", "map-fit", "", "locate")}</div>
     ${state.mapMode === "terrain" ? `<div class="terrain-camera-controls" role="group" aria-label="3D \u8996\u89D2"><label for="map-pitch">\u50BE\u659C <span id="map-pitch-value">${Math.round(terrainMap.pitch())}\xB0</span></label><input id="map-pitch" type="range" min="0" max="75" step="5" value="${Math.round(terrainMap.pitch())}">${button("\u5DE6\u8F49", "map-rotate", "ghost", "", 'data-angle="-30"')}${button("\u53F3\u8F49", "map-rotate", "ghost", "", 'data-angle="30"')}${button("\u5317\u5411", "map-north", "ghost")}</div><p class="terrain-gesture-note">\u53F3\u9375\u62D6\u66F3\u53EF\u65CB\u8F49\u8207\u50BE\u659C\uFF1B\u624B\u6A5F\u53EF\u96D9\u6307\u65CB\u8F49\u3001\u4E0A\u4E0B\u6ED1\u52D5\uFF0C\u6216\u4F7F\u7528\u4E0A\u65B9\u8996\u89D2\u63A7\u5236\u3002</p>` : ""}
-    <div class="actual-map" id="track-map">${mapSvg(file, position, live, false, itineraryMarkers(itinerary?.snapshot()))}</div>
+    <div class="actual-map" id="track-map">${mapSvg(file, position2, live, false, itineraryMarkers(itinerary?.snapshot()))}</div>
     <div class="terrain-status-row"><p id="map-status" class="terrain-status" role="status" aria-live="polite">${state.mapMode === "plain" ? "\u55AE\u7D14\u8ECC\u8DE1\u6A21\u5F0F\uFF0C\u4E0D\u8F09\u5165\u5E95\u5716\u3002" : "\u6B63\u5728\u8F09\u5165\u5E95\u5716\u2026"}</p>${button("\u91CD\u8A66\u5E95\u5716", "map-retry", "ghost", "refresh", 'id="map-retry" hidden')}</div>
     <div class="legend">${file === directMap ? "" : `<span><i style="background:#326753"></i>${file.kind === "recording" ? "\u4FDD\u5B58\u7684 GPS \u8ECC\u8DE1" : "\u61C9\u8D70\u8DEF\u7DDA"}</span>`}${live.length ? '<span><i style="background:#4388b7"></i>\u5BE6\u969B GPS \u7D00\u9304</span>' : ""}<span class="legend-note">\u4E2D\u65B7\u8655\u4E0D\u9023\u7DDA \xB7 \u62D6\u66F3\u79FB\u52D5\u3001\u6EFE\u8F2A\u6216\u96D9\u6307\u7E2E\u653E</span></div>
     <p class="terrain-note">${state.mapMode === "plain" ? "\u55AE\u7D14\u8ECC\u8DE1\u6A21\u5F0F\u4E0D\u8ACB\u6C42\u5E95\u5716\uFF0C\u4ECD\u53EF\u7E2E\u653E\u8207\u79FB\u52D5 GPX \u8DEF\u7DDA\u3002" : state.mapMode === "terrain" ? "\u767B\u5C71\u5E95\u5716\uFF1AOpenTopoMap\uFF1B\u7ACB\u9AD4\u9AD8\u7A0B\uFF1AMapterhorn\uFF0C\u539F\u6BD4\u4F8B 1\xD7\u3002\u958B\u555F\u6642\u6703\u5411\u5169\u500B\u5716\u8CC7\u670D\u52D9\u8ACB\u6C42\u700F\u89BD\u5340\u57DF\uFF0CGPX \u4E0D\u6703\u4E0A\u50B3\u3002\u5C1A\u672A\u63D0\u4F9B\u96E2\u7DDA 3D \u5730\u5716\u3002" : "\u5DF2\u4E0B\u8F09\u6642\u4F7F\u7528\u672C\u6A5F\u53F0\u7063\u6A19\u6E96\u5E95\u5716\uFF08OSM\uFF0FProtomaps\uFF09\uFF1B\u5426\u5247\u4F7F\u7528 OSM \u7DDA\u4E0A\u5E95\u5716\u3002\u5169\u7A2E\u5E95\u5716\u6A23\u5F0F\u7565\u6709\u4E0D\u540C\uFF0CGPX \u6A94\u6848\u4E0D\u6703\u4E0A\u50B3\u3002"}</p>
@@ -3699,8 +5090,147 @@
     return { mapPanel, heightPanel };
   }
 
+  // src/features/gpx/diagnostics.js
+  var DIAGNOSTIC_PAGE_SIZE = 20;
+  var REASONS = {
+    "isolated-position-spike": ["GPS \u8DF3\u9EDE", "\u4F9D\u76F8\u9130\u4F4D\u7F6E\u8207\u6642\u9593\u5167\u63D2\u6821\u6B63\u3002"],
+    "unconfirmed-position-jump": ["\u672A\u78BA\u8A8D\u7684 GPS \u8DF3\u9EDE", "\u66AB\u4E0D\u7D0D\u5165\u5206\u6790\uFF0C\u5728\u6B64\u8655\u4E2D\u65B7\u8ECC\u8DE1\u3002"],
+    "suspect-spike-without-time": ["\u7591\u4F3C GPS \u8DF3\u9EDE", "\u7F3A\u4E4F\u53EF\u9760\u6642\u9593\uFF0C\u4FDD\u7559\u539F\u4F4D\u7F6E\u4F9B\u6838\u5C0D\u3002"],
+    "stationary-drift": ["\u505C\u7559\u6642\u7684\u6C34\u5E73\u6F02\u79FB", "\u5C07\u505C\u7559\u7BC4\u570D\u5167\u7684\u5F80\u8FD4\u6F02\u79FB\u6536\u6582\u81F3\u4E2D\u5FC3\u3002"],
+    "horizontal-smoothing": ["\u6C34\u5E73\u96DC\u8A0A", "\u6CBF\u8DEF\u7DDA\u5E73\u6ED1\u7D30\u5C0F\u7684\u4F4D\u7F6E\u8D77\u4F0F\u3002"],
+    "elevation-median": ["\u9AD8\u5EA6\u96DC\u8A0A", "\u4EE5\u9130\u8FD1\u9AD8\u5EA6\u7684\u4E2D\u4F4D\u6578\u6291\u5236\u96DC\u8A0A\u3002"],
+    "elevation-hysteresis": ["\u9AD8\u5EA6\u5C0F\u5E45\u53CD\u8986", "\u6291\u5236\u5C0F\u5E45\u5F80\u8FD4\u8D77\u4F0F\uFF0C\u4FDD\u7559\u6301\u7E8C\u5347\u964D\u3002"],
+    "low-horizontal-accuracy": ["\u6C34\u5E73\u7CBE\u5EA6\u4E0D\u8DB3", "\u4E0D\u7D0D\u5165\u5206\u6790\uFF0C\u5728\u6B64\u8655\u4E2D\u65B7\u8ECC\u8DE1\u3002"],
+    "low-altitude-accuracy": ["\u9AD8\u5EA6\u7CBE\u5EA6\u4E0D\u8DB3", "\u9AD8\u5EA6\u4FDD\u7559\u672A\u77E5\uFF0C\u4E0D\u88DC\u7B97\u722C\u5347\u6216\u4E0B\u964D\u3002"]
+  };
+  var nonnegative = (value2) => Number.isFinite(value2) && value2 >= 0 ? value2 : null;
+  var sourceKey = (segment, index) => `${segment}:${index}`;
+  var validIndex = (value2) => Number.isInteger(value2) && value2 >= 0;
+  function snapshot2(point) {
+    if (!point) return null;
+    const located = Number.isFinite(point.lat) && Number.isFinite(point.lon) && Math.abs(point.lat) <= 90 && Math.abs(point.lon) <= 180;
+    return {
+      position: located ? { lat: point.lat, lon: point.lon } : null,
+      elevation: Number.isFinite(point.elevation) ? point.elevation : null,
+      time: Number.isFinite(point.time) && Math.abs(point.time) <= 864e13 ? point.time : null
+    };
+  }
+  function metric2(stats, key) {
+    if (stats?.points === 0 || stats?.points > 0 && stats.points === stats.excludedPoints)
+      return null;
+    return nonnegative(stats?.[key]);
+  }
+  function comparison(original, corrected) {
+    original = nonnegative(original);
+    corrected = nonnegative(corrected);
+    const percent2 = original !== null && original > 0 && corrected !== null ? (corrected - original) / original * 100 : null;
+    return { original, corrected, percent: Number.isFinite(percent2) ? percent2 : null };
+  }
+  function correctionReport(file) {
+    const processed = !!file?.processing;
+    const diagnostics = file?.processing?.diagnostics;
+    const knownReasons = Array.isArray(diagnostics);
+    const points = /* @__PURE__ */ new Map();
+    for (const point of file?.points ?? []) {
+      points.set(
+        sourceKey(point.rawSegment ?? point.segment, point.rawIndex ?? point.sourceIndex),
+        point
+      );
+    }
+    const counts = /* @__PURE__ */ new Map();
+    const entries = (knownReasons ? diagnostics : []).map((item) => {
+      const reasons = [...new Set(item.reasons ?? [])].map((code) => {
+        counts.set(code, (counts.get(code) ?? 0) + 1);
+        const [label, description] = REASONS[code] ?? ["\u5176\u4ED6\u8655\u7406", String(code)];
+        return { code, label, description };
+      });
+      const located = validIndex(item.segment) && validIndex(item.sourceIndex);
+      const original = located ? file.rawSegments?.[item.segment]?.[item.sourceIndex] : null;
+      const corrected = located ? points.get(sourceKey(item.segment, item.sourceIndex)) : null;
+      return {
+        segment: located ? item.segment : null,
+        sourceIndex: located ? item.sourceIndex : null,
+        gpxSegment: original ? file.direction === "reverse" ? file.rawSegments.length - 1 - item.segment : item.segment : null,
+        gpxIndex: original ? file.direction === "reverse" ? file.rawSegments[item.segment].length - 1 - item.sourceIndex : item.sourceIndex : null,
+        original: snapshot2(original),
+        corrected: snapshot2(corrected),
+        excluded: reasons.some(
+          (reason) => ["low-horizontal-accuracy", "unconfirmed-position-jump"].includes(reason.code)
+        ),
+        reasons
+      };
+    });
+    entries.sort(
+      (a, b) => (a.segment ?? Infinity) - (b.segment ?? Infinity) || (a.sourceIndex ?? Infinity) - (b.sourceIndex ?? Infinity)
+    );
+    return {
+      processed,
+      knownReasons,
+      metrics: [
+        ["km", "\u8DDD\u96E2", "km"],
+        ["up", "\u722C\u5347", "m"],
+        ["down", "\u4E0B\u964D", "m"]
+      ].map(([key, label, unit]) => ({
+        key,
+        label,
+        unit,
+        ...comparison(metric2(file?.rawStats, key), processed ? metric2(file?.stats, key) : null)
+      })),
+      reasons: [...counts].map(([code, count]) => ({
+        code,
+        label: REASONS[code]?.[0] ?? "\u5176\u4ED6\u8655\u7406",
+        count
+      })),
+      entries
+    };
+  }
+
+  // src/features/gpx/diagnostics-view.js
+  var value = (number, unit) => number === null ? "\u672A\u77E5" : `${unit === "km" ? number.toFixed(2) : Math.round(number).toLocaleString("zh-TW")} ${unit}`;
+  var percent = (number) => {
+    if (number === null) return "\u672A\u77E5";
+    const rounded = Number(number.toFixed(1));
+    return `${rounded > 0 ? "+" : ""}${rounded.toFixed(1)}%`;
+  };
+  var position = (point) => point?.position ? `${point.position.lat.toFixed(6)}, ${point.position.lon.toFixed(6)}` : "\u672A\u77E5";
+  var time = (point) => point?.time == null ? "\u672A\u77E5" : new Date(point.time).toLocaleString("zh-TW", {
+    timeZone: "Asia/Taipei",
+    hourCycle: "h23"
+  }) + "\uFF08\u53F0\u7063\u6642\u9593\uFF09";
+  function createCorrectionView({ state = {} } = {}) {
+    const reports = /* @__PURE__ */ new WeakMap();
+    return function correctionPanel(file) {
+      if (!reports.has(file)) reports.set(file, correctionReport(file));
+      const report = reports.get(file);
+      const pages = Math.max(1, Math.ceil(report.entries.length / DIAGNOSTIC_PAGE_SIZE));
+      const requested = state.correctionPage?.file === file ? state.correctionPage.page : 0;
+      const page = Number.isInteger(requested) ? Math.max(0, Math.min(pages - 1, requested)) : 0;
+      const offset = page * DIAGNOSTIC_PAGE_SIZE;
+      const entries = report.entries.slice(offset, offset + DIAGNOSTIC_PAGE_SIZE);
+      return `<section class="panel panel-body stack correction-panel" aria-labelledby="correction-heading">
+      <div><h2 id="correction-heading">GPX \u6821\u6B63\u8A3A\u65B7</h2><p class="small muted">\u539F\u59CB GPX \u4FDD\u6301\u4E0D\u8B8A\u3002\u4EE5\u4E0B\u4F9D\u76EE\u524D\u884C\u8D70\u65B9\u5411\u6BD4\u8F03\uFF0C\u6821\u6B63\u7D50\u679C\u4F9B\u8DEF\u7DDA\u5206\u6790\u4F7F\u7528\u3002</p></div>
+      <table class="correction-comparison"><caption class="small">\u539F\u59CB\u8207\u6821\u6B63\u5F8C\u7684\u7D71\u8A08\u6BD4\u8F03</caption><thead><tr><th scope="col">\u9805\u76EE</th><th scope="col">\u539F\u59CB</th><th scope="col">\u6821\u6B63\u5F8C</th><th scope="col">\u5DEE\u7570</th></tr></thead><tbody>${report.metrics.map((row) => `<tr data-metric="${row.key}"><th scope="row">${row.label}</th><td data-value="original">${value(row.original, row.unit)}</td><td data-value="corrected">${value(row.corrected, row.unit)}</td><td data-value="percent">${percent(row.percent)}</td></tr>`).join("")}</tbody></table>
+      <p class="small muted">\u5DEE\u7570\uFF1D\uFF08\u6821\u6B63\u5F8C \u2212 \u539F\u59CB\uFF09\xF7 \u539F\u59CB \xD7 100%\uFF0C\u4EE5\u672A\u53D6\u6574\u6578\u503C\u8A08\u7B97\u3002\u539F\u59CB\u70BA 0 \u6216\u8CC7\u6599\u4E0D\u8DB3\u6642\uFF0C\u767E\u5206\u6BD4\u986F\u793A\u672A\u77E5\u3002</p>
+      ${!report.processed ? '<p class="soft-notice">\u6B64\u8ECC\u8DE1\u5C1A\u7121\u6821\u6B63\u8CC7\u6599\uFF0C\u7121\u6CD5\u6BD4\u8F03\u6821\u6B63\u7D50\u679C\u3002</p>' : ""}
+      <details id="correction-details"><summary>\u8655\u7406\u539F\u56E0\u8207\u4F4D\u7F6E \xB7 ${report.knownReasons ? `${report.entries.length.toLocaleString("zh-TW")} \u500B\u6A19\u8A18\u9EDE` : "\u672A\u77E5"}</summary>
+      <p class="small muted">\u4EE5\u4E0B\u70BA\u6FFE\u6CE2\u5224\u5B9A\uFF0C\u4E26\u975E\u73FE\u5730\u91CF\u6E2C\u3002\u6E05\u55AE\u4F9D\u76EE\u524D\u884C\u8D70\u65B9\u5411\u7DE8\u865F\uFF0C\u540C\u6642\u9644\u4E0A\u539F\u59CB GPX \u9EDE\u4F4D\uFF1B\u540C\u4E00\u9EDE\u53EF\u6709\u591A\u500B\u539F\u56E0\u3002\u7F3A\u4E4F\u53EF\u9760\u6642\u9593\u7684\u7591\u4F3C\u8DF3\u9EDE\u6703\u4FDD\u7559\u539F\u4F4D\u7F6E\u3002</p>
+      ${report.reasons.length ? `<ul class="correction-reasons">${report.reasons.map((reason) => `<li>${esc(reason.label)} <strong>${reason.count.toLocaleString("zh-TW")} \u9EDE</strong></li>`).join("")}</ul>` : `<p class="correction-empty">${report.knownReasons ? "\u672A\u6A19\u8A18\u9700\u8981\u8655\u7406\u6216\u63D0\u9192\u7684\u9EDE\u3002" : "\u672A\u63D0\u4F9B\u8655\u7406\u539F\u56E0\uFF0C\u986F\u793A\u672A\u77E5\u3002"}</p>`}
+      <ol class="correction-points" start="${offset + 1}">${entries.map(
+        (entry) => `<li data-segment="${entry.segment ?? ""}" data-point="${entry.sourceIndex ?? ""}"><div class="correction-point-heading"><strong>${entry.segment === null ? "\u4F4D\u7F6E\u7D22\u5F15\u672A\u77E5" : `\u7B2C ${entry.segment + 1} \u6BB5 \xB7 \u7B2C ${entry.sourceIndex + 1} \u9EDE`}</strong><span>${entry.reasons.map((reason) => esc(reason.label)).join("\u3001") || "\u8655\u7406\u539F\u56E0\u672A\u77E5"}</span></div>
+      <p class="small muted">\u539F\u59CB GPX \u9EDE\u4F4D\uFF1A${entry.gpxSegment === null ? "\u672A\u77E5" : `\u7B2C ${entry.gpxSegment + 1} \u6BB5 \xB7 \u7B2C ${entry.gpxIndex + 1} \u9EDE`}</p>
+      <p class="small">${entry.reasons.map((reason) => esc(reason.description)).join(" ")}</p>
+      <dl class="correction-locations"><div><dt>\u539F\u59CB\u4F4D\u7F6E\uFF08\u7DEF\u5EA6\u3001\u7D93\u5EA6\uFF09</dt><dd>${position(entry.original)}</dd></div><div><dt>\u6821\u6B63\u5F8C\u4F4D\u7F6E\uFF08\u7DEF\u5EA6\u3001\u7D93\u5EA6\uFF09</dt><dd>${entry.excluded ? "\u4E0D\u7D0D\u5165\u5206\u6790" : position(entry.corrected)}</dd></div><div><dt>\u6D77\u62D4\uFF1A\u539F\u59CB \u2192 \u6821\u6B63\u5F8C</dt><dd>${value(entry.original?.elevation ?? null, "m")} \u2192 ${value(entry.corrected?.elevation ?? null, "m")}</dd></div><div><dt>\u539F\u59CB\u6642\u9593</dt><dd>${esc(time(entry.original))}</dd></div></dl></li>`
+      ).join("")}</ol>
+      ${pages > 1 ? `<nav class="correction-pagination" aria-label="\u8A3A\u65B7\u5206\u9801">${button("\u4E0A\u4E00\u9801", "correction-page", "ghost", "", `data-page="${page - 1}" ${page === 0 ? "disabled" : ""}`)}<span role="status">\u7B2C ${page + 1} / ${pages} \u9801 \xB7 ${offset + 1}\u2013${offset + entries.length} \u9EDE</span>${button("\u4E0B\u4E00\u9801", "correction-page", "ghost", "", `data-page="${page + 1}" ${page === pages - 1 ? "disabled" : ""}`)}</nav>` : ""}
+      </details>
+      ${typeof file.raw === "string" && file.id ? button("\u4E0B\u8F09\u539F\u59CB GPX", "file-download", "ghost", "download", `data-id="${esc(file.id)}"`) : ""}
+    </section>`;
+    };
+  }
+
   // src/features/routes/views.js
   function createRouteViews({ current, gpsPending: gpsPending2, mapPanel, itineraryViews, state }) {
+    const correctionPanel = createCorrectionView({ state });
     function routeStats(file) {
       return `<div class="stats">${metric("\u8ECC\u8DE1\u8DDD\u96E2", file.stats.km.toFixed(2), "km", "distance")}${metric("\u4E0A\u6CB3 1.0 \u6642\u9593", itineraryViews?.referenceDuration() ?? "\u5C1A\u672A\u63D0\u4F9B", "", "clock")}${metric("\u7D2F\u7A4D\u722C\u5347", meters(file.stats.up), "m", "up")}${metric("\u7D2F\u7A4D\u4E0B\u964D", meters(file.stats.down), "m", "down")}</div>`;
     }
@@ -3708,12 +5238,12 @@
       const file = current();
       if (!file) return emptyView();
       return `<div class="content-grid ${itineraryViews ? "itinerary-layout" : ""}"><div class="main-column"><section class="panel"><div class="route-heading"><span class="eyebrow">YOUR GPX \xB7 ${file.stats.points.toLocaleString()} POINTS</span><h2>${esc(file.name)}</h2><p>${esc(file.fileName)} \xB7 ${file.direction === "reverse" ? "\u53CD\u5411\u8D70\uFF08GPX \u7D42\u9EDE\u51FA\u767C\uFF09" : "\u539F\u5411\u8D70\uFF08GPX \u8D77\u9EDE\u51FA\u767C\uFF09"}</p></div>${routeStats(file)}</section>${mapPanel(file)}${itineraryViews?.stationsPanel() ?? ""}
-    <section class="panel panel-body stack"><h2>\u8CC7\u6599\u5B8C\u6574\u5EA6</h2><div class="data-checks">
+    ${correctionPanel(file)}<section class="panel panel-body stack"><h2>\u8CC7\u6599\u5B8C\u6574\u5EA6</h2><div class="data-checks">
       <div><strong>\u6642\u9593\u4F9D\u64DA</strong><span>\u4E0A\u6CB3 1.0 \u6709\u5411\u6642\u9593\uFF1B\u7F3A\u6F0F\u8207\u591A\u8DEF\u5F91\u539F\u56E0\u5217\u5728\u7AD9\u9EDE\u6E05\u55AE</span></div>
       <div><strong>\u6D77\u62D4\u8CC7\u6599</strong><span>${file.stats.withElevation.toLocaleString()} / ${file.stats.points.toLocaleString()} \u9EDE</span></div>
       <div><strong>\u8ECC\u8DE1\u5206\u6BB5</strong><span>${file.segments.length} \u6BB5 \xB7 \u4E2D\u65B7\u8655\u4E0D\u9023\u7DDA</span></div>
     </div>${file.warnings.map((warning) => `<p class="soft-notice">${esc(warning)}</p>`).join("")}
-    <p class="small muted">\u9AD8\u5EA6\u76F4\u63A5\u53D6\u81EA GPX\uFF0C\u722C\u5347\u8207\u4E0B\u964D\u70BA\u76F8\u9130\u9EDE\u52A0\u7E3D\uFF0C\u672A\u7D93\u53BB\u566A\u3002\u7AD9\u9EDE\u8207\u4E0A\u6CB3\u6642\u9593\u5DF2\u5167\u5EFA\uFF1B\u6709\u57FA\u6E96\u7684\u76F8\u9130\u8DEF\u6BB5\u6703\u986F\u793A ETA\uFF0C\u7121\u6CD5\u78BA\u8A8D\u7684\u8DEF\u6BB5\u4FDD\u7559\u5F85\u88DC\u3002\u65E5\u591C\u5857\u8272\u4F9D\u53C3\u8003\u7E23\u5E02\u5B98\u65B9\u65E5\u51FA\uFF0F\u65E5\u843D\u8207\u8DEF\u6BB5 ETA \u986F\u793A\uFF1B\u8CC7\u6599\u4E0D\u8DB3\u4FDD\u7559\u7070\u8272\u3002</p></section></div>
+    <p class="small muted">${file.processing ? "\u8DEF\u7DDA\u8DDD\u96E2\u8207\u6D77\u62D4\u5DF2\u6821\u6B63 GPS \u6296\u52D5\uFF0C\u722C\u5347\uFF0F\u4E0B\u964D\u8207\u9AD8\u5EA6\u5256\u9762\u4F7F\u7528\u76F8\u540C\u8CC7\u6599\uFF1B\u539F\u59CB GPX \u4FDD\u6301\u4E0D\u8B8A\u3002" : "\u9AD8\u5EA6\u76F4\u63A5\u53D6\u81EA GPX\uFF0C\u722C\u5347\u8207\u4E0B\u964D\u70BA\u76F8\u9130\u9EDE\u52A0\u7E3D\uFF0C\u672A\u7D93\u53BB\u566A\u3002"}\u7AD9\u9EDE\u8207\u4E0A\u6CB3\u6642\u9593\u5DF2\u5167\u5EFA\uFF1B\u6709\u57FA\u6E96\u7684\u76F8\u9130\u8DEF\u6BB5\u6703\u986F\u793A ETA\uFF0C\u7121\u6CD5\u78BA\u8A8D\u7684\u8DEF\u6BB5\u4FDD\u7559\u5F85\u88DC\u3002\u65E5\u591C\u5857\u8272\u4F9D\u53C3\u8003\u7E23\u5E02\u5B98\u65B9\u65E5\u51FA\uFF0F\u65E5\u843D\u8207\u8DEF\u6BB5 ETA \u986F\u793A\uFF1B\u8CC7\u6599\u4E0D\u8DB3\u4FDD\u7559\u7070\u8272\u3002</p></section></div>
     <aside class="side-column">${file.kind === "recording" ? `<section class="panel panel-body stack"><h2>\u4F60\u4FDD\u5B58\u7684\u8ECC\u8DE1</h2>${button("\u4E0B\u8F09 GPX", "file-download", "primary", "download", `data-id="${file.id}"`)}<p class="small muted">\u9019\u662F\u5BE6\u969B\u7D00\u9304\u3002\u82E5\u8981\u4F5C\u70BA\u4E0B\u6B21\u53C3\u8003\u8DEF\u7DDA\uFF0C\u53EF\u4E0B\u8F09\u5F8C\u532F\u5165\u300C\u6211\u7684\u8DEF\u7DDA\u300D\u3002</p></section>` : settingsPanel(file) + (itineraryViews?.nextCard() ?? nextCard(file))}${button("\u66F4\u63DB\u8DEF\u7DDA", "choose-route", "", "compass", gpsPending2() ? "disabled" : "")}</aside></div>`;
     }
     function settingsPanel(_file) {
@@ -3766,10 +5296,18 @@
   }
 
   // src/features/gpx/actions.js
-  function createLibraryActions({ state, library, render, feedback }) {
+  function createLibraryActions({ state, library, current, render, feedback }) {
     const { modal } = feedback;
     return {
       select: (target) => library.selectFile(target.dataset.id),
+      "correction-page": (target) => {
+        const file = current?.();
+        const page = Number(target.dataset.page);
+        const pages = Math.ceil((file?.processing?.diagnostics?.length ?? 0) / DIAGNOSTIC_PAGE_SIZE);
+        if (!file || !Number.isInteger(page) || page < 0 || page >= pages) return;
+        state.correctionPage = { file, page };
+        render();
+      },
       "file-download": (target) => {
         const file = state.library.find((file2) => file2.id === target.dataset.id);
         if (file) downloadGpx(file.raw, file.fileName);
@@ -3912,7 +5450,7 @@
       terrainMap.mount(
         document2.getElementById("track-map"),
         state.view === "record" && gpsPending2() ? recordingRoute2() : current(),
-        state.view === "record" ? state.gps.segments : [],
+        state.view === "record" ? recordingSegments(state.gps) : [],
         state.mapMode,
         itineraryMarkers(itinerary?.snapshot())
       );
@@ -3968,8 +5506,8 @@
       this.segmentIndex = segmentIndex;
     }
   };
-  var isObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-  var isId = (value) => typeof value === "string" && value.trim().length > 0;
+  var isObject = (value2) => value2 !== null && typeof value2 === "object" && !Array.isArray(value2);
+  var isId = (value2) => typeof value2 === "string" && value2.trim().length > 0;
   function validateInput(request) {
     if (!isObject(request)) throw new EtaInputError("invalid_request");
     const { departureUtcMs, segments, multiplier = 1, mode = "trail" } = request;
@@ -4001,8 +5539,8 @@
   }
 
   // ../packages/prediction-engine/internal/decimal.js
-  function decimal(value) {
-    const [mantissa, exponentText = "0"] = String(value).toLowerCase().split("e");
+  function decimal(value2) {
+    const [mantissa, exponentText = "0"] = String(value2).toLowerCase().split("e");
     const [whole, fraction = ""] = mantissa.split(".");
     const exponent = Number(exponentText);
     let coefficient = BigInt(whole + fraction);
@@ -4020,8 +5558,8 @@
   function multiply(a, b) {
     return { coefficient: a.coefficient * b.coefficient, scale: a.scale + b.scale };
   }
-  function asNumber(value) {
-    return Number(`${value.coefficient}e-${value.scale}`);
+  function asNumber(value2) {
+    return Number(`${value2.coefficient}e-${value2.scale}`);
   }
   function roundedMs(seconds) {
     const numerator = seconds.coefficient * 1000n;
@@ -4168,9 +5706,9 @@
   var DATA_STATES = /* @__PURE__ */ new Set(["distinct", "duplicate", "conflict"]);
   var REST_STATES2 = /* @__PURE__ */ new Set(["included", "excluded", "unknown"]);
   var LOAD_VARIANTS = /* @__PURE__ */ new Map([["light", "light"], ["heavy", "heavy"], ["\u8F15\u88DD", "light"], ["\u91CD\u88DD", "heavy"]]);
-  var id = (value) => typeof value === "string" && value.trim().length > 0;
-  var object = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
-  var copy = (value) => structuredClone(value);
+  var id = (value2) => typeof value2 === "string" && value2.trim().length > 0;
+  var object = (value2) => value2 !== null && typeof value2 === "object" && !Array.isArray(value2);
+  var copy = (value2) => structuredClone(value2);
   var AdapterInputError = class extends TypeError {
     constructor(code, path = null) {
       super(code);
@@ -4186,14 +5724,14 @@
   var etaStatus = (code) => code === "time_variant_required" ? "variant_required" : ["load_unavailable", "load_applicability_ambiguous"].includes(code) ? "load_required" : code === "conflicting_directed_edge" ? "conflict" : ["missing_time", "missing_directed_edge"].includes(code) ? "missing" : "unavailable";
 
   // ../packages/route-time-adapter/internal/validation.js
-  function validateJsonValue(value, ancestors = /* @__PURE__ */ new Set()) {
-    if (value === null || typeof value === "string" || typeof value === "boolean") return;
-    if (typeof value === "number" && Number.isFinite(value)) return;
-    requireValue(Array.isArray(value) || object(value) && [Object.prototype, null].includes(Object.getPrototypeOf(value)), "non_json_database");
-    requireValue(!ancestors.has(value), "non_json_database");
-    ancestors.add(value);
-    for (const item of Array.isArray(value) ? value : Object.values(value)) validateJsonValue(item, ancestors);
-    ancestors.delete(value);
+  function validateJsonValue(value2, ancestors = /* @__PURE__ */ new Set()) {
+    if (value2 === null || typeof value2 === "string" || typeof value2 === "boolean") return;
+    if (typeof value2 === "number" && Number.isFinite(value2)) return;
+    requireValue(Array.isArray(value2) || object(value2) && [Object.prototype, null].includes(Object.getPrototypeOf(value2)), "non_json_database");
+    requireValue(!ancestors.has(value2), "non_json_database");
+    ancestors.add(value2);
+    for (const item of Array.isArray(value2) ? value2 : Object.values(value2)) validateJsonValue(item, ancestors);
+    ancestors.delete(value2);
   }
   function validateProfile(request) {
     requireValue(object(request), "invalid_request");
@@ -4274,12 +5812,12 @@
   }
 
   // ../packages/route-time-adapter/internal/nodes.js
-  function resolveNode(nodes, names, value, area) {
-    if (nodes.has(value)) {
-      const node = nodes.get(value);
+  function resolveNode(nodes, names, value2, area) {
+    if (nodes.has(value2)) {
+      const node = nodes.get(value2);
       return area === null || area === node.area ? { node } : { error: failure("area_mismatch", [], { requestedArea: area, actualArea: node.area }) };
     }
-    const candidates = (names.get(value) ?? []).filter((node) => area === null || node.area === area);
+    const candidates = (names.get(value2) ?? []).filter((node) => area === null || node.area === area);
     if (!candidates.length) return { error: failure("node_not_found") };
     if (candidates.length > 1) return { error: failure("node_ambiguous", [], { candidateNodeIds: candidates.map((node) => node.id) }) };
     return { node: candidates[0] };
@@ -4312,7 +5850,7 @@
     if (chosen.some((r) => LOAD_VARIANTS.has(r.timeVariant) && LOAD_VARIANTS.get(r.timeVariant) !== r.load || ["fast", "slow"].includes(r.timeVariant) && r.timeVariant !== r.speedVariant)) {
       return failure("condition_metadata_conflict", chosen);
     }
-    const variants = [...new Set(chosen.map((r) => r.speedVariant).filter((value) => value !== null))];
+    const variants = [...new Set(chosen.map((r) => r.speedVariant).filter((value2) => value2 !== null))];
     if (variants.length) {
       if (profile.speed === null) return failure("time_variant_required", chosen, { availableSpeeds: variants });
       if (!variants.includes(profile.speed)) return failure("time_variant_unavailable", chosen, { availableSpeeds: variants });
@@ -4366,8 +5904,8 @@
       requireValue(area === null || id(area), "invalid_area");
       return [...this.#nodes.values()].filter((node) => area === null || node.area === area).map((node) => ({ id: node.id, area: node.area, name: node.name }));
     }
-    #resolve(value, area) {
-      return resolveNode(this.#nodes, this.#names, value, area);
+    #resolve(value2, area) {
+      return resolveNode(this.#nodes, this.#names, value2, area);
     }
     #select(area, from, to, profile) {
       return selectDirectedTime(this.#pairs, area, from, to, profile);
@@ -4375,10 +5913,10 @@
     buildPath(request) {
       const profile = validateProfile(request);
       let area = profile.area;
-      const resolved = request.nodes.map((value) => {
-        const result = this.#resolve(value, area);
+      const resolved = request.nodes.map((value2) => {
+        const result = this.#resolve(value2, area);
         if (result.node && area === null) area = result.node.area;
-        return { requested: value, ...result };
+        return { requested: value2, ...result };
       });
       const issues = [];
       const warnings = /* @__PURE__ */ new Set(["reference_times_only", "current_access_unverified"]);
@@ -4492,9 +6030,9 @@
   function matchItinerary(stations, file) {
     const found = findStationsAlongTrack(groupStations(stations), file.segments);
     const raw = found.matches.flatMap(
-      (match) => match.routePositions.map((position) => ({
+      (match) => match.routePositions.map((position2) => ({
         station: match.station,
-        ...position
+        ...position2
       }))
     ).sort((a, b) => a.routeProgressM - b.routeProgressM);
     const occurrences = [];
@@ -4519,8 +6057,8 @@
       )
     };
   }
-  function nearestRouteOffset(file, position) {
-    const probe = { ...position, stationId: "gps-position", coordinateStatus: "located" };
+  function nearestRouteOffset(file, position2) {
+    const probe = { ...position2, stationId: "gps-position", coordinateStatus: "located" };
     const found = findStationsAlongTrack([probe], file.segments, {
       maxOffsetM: 1e4,
       mergeWithinM: 25
@@ -4822,7 +6360,7 @@
         ])
       ]);
     }
-    function snapshot() {
+    function snapshot3() {
       const file = activeFile(), plan = planFor(file), journey = state.gps.itinerary;
       if (!plan) return null;
       const active = Boolean(gpsPending2() && journey && journey.routeId === file.id);
@@ -4877,9 +6415,9 @@
         if (!disposed) ui.error = "\u500D\u7387\u8A2D\u5B9A\u7121\u6CD5\u8B80\u53D6\uFF0C\u5148\u4F7F\u7528 1.0 \u500D\u3002\u5167\u5EFA\u8CC7\u6599\u4ECD\u53EF\u4F7F\u7528\u3002";
       }
     }
-    async function setFactor(value) {
+    async function setFactor(value2) {
       if (gpsPending2()) return;
-      const factor = Number(value);
+      const factor = Number(value2);
       if (!Number.isFinite(factor) || factor <= 0 || factor > 10) {
         feedback.toast("\u8ACB\u8A2D\u5B9A\u5927\u65BC 0\u3001\u81F3\u591A 10 \u7684\u6642\u9593\u500D\u7387\u3002");
         return;
@@ -4906,7 +6444,7 @@
       const gps = state.gps, journey = gps.itinerary;
       if (!journey || gps.status !== "tracking" || !Number.isFinite(gps.accuracy) || gps.accuracy > 50)
         return;
-      const file = recordingRoute2(), plan = planFor(file), point = gps.segments.findLast((segment) => segment.length)?.at(-1);
+      const file = recordingRoute2(), plan = planFor(file), point = recordingFix(gps);
       if (!plan || !point || point.time === journey.lastFixTime || journey.signature !== signature(plan))
         return;
       journey.lastFixTime = point.time;
@@ -4922,10 +6460,10 @@
       }
     }
     function markNext() {
-      const data = snapshot(), journey = state.gps.itinerary;
+      const data = snapshot3(), journey = state.gps.itinerary;
       if (!data?.active || !data.compatible || !data.next || !["tracking", "paused"].includes(state.gps.status))
         return;
-      const point = state.gps.segments.findLast((segment) => segment.length)?.at(-1);
+      const point = recordingFix(state.gps);
       if (!point || !Number.isFinite(state.gps.accuracy) || state.gps.accuracy > 100 || distanceM(point, data.next.station) > 100) {
         feedback.toast("\u5C1A\u672A\u53D6\u5F97\u4E0B\u4E00\u7AD9\u9644\u8FD1\u7684\u6709\u6548 GPS\uFF0C\u8ACB\u78BA\u8A8D\u4F4D\u7F6E\u5F8C\u518D\u5207\u63DB\u3002");
         return;
@@ -4935,7 +6473,7 @@
       render();
     }
     return {
-      snapshot,
+      snapshot: snapshot3,
       restore,
       setFactor,
       begin,
@@ -5022,8 +6560,9 @@
   // src/core/application.js
   function createApplication({
     document: document2 = globalThis.document,
-    window = globalThis.window,
+    window: window2 = globalThis.window,
     navigator = globalThis.navigator,
+    locationProvider = createLocationProvider({ navigator }),
     repository = createGpxRepository(),
     state = createState()
   } = {}) {
@@ -5047,7 +6586,7 @@
       render,
       feedback
     });
-    const navigation = createNavigation({ state, render, window });
+    const navigation = createNavigation({ state, render, window: window2 });
     const { navigate } = navigation;
     const itinerary = createItineraryController({
       state,
@@ -5083,6 +6622,7 @@
       onStatus: () => recordingView?.updateSaveStatus()
     });
     const recording = createRecordingController({
+      locationProvider,
       onJourneyStart: itinerary.begin,
       onJourneyProgress: itinerary.progress,
       state,
@@ -5145,6 +6685,7 @@
     });
     const actions = createActions({
       state,
+      current: selectors.current,
       document: document2,
       render,
       navigate,
@@ -5212,7 +6753,7 @@
         unbind = bindBrowserEvents({
           state,
           document: document2,
-          window,
+          window: window2,
           actions,
           itinerary,
           navigation,
@@ -5257,4 +6798,9 @@
   // src/app.js
   createApplication().start().catch((error) => console.error("Ridgewise could not start:", error));
 })();
+/*! Bundled license information:
+
+@capacitor/core/dist/index.js:
+  (*! Capacitor: https://capacitorjs.com/ - MIT License *)
+*/
 //# sourceMappingURL=app.bundle.js.map
