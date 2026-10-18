@@ -59,9 +59,11 @@
   button:focus-visible,
   a:focus-visible,
   input:focus-visible,
-  select:focus-visible {
-    outline: 3px solid #93b674;
-    outline-offset: 4px;
+  select:focus-visible,
+  summary:focus-visible {
+    outline: 3px solid var(--forest);
+    outline-offset: 3px;
+    box-shadow: 0 0 0 2px white;
   }
   h1,
   h2,
@@ -1981,13 +1983,13 @@
   font-family: inherit;
 }
 .terrain-map-canvas:focus-visible {
-  outline: 3px solid #719263;
+  outline: 3px solid var(--forest);
   outline-offset: -3px;
 }
 .terrain-map-canvas .leaflet-control-zoom a {
-  width: 38px;
-  height: 38px;
-  line-height: 38px;
+  width: 44px;
+  height: 44px;
+  line-height: 44px;
   color: #183e35;
 }
 .terrain-map-canvas .leaflet-control-attribution {
@@ -2018,7 +2020,7 @@
   min-height: 42px;
 }
 .terrain-status {
-  font-size: 12px;
+  font-size: 13px;
   color: #527062;
 }
 .terrain-status[data-kind=error] {
@@ -2030,8 +2032,8 @@
 }
 .terrain-note {
   padding: 0 22px 14px;
-  font-size: 12px;
-  color: #75817b;
+  font-size: 13px;
+  color: var(--muted);
   line-height: 1.7;
 }
 .terrain-camera-controls {
@@ -2059,7 +2061,7 @@
 .terrain-gesture-note {
   padding: 0 22px 12px;
   font-size: 12px;
-  color: #75817b;
+  color: var(--muted);
 }
 .terrain-3d-canvas .maplibregl-ctrl-attrib {
   max-width: calc(100vw - 40px);
@@ -2071,8 +2073,12 @@
   color: #285446;
 }
 .terrain-3d-canvas .maplibregl-ctrl-group button {
-  height: 38px;
-  width: 38px;
+  height: 44px;
+  width: 44px;
+}
+.terrain-map-canvas .leaflet-control-zoom a:focus-visible,
+.terrain-3d-canvas .maplibregl-ctrl-group button:focus-visible {
+  outline-offset: -3px;
 }
 .terrain-3d-canvas canvas {
   outline-offset: -3px;
@@ -2086,7 +2092,7 @@
     gap: 8px;
   }
   .terrain-toolbar .button {
-    font-size: 12px;
+    font-size: 13px;
     padding: 7px 10px;
   }
   .terrain-toolbar .tab-group .button {
@@ -2176,7 +2182,8 @@
   display: block;
 }
 .station-eta small {
-  color: #708174;
+  font-size: 14px;
+  color: var(--muted);
   margin-bottom: 4px;
 }
 .itinerary-resources input {
@@ -2184,6 +2191,28 @@
 }
 .station-list details {
   overflow-wrap: anywhere;
+}
+.station-status {
+  color: #326753;
+  font-weight: 600;
+}
+.route-plan details > summary {
+  min-height: 44px;
+  padding-block: 10px;
+}
+.route-plan .itinerary-next .station-status,
+.route-plan .next-elevation strong {
+  color: white;
+}
+.route-plan .next-elevation span,
+.route-plan .next-details {
+  color: #b5c8b9;
+}
+.route-plan .itinerary-next > .error-message {
+  color: #a14335;
+  background: #fff1ec;
+  padding: 8px;
+  border-radius: 8px;
 }
 @media (max-width: 600px) {
   .station-list li {
@@ -2201,12 +2230,10 @@
   gap: 12px;
 }
 .itinerary-next .next-metrics strong {
-  font-size: 18px;
+  font-size: 20px;
 }
-@media (max-width: 900px) {
-  .itinerary-layout > .side-column {
-    order: -1;
-  }
+.itinerary-next .next-metrics small {
+  font-size: 14px;
 }
 .next-elevation {
   display: grid;
@@ -2222,11 +2249,11 @@
   flex-wrap: wrap;
 }
 .next-elevation span {
-  font-size: 12px;
-  color: #708174;
+  font-size: 14px;
+  color: var(--muted);
 }
 .next-elevation strong {
-  font-size: 16px;
+  font-size: 18px;
   color: #326753;
 }
 .recording-sheet .next-elevation {
@@ -2246,7 +2273,7 @@
   --green: #3a6652;
   --bg: #f5f5ef;
   --ink: #263e33;
-  --muted: #6e7e73;
+  --muted: #53655a;
   --line: #e1e5dc;
   --soft: #eaf0e5;
 }
@@ -2326,7 +2353,7 @@ main#main {
 .bottom-nav button {
   border: 0;
   background: transparent;
-  color: #7a857b;
+  color: var(--muted);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -2347,8 +2374,88 @@ main#main {
 }
 .button {
   min-height: 48px;
+  min-width: 44px;
   border-radius: 12px;
   font-weight: 600;
+}
+.small,
+.stat-label {
+  font-size: 14px;
+}
+.stats .stat-value {
+  font-size: clamp(20px, 1.8vw, 25px);
+}
+input:not([type=checkbox]),
+select {
+  min-height: 44px;
+  font-size: 16px;
+}
+label:has(> input[type=checkbox]) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  cursor: pointer;
+}
+input[type=checkbox] {
+  width: 20px;
+  height: 20px;
+  min-height: 0;
+  flex: 0 0 20px;
+  padding: 0;
+  margin: 0;
+  accent-color: var(--forest);
+}
+.route-heading {
+  padding: 24px;
+}
+.content-grid,
+.main-column,
+.side-column,
+.route-departure {
+  gap: 20px;
+}
+.panel-body > h2,
+.panel-header h2 {
+  font-size: 20px;
+}
+.next-card {
+  padding: 24px;
+}
+.route-plan .next-card :focus-visible {
+  outline-color: var(--lime);
+}
+.route-start .button,
+.record-ready .button,
+.live-controls .button {
+  font-size: 16px;
+}
+.button.danger {
+  background: #a14335;
+  border-color: #a14335;
+  color: #fff;
+}
+.route-plan {
+  grid-template-areas: "summary departure" "content departure" "content sidebar";
+  grid-template-rows: min-content min-content 1fr;
+}
+.route-summary {
+  grid-area: summary;
+  width: 100%;
+  min-width: 0;
+}
+.route-departure {
+  grid-area: departure;
+  display: grid;
+  gap: 20px;
+  width: 100%;
+  min-width: 0;
+}
+.route-plan > .main-column {
+  grid-area: content;
+}
+.route-plan > .side-column {
+  grid-area: sidebar;
 }
 .panel {
   border-radius: 18px;
@@ -2362,7 +2469,7 @@ main#main {
   padding: 0 0 10px;
   background: transparent;
   color: var(--green);
-  min-height: 36px;
+  min-height: 44px;
 }
 .collection-heading {
   display: flex;
@@ -2420,7 +2527,7 @@ main#main {
 }
 .route-card-summary {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 14px;
   margin-top: 5px;
 }
 .route-card-actions {
@@ -2428,10 +2535,10 @@ main#main {
   justify-content: flex-end;
   flex-wrap: wrap;
   margin-top: 10px;
-  gap: 6px;
+  gap: 8px;
 }
 .route-card-actions .button {
-  font-size: 12px;
+  font-size: 14px;
   padding: 8px 12px;
   min-height: 44px;
 }
@@ -2515,20 +2622,47 @@ main#main {
   background: #fafbf6;
 }
 .recording-heading h2 {
-  font-size: 16px;
+  font-size: 18px;
   max-width: 480px;
   overflow-wrap: anywhere;
 }
+.recording-heading > div {
+  min-width: 0;
+}
 .recording-heading .eyebrow {
-  font-size: 9px;
+  font-size: 12px;
   color: var(--muted);
 }
 .record-status {
-  font-size: 11px;
+  font-size: 14px;
   white-space: nowrap;
+  flex-shrink: 0;
+  background: #edf0f2;
+  color: #435568;
+  padding: 6px 10px;
+}
+.record-status[data-status=tracking] {
   background: #e7efdf;
   color: var(--forest);
-  padding: 6px 10px;
+}
+.record-status[data-status=paused] {
+  background: #fff0ca;
+  color: #805100;
+}
+.record-status[data-status=error] {
+  background: #fff1ec;
+  color: #a14335;
+  border: 1px solid currentColor;
+}
+.recording-location-status {
+  margin: 0;
+  padding: 0 20px 12px;
+  font-size: 14px;
+  background: #fafbf6;
+  color: var(--muted);
+}
+.recording-scene[data-status=error] .recording-location-status {
+  color: #a14335;
 }
 .recording-map .panel {
   border: 0;
@@ -2548,9 +2682,9 @@ main#main {
   background: #f4f6ef;
 }
 .compact-map .terrain-toolbar .button {
-  font-size: 11px;
+  font-size: 13px;
   padding: 6px 9px;
-  min-height: 38px;
+  min-height: 44px;
 }
 .compact-map .terrain-toolbar .tab-group {
   min-width: 0;
@@ -2566,11 +2700,11 @@ main#main {
   font-size: 11px;
 }
 .compact-map .terrain-status {
-  font-size: 10px;
+  font-size: 13px;
 }
 .compact-map .legend {
   padding: 4px 16px 20px;
-  font-size: 10px;
+  font-size: 12px;
 }
 .recording-sheet,
 .completion-sheet {
@@ -2605,7 +2739,7 @@ main#main {
 .recording-sheet .itinerary-next h2 {
   font-size: 23px;
 }
-.recording-sheet .itinerary-next > p.small:not(#itinerary-countdown):not(.error-message),
+.recording-sheet .itinerary-next > p.small:not(#itinerary-countdown):not(#itinerary-elevation-status):not(.station-status):not(.error-message),
 .recording-sheet .itinerary-next > .button {
   display: none;
 }
@@ -2615,15 +2749,15 @@ main#main {
   border: 0;
 }
 .recording-sheet .next-metrics strong {
-  font-size: 17px;
+  font-size: 20px;
 }
 .recording-sheet .next-metrics small {
   color: var(--muted);
-  font-size: 10px;
+  font-size: 14px;
 }
 .recording-sheet #itinerary-countdown {
   color: var(--green);
-  font-size: 11px;
+  font-size: 14px;
   padding-top: 5px;
 }
 .live-stats {
@@ -2636,15 +2770,15 @@ main#main {
 .live-stats small {
   color: var(--muted);
   display: block;
-  font-size: 10px;
+  font-size: 13px;
 }
 .live-stats strong {
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 650;
 }
 .live-stats strong small {
   display: inline;
-  font-size: 11px;
+  font-size: 13px;
 }
 .live-controls {
   display: grid;
@@ -2652,18 +2786,18 @@ main#main {
   gap: 12px;
 }
 .end-recording {
-  background: #bd8054;
-  border-color: #bd8054;
+  background: #8a542f;
+  border-color: #8a542f;
   color: white;
 }
 .recording-more {
-  font-size: 12px;
+  font-size: 14px;
   margin-top: 12px;
   color: var(--muted);
 }
 summary {
   cursor: pointer;
-  min-height: 40px;
+  min-height: 44px;
   padding: 10px 0;
 }
 .recording-more .stack {
@@ -2701,7 +2835,7 @@ summary {
 }
 .completion-stats small {
   display: block;
-  font-size: 11px;
+  font-size: 13px;
   color: var(--muted);
 }
 .completion-stats strong {
@@ -2713,7 +2847,7 @@ summary {
 }
 .recording-stopped .record-status {
   background: #e7e9e3;
-  color: #718075;
+  color: #526158;
 }
 .recording-stopped .compact-map .actual-map {
   height: 26dvh;
@@ -2750,7 +2884,7 @@ summary {
     font-size: 25px;
   }
   .page-heading p {
-    font-size: 11px;
+    font-size: 14px;
     max-width: 210px;
   }
   .page-actions .button {
@@ -2764,7 +2898,7 @@ summary {
   .route-grid,
   .library-list {
     grid-template-columns: 1fr;
-    gap: 14px;
+    gap: 16px;
   }
   .route-card {
     padding: 14px;
@@ -2778,9 +2912,17 @@ summary {
     height: 90px;
   }
   .route-card h2 {
-    font-size: 17px;
+    font-size: 18px;
   }
   .panel-body {
+    padding: 20px;
+  }
+  .panel-header,
+  .route-heading,
+  .next-card {
+    padding-inline: 20px;
+  }
+  .dialog-content {
     padding: 20px;
   }
   .content-grid {
@@ -2814,16 +2956,16 @@ summary {
   }
 }
 .next-details {
-  font-size: 12px;
+  font-size: 14px;
   color: var(--muted);
 }
 .recording-sheet .next-details {
   margin-top: 3px;
 }
 .recording-sheet .next-details summary {
-  min-height: 30px;
+  min-height: 44px;
   padding: 5px 0;
-  font-size: 11px;
+  font-size: 14px;
 }
 .recording-sheet .next-metrics {
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2848,7 +2990,7 @@ summary {
 }
 .recording-sheet .next-details summary {
   padding: 3px 0;
-  min-height: 26px;
+  min-height: 44px;
 }
 .recording-sheet .small {
   color: var(--muted);
@@ -2876,6 +3018,22 @@ summary {
 .compact-map .actual-map > svg {
   height: 100%;
   width: 100%;
+}
+.toast {
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  z-index: 1200;
+  width: max-content;
+  max-width: min(520px, calc(100vw - 32px));
+  overflow-wrap: anywhere;
+}
+@media (max-width: 700px) {
+  body:has(.recording-scene:not(.recording-stopped)) .toast {
+    bottom: calc(168px + env(safe-area-inset-bottom));
+  }
+}
+dialog {
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
 }
 
 /* src/features/itinerary/live-factor.css */
@@ -2915,7 +3073,7 @@ summary {
 .live-factor-comparison,
 .live-factor-reason {
   color: var(--factor-muted);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.5;
   margin: 0;
 }
@@ -2925,7 +3083,7 @@ summary {
 }
 .live-factor-details {
   color: var(--factor-muted);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
   overflow-wrap: anywhere;
 }
@@ -3117,8 +3275,8 @@ summary {
 }
 .offline-map-heading div span {
   display: block;
-  color: #718367;
-  font-size: 12px;
+  color: var(--muted);
+  font-size: 13px;
   margin-top: 4px;
 }
 .offline-map-panel p {
@@ -3127,8 +3285,8 @@ summary {
   margin: 10px 0;
 }
 .offline-map-panel .offline-map-note {
-  font-size: 11px;
-  color: #77856e;
+  font-size: 13px;
+  color: var(--muted);
   margin-bottom: 0;
 }
 .offline-map-actions {
@@ -3138,12 +3296,12 @@ summary {
   flex-wrap: wrap;
 }
 .offline-map-actions .button {
-  font-size: 12px;
+  font-size: 14px;
   min-height: 44px;
 }
 .offline-map-actions small {
-  color: #718367;
-  font-size: 11px;
+  color: var(--muted);
+  font-size: 13px;
   overflow-wrap: anywhere;
 }
 #offline-map-progress:not([hidden]) {
