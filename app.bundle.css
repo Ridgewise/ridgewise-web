@@ -1273,6 +1273,117 @@
     color: #6c805f;
     margin: 5px 0 0 4px;
   }
+  .profile-station,
+  .profile-station-label {
+    cursor: pointer;
+    outline: none;
+  }
+  .profile-station-hit {
+    fill: transparent;
+    pointer-events: none;
+  }
+  .profile-station-dot {
+    fill: #326753;
+    stroke: #fff;
+    stroke-width: 2;
+  }
+  .profile-passed .profile-station-dot {
+    fill: #6f8173;
+  }
+  .profile-next .profile-station-dot {
+    fill: #a35a08;
+    stroke-width: 3;
+  }
+  .profile-station:focus .profile-station-dot,
+  .profile-station:hover .profile-station-dot {
+    stroke: #122d4f;
+    stroke-width: 4;
+  }
+  .profile-station-label path {
+    stroke: #61785a;
+    stroke-width: 1;
+    opacity: 0.5;
+    fill: none;
+    pointer-events: none;
+  }
+  .profile-station-label text {
+    fill: #233e2e;
+    font-size: 22px;
+    paint-order: stroke;
+    stroke: #eaf0e0;
+    stroke-width: 5;
+  }
+  .profile-station-label:focus text {
+    fill: #a35a08;
+  }
+  .profile-current {
+    pointer-events: none;
+  }
+  .profile-current path {
+    stroke: #245b9c;
+    stroke-width: 2;
+    stroke-dasharray: 5 4;
+  }
+  .profile-current circle {
+    fill: #245b9c;
+    stroke: #fff;
+    stroke-width: 3;
+  }
+  .profile-stations {
+    color: #355c3e;
+    font-size: 12px;
+    line-height: 1.7;
+  }
+  .profile-station-legend {
+    font-size: 11px;
+    margin: 8px 0;
+  }
+  .profile-station-legend span {
+    color: #607165;
+  }
+  .profile-station-legend b {
+    color: #a35a08;
+  }
+  .profile-station-info {
+    background: #f4f7ed;
+    border: 1px solid #b6c9a8;
+    border-radius: 10px;
+    padding: 12px;
+    margin: 8px 0;
+    overflow-wrap: anywhere;
+  }
+  .profile-visit-list,
+  .profile-nearby {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    gap: 6px;
+    margin: 8px 0;
+  }
+  .profile-nearby > strong {
+    grid-column: 1 / -1;
+  }
+  .profile-visit-choice {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    text-align: left;
+    padding: 10px;
+    min-height: 48px;
+    border: 1px solid #b6c9a8;
+    border-radius: 8px;
+    background: #f4f7ed;
+    color: #355c3e;
+    cursor: pointer;
+    overflow-wrap: anywhere;
+  }
+  .profile-visit-choice[aria-pressed=true] {
+    border-color: #a35a08;
+    box-shadow: inset 0 0 0 1px #a35a08;
+  }
+  #profile-all-visits > summary {
+    padding: 10px 0;
+    cursor: pointer;
+  }
   .elevation-empty {
     display: flex;
     align-items: center;

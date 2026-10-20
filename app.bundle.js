@@ -1366,15 +1366,15 @@
     }
     boundaries.sort((a, b) => a - b);
     const unique = [...new Set(boundaries)];
-    return unique.slice(1).map((time2, index) => {
-      const begin = unique[index], middle = (begin + time2) / 2;
+    return unique.slice(1).map((time3, index) => {
+      const begin = unique[index], middle = (begin + time3) / 2;
       const sun = solarDay(reference, county, taipeiDate(middle));
       const phase = !sun ? "unknown" : middle >= sun.sunrise && middle < sun.sunset ? "day" : "night";
       return {
         fromM: fromM + (toM - fromM) * (begin - start) / (end - start),
-        toM: fromM + (toM - fromM) * (time2 - start) / (end - start),
+        toM: fromM + (toM - fromM) * (time3 - start) / (end - start),
         start: begin,
-        end: time2,
+        end: time3,
         phase,
         date: taipeiDate(middle)
       };
@@ -1485,10 +1485,622 @@
     } };
   }
 
+  // src/domain/track-stream.js
+  function createTrackProcessor({ windowSize = 128, overlap = 32, filterOptions = {} } = {}) {
+    if (!Number.isInteger(windowSize) || windowSize < 32 || windowSize > 512 || !Number.isInteger(overlap) || overlap < 2 || overlap >= windowSize) {
+      throw new RangeError("Expected a window of 32\u2013512 points and an overlap of 2\u2013windowSize-1");
+    }
+    const { options: config2, version } = filterTrack([], filterOptions);
+    const rawSegments = [], correctedSegments = [], points = [];
+    let loaded = false;
+    let active = null, withElevation = 0, excludedPoints = 0;
+    let rawKm = 0, rawUp = 0, rawDown = 0, rawElevation = 0, rawExcluded = 0, lastRaw = null;
+    const display = [];
+    const work = { appendCalls: 0, tailPoints: 0, maxTailPoints: 0, finalizations: 0 };
+    const hasHeight = (p) => Boolean(p && !p.excluded && Number.isFinite(p.elevation));
+    function stats() {
+      const last = points.at(-1), complete = points.length > 0 && points.length === withElevation;
+      return {
+        km: last?.km ?? 0,
+        up: complete ? last.up : null,
+        down: complete ? last.down : null,
+        points: points.length,
+        withElevation,
+        segments: rawSegments.length,
+        excludedPoints
+      };
+    }
+    function rawStats() {
+      const complete = points.length > 0 && points.length === rawElevation;
+      return {
+        km: rawKm,
+        up: complete ? rawUp : null,
+        down: complete ? rawDown : null,
+        points: points.length,
+        withElevation: rawElevation,
+        segments: rawSegments.length,
+        excludedPoints: rawExcluded
+      };
+    }
+    function accountRaw(point, previous) {
+      if (point.excluded) rawExcluded++;
+      if (!point.excluded && Number.isFinite(point.elevation)) rawElevation++;
+      if (previous && !previous.excluded && !point.excluded) {
+        rawKm += haversine(previous, point);
+        if (Number.isFinite(previous.elevation) && Number.isFinite(point.elevation)) {
+          const delta = point.elevation - previous.elevation;
+          rawUp += Math.max(0, delta);
+          rawDown += Math.max(0, -delta);
+        }
+      }
+      lastRaw = point;
+    }
+    function patch(start, result) {
+      const segmentIndex = active.index, output = correctedSegments[segmentIndex];
+      const from = start > 0 ? start + 1 : 0;
+      const cursor = from ? active.cursors[from - 1] : active.displayBefore;
+      display.length = cursor.count;
+      if (display.length) display.at(-1).length = cursor.lastLength;
+      result.correctedSegments[0].forEach((point, i) => {
+        const sourceIndex = start + i, index = active.flatOffset + sourceIndex;
+        if (start > 0 && i === 0) return;
+        const old = points[index], previous = points[index - 1];
+        withElevation += Number(hasHeight(point)) - Number(hasHeight(old));
+        excludedPoints += Number(Boolean(point.excluded)) - Number(Boolean(old?.excluded));
+        const edge = previous?.segment === segmentIndex;
+        const usable = edge && !previous.excluded && !point.excluded;
+        const delta = usable && hasHeight(previous) && hasHeight(point) ? point.elevation - previous.elevation : 0;
+        const indexed = {
+          ...point,
+          segment: segmentIndex,
+          sourceIndex,
+          km: (previous?.km ?? 0) + (usable ? haversine(previous, point) : 0),
+          up: (previous?.up ?? 0) + Math.max(0, delta),
+          down: (previous?.down ?? 0) + Math.max(0, -delta),
+          elevationGapCount: (previous?.elevationGapCount ?? 0) + (edge && !(usable && hasHeight(previous) && hasHeight(point)) ? 1 : 0),
+          reasons: []
+        };
+        output[sourceIndex] = { ...point };
+        points[index] = indexed;
+        if (!point.excluded) {
+          if (!usable) display.push([]);
+          display.at(-1).push(output[sourceIndex]);
+        }
+        active.cursors[sourceIndex] = {
+          count: display.length,
+          lastLength: display.at(-1)?.length ?? 0
+        };
+      });
+      for (const diagnostic of result.diagnostics) {
+        if (start > 0 && diagnostic.sourceIndex === 0) continue;
+        points[active.flatOffset + start + diagnostic.sourceIndex].reasons = [...diagnostic.reasons];
+      }
+    }
+    function append(point) {
+      if (!active) throw new Error("Start a segment before appending a point");
+      if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lon) || Math.abs(point.lat) > 90 || Math.abs(point.lon) > 180)
+        throw new TypeError("Invalid coordinate");
+      const raw = rawSegments[active.index], previous = raw.at(-1), copy3 = { ...point };
+      raw.push(copy3);
+      accountRaw(copy3, previous);
+      const tail = raw.slice(active.start);
+      if (active.start > 0) tail[0] = { ...correctedSegments[active.index][active.start] };
+      const result = filterTrack([tail], config2);
+      work.appendCalls++;
+      work.tailPoints += tail.length;
+      work.maxTailPoints = Math.max(work.maxTailPoints, tail.length);
+      patch(active.start, result);
+      if (tail.length === windowSize) active.start = raw.length - overlap;
+    }
+    function endSegment() {
+      if (!active) return;
+      const raw = rawSegments[active.index];
+      if (raw.length) {
+        patch(0, filterTrack([raw], config2));
+        work.finalizations++;
+      }
+      active = null;
+    }
+    function startSegment() {
+      endSegment();
+      active = {
+        index: rawSegments.length,
+        start: 0,
+        flatOffset: points.length,
+        cursors: [],
+        displayBefore: { count: display.length, lastLength: display.at(-1)?.length ?? 0 }
+      };
+      rawSegments.push([]);
+      correctedSegments.push([]);
+    }
+    function load(segments) {
+      if (loaded || rawSegments.length) throw new Error("A processor may only be loaded once");
+      const result = filterTrack(segments, config2);
+      loaded = true;
+      rawSegments.push(...result.rawSegments);
+      correctedSegments.push(...result.correctedSegments);
+      for (const point of result.points) points.push(point);
+      withElevation = result.stats.withElevation;
+      excludedPoints = points.reduce((sum, p) => sum + Number(Boolean(p.excluded)), 0);
+      points.forEach((p) => {
+        p.reasons = [];
+      });
+      for (const diagnostic of result.diagnostics) {
+        const p = correctedSegments[diagnostic.segment];
+        p[diagnostic.sourceIndex].reasons = [...diagnostic.reasons];
+      }
+      let offset = 0;
+      rawSegments.forEach((segment, index) => {
+        segment.forEach((point, i) => {
+          accountRaw(point, segment[i - 1]);
+          const corrected = correctedSegments[index][i];
+          if (!corrected.excluded) {
+            if (!i || correctedSegments[index][i - 1].excluded) display.push([]);
+            display.at(-1).push(corrected);
+          }
+          points[offset + i].reasons = [...correctedSegments[index][i].reasons ?? []];
+        });
+        offset += segment.length;
+      });
+    }
+    const displaySegments = () => display;
+    function analysis() {
+      return {
+        points,
+        segments: correctedSegments,
+        rawSegments,
+        stats: stats(),
+        rawStats: rawStats(),
+        processing: {
+          version,
+          mode: active ? "incremental" : "batch",
+          windowSize,
+          overlap,
+          options: config2
+        }
+      };
+    }
+    return {
+      startSegment,
+      endSegment,
+      append,
+      load,
+      stats,
+      rawStats,
+      analysis,
+      displaySegments,
+      lastRawPoint: () => lastRaw,
+      latestPoint: () => points.at(-1),
+      work: () => ({ ...work })
+    };
+  }
+
+  // src/features/recording/analysis.js
+  var processors = /* @__PURE__ */ new WeakMap();
+  function recordingProcessor(gps) {
+    if (!processors.has(gps)) {
+      const processor = createTrackProcessor();
+      processor.load(gps.segments);
+      processors.set(gps, processor);
+    }
+    return processors.get(gps);
+  }
+  var recordingAnalysis = (gps) => recordingProcessor(gps).analysis();
+  var recordingStats = (gps) => recordingProcessor(gps).stats();
+  var recordingSegments = (gps) => recordingProcessor(gps).displaySegments();
+  var settleRecording = (gps) => processors.get(gps)?.endSegment();
+  function recordingFix(gps) {
+    const point = processors.get(gps)?.latestPoint();
+    if (point) return point.excluded ? null : point;
+    return gps.segments.findLast((segment) => segment.length)?.at(-1) ?? null;
+  }
+
+  // ../packages/route-stations/index.js
+  var radius = 6371e3;
+  var rad = (degrees) => degrees * Math.PI / 180;
+  var deltaLon = (degrees) => (degrees + 540) % 360 - 180;
+  var statuses = /* @__PURE__ */ new Set(["located", "pending", "ambiguous"]);
+  function requireCoordinate(point) {
+    if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lon) || Math.abs(point.lat) > 90 || Math.abs(point.lon) > 180) {
+      throw new Error("A valid latitude and longitude are required");
+    }
+  }
+  function distanceM(a, b) {
+    requireCoordinate(a);
+    requireCoordinate(b);
+    const h = Math.sin(rad(b.lat - a.lat) / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(rad(deltaLon(b.lon - a.lon)) / 2) ** 2;
+    return 2 * radius * Math.atan2(Math.sqrt(Math.min(1, h)), Math.sqrt(Math.max(0, 1 - h)));
+  }
+  function readCoordinateCatalog(data) {
+    if (!data || data.schemaVersion !== 2 || data.kind !== "station-coordinate-catalog" || data.coordinateReference !== "WGS84" || !Array.isArray(data.stations)) {
+      throw new Error("Expected station coordinate catalog schema v2 (WGS84)");
+    }
+    const ids = /* @__PURE__ */ new Set();
+    for (const station of data.stations) {
+      if (!station || typeof station.stationId !== "string" || !station.stationId || ids.has(station.stationId) || typeof station.name !== "string" || !station.name || !statuses.has(station.coordinateStatus)) {
+        throw new Error("Station identity or coordinate status is invalid");
+      }
+      ids.add(station.stationId);
+      if (station.coordinateStatus === "located") requireCoordinate(station);
+      else if (station.lat !== null || station.lon !== null) throw new Error("Unresolved station coordinates must remain null");
+      for (const field of ["edgeIndex", "fraction", "routeProgressM", "occurrenceId", "gpxWaypointId", "routeRevisionId", "confirmation"]) {
+        if (field in station) throw new Error("Route-specific marking fields do not belong in the coordinate catalog");
+      }
+    }
+    return data.stations;
+  }
+  function usableStations(stations) {
+    if (!Array.isArray(stations)) throw new Error("Expected station coordinate records");
+    return stations.filter((station) => station.coordinateStatus === "located").map((station) => {
+      requireCoordinate(station);
+      return station;
+    });
+  }
+  function createTrackMatcher(segments) {
+    if (!Array.isArray(segments) || !segments.length || segments.some((segment) => !Array.isArray(segment))) throw new Error("Missing GPX segments");
+    const edges = [];
+    let progress = 0;
+    segments.forEach((segment, segmentIndex) => {
+      segment.forEach(requireCoordinate);
+      for (let i = 1; i < segment.length; i++) {
+        const a = segment[i - 1], b = segment[i], length = distanceM(a, b);
+        edges.push({ a, b, length, startM: progress, segmentIndex });
+        progress += length;
+      }
+    });
+    return { match: (stations, options) => matchTrackEdges(stations, edges, progress, options) };
+  }
+  function matchTrackEdges(stations, edges, progress, { maxOffsetM = 100, mergeWithinM = 25, preserveReversals = false } = {}) {
+    if (!Number.isFinite(maxOffsetM) || maxOffsetM <= 0 || !Number.isFinite(mergeWithinM) || mergeWithinM < 0) throw new Error("Invalid matching distances");
+    const matches = [];
+    for (const station of usableStations(stations)) {
+      const groups = [];
+      for (const edge of edges) {
+        const { a, b, length, startM, segmentIndex } = edge;
+        const cos = Math.max(1e-8, Math.cos(rad((a.lat + b.lat) / 2)));
+        const bx = rad(deltaLon(b.lon - a.lon)) * cos * radius, by = rad(b.lat - a.lat) * radius;
+        const px = rad(deltaLon(station.lon - a.lon)) * cos * radius, py = rad(station.lat - a.lat) * radius;
+        const length2 = bx * bx + by * by;
+        const fraction = length2 ? Math.max(0, Math.min(1, (px * bx + py * by) / length2)) : 0;
+        const point = { lat: a.lat + (b.lat - a.lat) * fraction, lon: deltaLon(a.lon + deltaLon(b.lon - a.lon) * fraction) };
+        const offsetM = distanceM(station, point);
+        if (offsetM > maxOffsetM) continue;
+        const position2 = { segmentIndex, routeProgressM: startM + length * fraction, offsetM };
+        const group = groups.at(-1), last = group?.at(-1);
+        const reversal = preserveReversals && last && position2.routeProgressM - last.position.routeProgressM > 1e-6 && bx * last.dx + by * last.dy < 0;
+        const candidate = { position: position2, dx: length2 ? bx : last?.dx ?? 0, dy: length2 ? by : last?.dy ?? 0 };
+        if (last && !reversal && last.position.segmentIndex === segmentIndex && position2.routeProgressM - last.position.routeProgressM <= mergeWithinM) group.push(candidate);
+        else groups.push([candidate]);
+      }
+      const routePositions = groups.map((group) => group.reduce((a, b) => a.position.offsetM <= b.position.offsetM ? a : b).position);
+      if (!routePositions.length) continue;
+      matches.push({
+        station,
+        nearestTrackDistanceM: Math.min(...routePositions.map((point) => point.offsetM)),
+        routePositions,
+        matchStatus: routePositions.length > 1 ? "multiple_route_positions" : "near_track"
+      });
+    }
+    matches.sort((a, b) => a.routePositions[0].routeProgressM - b.routePositions[0].routeProgressM || a.station.stationId.localeCompare(b.station.stationId));
+    return {
+      matches,
+      totalTrackDistanceM: progress,
+      distanceUnit: "m",
+      gapsAreConnected: false,
+      note: "These are coordinate proximity matches. They do not confirm arrival, hut entry, or a complete Shanghe time path."
+    };
+  }
+
+  // src/features/itinerary/station-groups.js
+  function groupStations(stations) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const station of stations) {
+      const key2 = station.coordinateStatus === "located" && station.placeId ? station.placeId : station.stationId;
+      const group = groups.get(key2);
+      if (group) {
+        if (group.lat !== station.lat || group.lon !== station.lon)
+          throw new Error("Conflicting coordinates for one physical station");
+        group.members.push(station);
+      } else groups.set(key2, { ...station, members: [station] });
+    }
+    return [...groups.values()];
+  }
+  var stationMembers = (station) => station.members ?? [station];
+
+  // src/features/itinerary/time-path.js
+  function createTimeGraph(database) {
+    const graph = /* @__PURE__ */ new Map();
+    for (const record of database?.records ?? []) {
+      if (record.mode !== "walk") continue;
+      const key2 = record.fromNodeId;
+      if (!graph.has(key2)) graph.set(key2, /* @__PURE__ */ new Set());
+      graph.get(key2).add(record.toNodeId);
+    }
+    return graph;
+  }
+  function uniqueTimePath(graph, from, to, blocked = /* @__PURE__ */ new Set()) {
+    if (!from || !to) return { nodes: null, reason: "\u672A\u5C0D\u61C9\u6642\u9593\u7BC0\u9EDE" };
+    const paths = [];
+    let visits = 0, limit = false;
+    function search(node, path) {
+      if (++visits > 5e3 || path.length > 30) {
+        limit = true;
+        return;
+      }
+      if (node === to) {
+        paths.push(path);
+        return;
+      }
+      for (const next of graph.get(node) ?? []) {
+        if (paths.length > 1) break;
+        if (!path.includes(next) && (next === to || !blocked.has(next)))
+          search(next, [...path, next]);
+      }
+    }
+    search(from, [from]);
+    if (limit) return { nodes: null, reason: "\u8DEF\u6BB5\u8CC7\u6599\u904E\u65BC\u8907\u96DC\uFF0C\u9700\u6838\u5C0D" };
+    if (paths.length !== 1)
+      return {
+        nodes: null,
+        reason: paths.length ? "\u6709\u591A\u689D\u53EF\u80FD\u8DEF\u5F91\uFF0C\u9700\u6838\u5C0D\u4E2D\u9593\u7AD9\u9EDE" : "\u7F3A\u5C11\u76F8\u9130\u6709\u5411\u8DEF\u6BB5"
+      };
+    return { nodes: paths[0], reason: null };
+  }
+
+  // src/features/itinerary/visit-resolution.js
+  var CLOSE_PASS_M = 25;
+  function resolveBranchVisits(candidates, { ids, graph } = {}) {
+    if (!ids || !graph) return { occurrences: candidates, bypassedOccurrences: [] };
+    const neighbors = /* @__PURE__ */ new Map();
+    for (const [from, targets] of graph)
+      for (const to of targets) {
+        if (!neighbors.has(from)) neighbors.set(from, /* @__PURE__ */ new Set());
+        if (!neighbors.has(to)) neighbors.set(to, /* @__PURE__ */ new Set());
+        neighbors.get(from).add(to);
+        neighbors.get(to).add(from);
+      }
+    const bindings2 = (point) => stationMembers(point.station).map((s) => ids.get(s.stationId));
+    const places = new Map(candidates.flatMap((p) => bindings2(p).map((id2) => [id2, p.station])));
+    const bypassedOccurrences = [];
+    const occurrences = candidates.filter((point, index) => {
+      if (point.offsetM <= CLOSE_PASS_M) return true;
+      const leafIds = bindings2(point);
+      const gates = leafIds.map((id2) => {
+        const adjacent = [...neighbors.get(id2) ?? []];
+        const gate2 = adjacent[0];
+        return adjacent.length === 1 && graph.get(id2)?.has(gate2) && graph.get(gate2)?.has(id2) && neighbors.get(gate2)?.size >= 3 ? places.get(gate2) : null;
+      });
+      if (!gates.length || gates.some((gate2) => !gate2 || gate2 !== gates[0])) return true;
+      const gate = gates[0];
+      if (distanceM(gate, point.station) <= 200) return true;
+      const before = candidates.slice(0, index).findLast((p) => p.station !== point.station);
+      const after = candidates.slice(index + 1).find((p) => p.station !== point.station);
+      if (!before || !after || before.segmentIndex !== point.segmentIndex || after.segmentIndex !== point.segmentIndex)
+        return true;
+      if (before.station === gate && after.station === gate) return true;
+      if (before.station !== gate && after.station !== gate) return true;
+      const mainPath = bindings2(before).some(
+        (a) => bindings2(after).some((b) => uniqueTimePath(graph, a, b, new Set(leafIds)).nodes)
+      );
+      if (!mainPath) return true;
+      bypassedOccurrences.push({
+        ...point,
+        reason: "terminal-branch-pass-without-return-gate",
+        gateStationId: gate.stationId
+      });
+      return false;
+    });
+    return { occurrences, bypassedOccurrences };
+  }
+
+  // src/features/itinerary/matching.js
+  var routeMatchers = /* @__PURE__ */ new WeakMap();
+  function routeMatcherFor(file) {
+    if (!routeMatchers.has(file)) routeMatchers.set(file, createTrackMatcher(file.segments));
+    return routeMatchers.get(file);
+  }
+  var DISPLAY_TYPES = /* @__PURE__ */ new Set(["trailhead", "exit", "summit", "hut", "water", "camp"]);
+  function matchItinerary(stations, file, topology) {
+    const found = routeMatcherFor(file).match(groupStations(stations));
+    const raw = found.matches.flatMap(
+      (match) => match.routePositions.map((position2) => ({
+        station: match.station,
+        ...position2
+      }))
+    ).sort((a, b) => a.routeProgressM - b.routeProgressM);
+    const resolved = resolveBranchVisits(raw, topology);
+    const occurrences = [];
+    for (const point of resolved.occurrences) {
+      const previous = occurrences.at(-1);
+      if (previous?.station.stationId === point.station.stationId) {
+        if (point.offsetM < previous.offsetM) occurrences[occurrences.length - 1] = point;
+      } else occurrences.push(point);
+    }
+    const areas = [
+      ...new Set(occurrences.flatMap((point) => stationMembers(point.station).map((s) => s.area)))
+    ];
+    return {
+      occurrences,
+      candidateOccurrences: raw,
+      bypassedOccurrences: resolved.bypassedOccurrences,
+      areas,
+      totalDistanceM: found.totalTrackDistanceM,
+      startCovered: Boolean(
+        occurrences.length && distanceM(file.points[0], occurrences[0].station) <= 100
+      ),
+      endCovered: Boolean(
+        occurrences.length && distanceM(file.points.at(-1), occurrences.at(-1).station) <= 100
+      )
+    };
+  }
+  function nearestRouteOffset(file, position2) {
+    const probe = { ...position2, stationId: "gps-position", coordinateStatus: "located" };
+    const found = routeMatcherFor(file).match([probe], {
+      maxOffsetM: 1e4,
+      mergeWithinM: 25
+    });
+    return found.matches[0]?.nearestTrackDistanceM ?? Infinity;
+  }
+
+  // src/features/elevation/stations.js
+  var stationTypes = {
+    trailhead: "\u767B\u5C71\u53E3",
+    exit: "\u51FA\u53E3",
+    summit: "\u5C71\u9802",
+    hut: "\u5C71\u5C4B",
+    water: "\u6C34\u6E90",
+    camp: "\u71DF\u5730",
+    junction: "\u5C94\u8DEF"
+  };
+  var indexes = /* @__PURE__ */ new WeakMap();
+  function segmentsFor(file) {
+    if (!indexes.has(file)) {
+      const segments = /* @__PURE__ */ new Map();
+      for (const point of file.points) {
+        if (!segments.has(point.segment)) segments.set(point.segment, []);
+        segments.get(point.segment).push(point);
+      }
+      indexes.set(file, segments);
+    }
+    return indexes.get(file);
+  }
+  function profilePosition(file, segmentIndex, distanceM2) {
+    if (!file || !Number.isFinite(distanceM2)) return null;
+    const points = segmentsFor(file).get(segmentIndex);
+    if (!points?.length) return null;
+    const km2 = distanceM2 / 1e3;
+    let low = 0, high = points.length;
+    while (low < high) {
+      const mid = low + high >>> 1;
+      if (points[mid].km < km2) low = mid + 1;
+      else high = mid;
+    }
+    const exact = [points[low], points[low - 1]].find((p) => p && Math.abs(p.km - km2) < 1e-9);
+    if (exact) {
+      let begin = Math.max(0, low - 1), end = Math.min(points.length, low + 1);
+      while (begin > 0 && Math.abs(points[begin - 1].km - km2) < 1e-9) begin--;
+      while (end < points.length && Math.abs(points[end].km - km2) < 1e-9) end++;
+      const same = points.slice(begin, end).filter((p) => Math.abs(p.km - km2) < 1e-9);
+      if (same.some(
+        (p) => !Number.isFinite(p.elevation) || Math.abs(p.elevation - exact.elevation) > 0.01
+      ))
+        return null;
+      return Number.isFinite(exact.elevation) ? { km: exact.km, elevation: exact.elevation, anchors: same } : null;
+    }
+    const a = points[low - 1], b = points[low];
+    if (!a || !b || !Number.isFinite(a.elevation) || !Number.isFinite(b.elevation) || b.km <= a.km)
+      return null;
+    return {
+      km: km2,
+      elevation: a.elevation + (b.elevation - a.elevation) * (km2 - a.km) / (b.km - a.km),
+      anchors: [a, b]
+    };
+  }
+  function profileStations(file, data, gps, now = Date.now()) {
+    const visits = [];
+    const counts = /* @__PURE__ */ new Map();
+    for (const row of data?.rows ?? []) {
+      if (!row.station?.name?.trim() || row.station.coordinateStatus !== "located") continue;
+      const id2 = row.station.stationId;
+      const visit = (counts.get(id2) ?? 0) + 1;
+      counts.set(id2, visit);
+      const position2 = profilePosition(file, row.segmentIndex, row.routeProgressM);
+      const status = data.active && !data.compatible ? "unavailable" : !data.active ? "planned" : row.index < data.nextIndex ? "passed" : row.index === data.next?.index ? "next" : "pending";
+      visits.push({
+        key: String(row.index),
+        row,
+        visit,
+        position: position2,
+        status,
+        type: stationTypes[row.station.type] ?? "\u5176\u4ED6\u7AD9\u9EDE",
+        eta: data.active && !data.compatible ? null : data.active ? row.arrivalUtcMs : data.startCovered && Number.isFinite(row.cumulativeSeconds) ? now + row.cumulativeSeconds * 1e3 : null
+      });
+    }
+    const current = currentPosition(file, data, gps, now);
+    return { visits, current };
+  }
+  function currentPosition(file, data, gps, now) {
+    if (!file || !data?.active || !data.compatible || data.finished || data.offRoute || gps?.status !== "tracking")
+      return null;
+    const fix = recordingFix(gps);
+    if (!fix || fix.excluded || ![fix.lat, fix.lon, fix.time, gps.accuracy].every(Number.isFinite) || Math.abs(fix.lat) > 90 || Math.abs(fix.lon) > 180 || gps.accuracy < 0 || gps.accuracy > 50 || now - fix.time > 6e4 || fix.time > now + 5e3)
+      return null;
+    const previous = data.rows[Math.max(0, data.nextIndex - 1)], next = data.rows[data.nextIndex];
+    if (!previous || next && previous.segmentIndex !== next.segmentIndex) return null;
+    const candidates = routeMatcherFor(file).match([{ ...fix, stationId: "profile-progress", coordinateStatus: "located" }], {
+      maxOffsetM: 100,
+      mergeWithinM: 25
+    }).matches[0]?.routePositions.filter(
+      (p) => p.segmentIndex === previous.segmentIndex && p.routeProgressM >= previous.routeProgressM - 25 && p.routeProgressM <= (next?.routeProgressM ?? file.stats.km * 1e3) + 25
+    ) ?? [];
+    const accepted = gps.itinerary?.routePosition;
+    const selected = accepted?.revisionId === file.id && accepted.time === fix.time ? candidates.find(
+      (p) => p.segmentIndex === accepted.segmentIndex && Math.abs(p.routeProgressM - accepted.routeProgressM) < 1
+    ) : candidates.length === 1 ? candidates[0] : null;
+    return selected ? profilePosition(file, selected.segmentIndex, selected.routeProgressM) : null;
+  }
+  function stationLabels(visits, distanceX, left, right) {
+    const lanes = [[], []];
+    const priority = (v) => v.status === "next" ? 0 : { trailhead: 1, exit: 1, summit: 2, hut: 3, water: 4, camp: 5 }[v.row.station.type] ?? 6;
+    return visits.filter((v) => v.position).slice().sort((a, b) => priority(a) - priority(b) || a.row.index - b.row.index).flatMap((v) => {
+      const name = v.row.station.name;
+      const label = name.length > 10 ? name.slice(0, 9) + "\u2026" : name;
+      const width = label.length * 23 + 16;
+      const x = Math.max(left + width / 2, Math.min(right - width / 2, distanceX(v.position.km)));
+      const from = x - width / 2, to = x + width / 2;
+      const lane = lanes.findIndex(
+        (items) => items.every((item) => to + 12 < item.from || from > item.to + 12)
+      );
+      if (lane < 0) return [];
+      lanes[lane].push({ from, to });
+      return [{ ...v, label, x, lane }];
+    });
+  }
+
+  // src/features/elevation/station-view.js
+  var statuses2 = {
+    planned: "\u5C1A\u672A\u51FA\u767C",
+    passed: "\u5DF2\u901A\u904E",
+    next: "\u4E0B\u4E00\u7AD9 \xB7 \u672A\u5230\u9054",
+    pending: "\u672A\u5230\u9054",
+    unavailable: "\u5230\u7AD9\u72C0\u614B\u5F85\u78BA\u8A8D"
+  };
+  var time = (value2) => Number.isFinite(value2) ? new Date(value2).toLocaleString("zh-TW", {
+    timeZone: "Asia/Taipei",
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }) : "\u6642\u9593\u8CC7\u6599\u4E0D\u8DB3";
+  function stationChart(model, { distanceX, y, left, right, bottom }) {
+    if (!model) return "";
+    const visits = model.visits.filter((v) => v.position);
+    const labels = stationLabels(visits, distanceX, left, right).map((v) => {
+      const baseline = 22 + v.lane * 29;
+      return `<g class="profile-station-label" data-height-visit="${v.key}" role="button" tabindex="0" aria-label="${esc(v.row.station.name)}\uFF0C\u7B2C ${v.visit} \u6B21\u8A2A\u7D93"><path d="M${v.x} ${baseline + 5}L${distanceX(v.position.km)} ${y(v.position.elevation)}"/><text x="${v.x}" y="${baseline}" text-anchor="middle">${esc(v.label)}</text></g>`;
+    }).join("");
+    const markers = visits.map(
+      (v) => `<g class="profile-station profile-${v.status}" data-height-visit="${v.key}" data-km="${v.position.km}" data-elevation="${v.position.elevation}" role="button" tabindex="0" aria-controls="profile-station-info" aria-label="${esc(v.row.station.name)}\uFF0C\u7B2C ${v.visit} \u6B21\u8A2A\u7D93\uFF0C${statuses2[v.status]}"><circle class="profile-station-hit" cx="${distanceX(v.position.km)}" cy="${y(v.position.elevation)}" r="22"/><circle class="profile-station-dot" cx="${distanceX(v.position.km)}" cy="${y(v.position.elevation)}" r="6"/><title>${esc(v.row.station.name)} \xB7 \u7B2C ${v.visit} \u6B21 \xB7 ${v.position.km.toFixed(2)} km</title></g>`
+    ).join("");
+    const p = model.current;
+    return labels + markers + (p ? `<g class="profile-current" data-km="${p.km}" aria-label="\u76EE\u524D\u9032\u5EA6 ${p.km.toFixed(2)} \u516C\u91CC"><path d="M${distanceX(p.km)} 80V${bottom}"/><circle cx="${distanceX(p.km)}" cy="${y(p.elevation)}" r="7"/></g>` : "");
+  }
+  function stationDetails(model, selected, cluster = false) {
+    if (!model) return "";
+    const v = model.visits.find((v2) => v2.key === selected);
+    const plotted = model.visits.filter((v2) => v2.position);
+    const nearby = cluster && v?.position ? plotted.filter(
+      (p) => Math.abs(p.position.km - v.position.km) <= Math.max(0.025, model.totalKm * 0.13)
+    ) : [];
+    const visitButton = (item) => `<button type="button" class="profile-visit-choice" data-height-visit="${item.key}" aria-pressed="${item.key === selected}"><strong>${esc(item.row.station.name)}</strong><span>\u7B2C ${item.visit} \u6B21 \xB7 ${item.type} \xB7 ${statuses2[item.status]}</span><small>${item.position ? item.position.km.toFixed(2) + " km \xB7 " + Math.round(item.position.elevation) + " m" : "GPX \u9AD8\u5EA6\u6216\u4F4D\u7F6E\u7F3A\u6F0F\uFF0C\u672A\u6A19\u793A"}</small></button>`;
+    return `<div class="profile-stations"><p class="profile-station-legend">\u25CF \u6CBF\u9014\u7AD9\u9EDE\u3000<span>\u25CF \u5DF2\u901A\u904E</span>\u3000<b>\u25CF \u4E0B\u4E00\u7AD9</b> \xB7 \u9EDE\u9078\u5713\u9EDE\u67E5\u770B\uFF1B\u5BC6\u96C6\u8655\u53EF\u5C55\u958B\u8A2A\u6B21</p>${model.active && !model.current ? '<p class="small muted">\u76EE\u524D\u9032\u5EA6\u5F85\u6709\u6548 GPS \u8207\u9023\u7E8C GPX \u9AD8\u5EA6\u78BA\u8A8D\u3002</p>' : model.current ? `<p class="small">\u76EE\u524D\u9032\u5EA6 ${model.current.km.toFixed(2)} km \xB7 ${Math.round(model.current.elevation)} m</p>` : ""}<div id="profile-station-info" class="profile-station-info" role="status" aria-live="polite">${v ? `<strong>${esc(v.row.station.name)} \xB7 \u7B2C ${v.visit} \u6B21\u8A2A\u7D93</strong><p>${v.type} \xB7 ${statuses2[v.status]}</p><p>${v.position ? `GPX \u7D2F\u8A08 ${v.position.km.toFixed(2)} km \xB7 \u9AD8\u5EA6 ${Math.round(v.position.elevation)} m` : "GPX \u9AD8\u5EA6\u6216\u4F4D\u7F6E\u7F3A\u6F0F\uFF0C\u672A\u6A19\u793A"}</p><p>\u9810\u4F30\u62B5\u9054\uFF08\u53F0\u5317\u6642\u9593\uFF09\uFF1A${esc(time(v.eta))}${model.active ? "" : "\uFF08\u4EE5\u73FE\u5728\u51FA\u767C\u9810\u89BD\uFF09"}</p>` : "<p>\u9EDE\u9078\u7AD9\u9EDE\u67E5\u770B\u7AD9\u540D\u3001\u985E\u578B\u3001\u516C\u91CC\u6578\u3001\u9AD8\u5EA6\u3001\u9810\u4F30\u62B5\u9054\u8207\u5230\u7AD9\u72C0\u614B\u3002</p>"}</div>${nearby.length > 1 ? `<div class="profile-nearby" aria-label="\u9644\u8FD1\u5BC6\u96C6\u7AD9\u9EDE\u8A2A\u6B21"><strong>\u9644\u8FD1\u8A2A\u6B21 \xB7 ${nearby.length} \u6B21</strong>${nearby.map(visitButton).join("")}</div>` : ""}<details id="profile-all-visits"><summary>\u5C55\u958B\u6240\u6709\u7AD9\u9EDE \xB7 ${model.visits.length} \u6B21\u8A2A\u7D93${model.visits.length > plotted.length ? `\uFF08${model.visits.length - plotted.length} \u6B21\u4F4D\u7F6E\u6216\u9AD8\u5EA6\u7F3A\u6F0F\uFF09` : ""}</summary><div class="profile-visit-list">${model.visits.map(visitButton).join("") || "<p>\u5C1A\u7121\u53EF\u78BA\u8A8D\u7684 GPX \u7AD9\u9EDE\u8A2A\u6B21\u3002</p>"}</div></details><p class="small muted">\u4F9D\u5DF2\u5339\u914D GPX \u8A2A\u6B21\u6A19\u793A\uFF1B\u4F4D\u7F6E\u63A5\u8FD1\u4E0D\u4EE3\u8868\u5DF2\u9032\u5165\u5C71\u5C4B\uFF0C\u6C34\u6E90\u53EF\u7528\u6027\u8ACB\u53E6\u884C\u78BA\u8A8D\u3002</p></div>`;
+  }
+
   // src/features/elevation/view.js
-  function elevationSvg(file, profile = null) {
+  function elevationSvg(file, profile = null, stations = null, selected = null, cluster = false) {
     if (!file.stats.withElevation)
-      return `<div class="elevation-empty">${icon("mountain")}<div><strong>\u5C1A\u7121\u9AD8\u5EA6\u8CC7\u6599</strong><p>\u53D6\u5F97 GPX \u9AD8\u5EA6\u8CC7\u6599\u5F8C\uFF0C\u5C31\u80FD\u67E5\u770B\u6CBF\u9014\u9AD8\u4F4E\u8D77\u4F0F\u3002</p></div></div>`;
+      return stationDetails(stations, selected, cluster) + `<div class="elevation-empty">${icon("mountain")}<div><strong>\u5C1A\u7121\u9AD8\u5EA6\u8CC7\u6599</strong><p>\u53D6\u5F97 GPX \u9AD8\u5EA6\u8CC7\u6599\u5F8C\uFF0C\u5C31\u80FD\u67E5\u770B\u6CBF\u9014\u9AD8\u4F4E\u8D77\u4F0F\u3002</p></div></div>`;
     let low = Infinity, high = -Infinity, peak = null;
     for (const point of file.points)
       if (Number.isFinite(point.elevation)) {
@@ -1499,7 +2111,7 @@
         }
       }
     const span2 = Math.max(high - low, 20), floor = Math.floor(low - span2 * 0.12), ceiling = Math.ceil(high + span2 * 0.12);
-    const left = 56, right = 620, top = 18, bottom = 154;
+    const left = 56, right = 620, top = 86, bottom = 222;
     const y = (value2) => bottom - (value2 - floor) / (ceiling - floor) * (bottom - top);
     const distanceX = (km2) => left + km2 / Math.max(file.stats.km, 1e-6) * (right - left);
     const x = (point) => distanceX(point.km);
@@ -1515,7 +2127,11 @@
     }
     if (group.length) groups.push(group);
     const shapes = groups.map((segment) => {
-      const selection = new Set(sampled(segment)), points = segment.filter((point) => selection.has(point) || point === peak);
+      const selection = new Set(sampled(segment));
+      for (const visit of stations?.visits ?? [])
+        for (const anchor of visit.position?.anchors ?? []) selection.add(anchor);
+      for (const anchor of stations?.current?.anchors ?? []) selection.add(anchor);
+      const points = segment.filter((point) => selection.has(point) || point === peak);
       const coordinates = points.map(
         (point) => `${x(point).toFixed(2)},${y(point.elevation).toFixed(2)}`
       );
@@ -1557,7 +2173,7 @@
     }).join("");
     const labels = (profile?.bands ?? []).map((band) => {
       const start = distanceX(band.fromM / 1e3), end = distanceX(band.toM / 1e3);
-      return end - start >= 70 ? `<text class="height-phase-label" x="${((start + end) / 2).toFixed(2)}" y="29" text-anchor="middle">${phaseLabels[band.phase]}</text>` : "";
+      return end - start >= 70 ? `<text class="height-phase-label" x="${((start + end) / 2).toFixed(2)}" y="97" text-anchor="middle">${phaseLabels[band.phase]}</text>` : "";
     }).join("");
     const grid = [0, 1 / 3, 2 / 3, 1].map((ratio) => {
       const value2 = ceiling - (ceiling - floor) * ratio, position2 = top + (bottom - top) * ratio;
@@ -1565,47 +2181,102 @@
     }).join("");
     const ticks = [0, 0.5, 1].map((ratio) => {
       const position2 = left + ratio * (right - left), label = ratio === 0 ? "0" : (file.stats.km * ratio).toFixed(ratio === 1 || file.stats.km < 10 ? 2 : 1);
-      return `<path d="M${position2} ${bottom}v5" stroke="#a3b998"/><text x="${position2}" y="181" text-anchor="${ratio === 0 ? "start" : ratio === 1 ? "end" : "middle"}">${label} km</text>`;
+      return `<path d="M${position2} ${bottom}v5" stroke="#a3b998"/><text x="${position2}" y="249" text-anchor="${ratio === 0 ? "start" : ratio === 1 ? "end" : "middle"}">${label} km</text>`;
     }).join("");
-    return `<div class="elevation-summary"><span>\u6700\u4F4E\u9AD8\u5EA6 <strong>${Math.round(low).toLocaleString()}<small>m</small></strong></span><span>\u6700\u9AD8\u9AD8\u5EA6 <strong>${Math.round(high).toLocaleString()}<small>m</small></strong></span><span class="elevation-distance">\u5168\u7A0B <strong>${file.stats.km.toFixed(2)}<small>km</small></strong></span></div><svg class="elevation-chart" viewBox="0 0 640 194" role="img" aria-label="GPX \u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762${profile ? "\uFF0C\u767D\u5929\u6696\u8272\u3001\u591C\u9593\u6DF1\u85CD\uFF0C\u672A\u77E5\u6642\u9593\u7070\u8272" : ""}\uFF1B\u7F3A\u5C11\u9AD8\u5EA6\u8207\u5206\u6BB5\u8655\u4E0D\u9023\u7DDA"><defs><linearGradient id="elevation-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#5f8c58" stop-opacity=".55"/><stop offset="100%" stop-color="#99b67c" stop-opacity=".12"/></linearGradient><clipPath id="height-profile-clip">${clip}</clipPath></defs><g font-size="11" fill="#61785a">${grid}${ticks}<text class="elevation-axis-unit" x="43" y="5" text-anchor="end">\u9AD8\u5EA6 m</text></g>${areas}<g clip-path="url(#height-profile-clip)">${colors}</g>${shapes.map((shape) => shape.line).join("")}${transitions}${labels}<circle cx="${x(peak)}" cy="${y(high)}" r="4.5" fill="#326753" stroke="#eef4e6" stroke-width="2"><title>\u6700\u9AD8\u9AD8\u5EA6 ${Math.round(high)} m \xB7 ${peak.km.toFixed(2)} km</title></circle></svg><p class="elevation-caption">${file.processing ? "\u9AD8\u5EA6\u8207\u8DDD\u96E2\u5DF2\u6821\u6B63 GPS \u6296\u52D5" : "\u9AD8\u5EA6\u8207\u8DDD\u96E2\u4F9D GPX \u8CC7\u6599\u986F\u793A"} \xB7 \u7F3A\u6F0F\u8655\u4FDD\u7559\u7A7A\u767D</p>`;
+    return `<div class="elevation-summary"><span>\u6700\u4F4E\u9AD8\u5EA6 <strong>${Math.round(low).toLocaleString()}<small>m</small></strong></span><span>\u6700\u9AD8\u9AD8\u5EA6 <strong>${Math.round(high).toLocaleString()}<small>m</small></strong></span><span class="elevation-distance">\u5168\u7A0B <strong>${file.stats.km.toFixed(2)}<small>km</small></strong></span></div><svg class="elevation-chart" viewBox="0 0 640 262" role="group" aria-label="GPX \u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762${profile ? "\uFF0C\u767D\u5929\u6696\u8272\u3001\u591C\u9593\u6DF1\u85CD\uFF0C\u672A\u77E5\u6642\u9593\u7070\u8272" : ""}\uFF1B\u7F3A\u5C11\u9AD8\u5EA6\u8207\u5206\u6BB5\u8655\u4E0D\u9023\u7DDA"><defs><linearGradient id="elevation-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#5f8c58" stop-opacity=".55"/><stop offset="100%" stop-color="#99b67c" stop-opacity=".12"/></linearGradient><clipPath id="height-profile-clip">${clip}</clipPath></defs><g font-size="11" fill="#61785a">${grid}${ticks}<text class="elevation-axis-unit" x="43" y="73" text-anchor="end">\u9AD8\u5EA6 m</text></g>${areas}<g clip-path="url(#height-profile-clip)">${colors}</g>${shapes.map((shape) => shape.line).join("")}${transitions}${labels}<circle cx="${x(peak)}" cy="${y(high)}" r="4.5" fill="#326753" stroke="#eef4e6" stroke-width="2"><title>\u6700\u9AD8\u9AD8\u5EA6 ${Math.round(high)} m \xB7 ${peak.km.toFixed(2)} km</title></circle>${stationChart(stations, { distanceX, y, left, right, bottom })}</svg>${stationDetails(stations, selected, cluster)}<p class="elevation-caption">${file.processing ? "\u9AD8\u5EA6\u8207\u8DDD\u96E2\u5DF2\u6821\u6B63 GPS \u6296\u52D5" : "\u9AD8\u5EA6\u8207\u8DDD\u96E2\u4F9D GPX \u8CC7\u6599\u986F\u793A"} \xB7 \u7F3A\u6F0F\u8655\u4FDD\u7559\u7A7A\u767D</p>`;
   }
 
   // src/features/daylight/view.js
-  var hhmm = (time2) => new Date(time2).toLocaleTimeString("zh-TW", {
+  var hhmm = (time3) => new Date(time3).toLocaleTimeString("zh-TW", {
     timeZone: "Asia/Taipei",
     hour: "2-digit",
     minute: "2-digit",
     hourCycle: "h23"
   });
-  function createHeightProfileView({ daylight, document: document2 = globalThis.document }) {
-    let displayedFile = null, lastMinute = null;
+  function createHeightProfileView({
+    daylight,
+    itinerary,
+    state,
+    document: document2 = globalThis.document
+  }) {
+    let displayedFile = null, lastHtml = "", selected = null, cluster = false, cachedProfile = null, profileKey = "";
     function body(file) {
-      const profile = daylight.snapshot(file);
+      const data = itinerary?.snapshot();
+      const key2 = JSON.stringify([
+        Math.floor(Date.now() / 6e4),
+        data?.nextIndex,
+        data?.rows.map((r) => [r.arrivalUtcMs, r.cumulativeSeconds])
+      ]);
+      if (key2 !== profileKey || !cachedProfile) {
+        cachedProfile = daylight.snapshot(file);
+        profileKey = key2;
+      }
+      const profile = cachedProfile;
+      const stations = profileStations(file, data, state?.gps);
+      stations.active = data?.active;
+      stations.totalKm = file.stats.km;
       const notice = !profile.county ? "\u76EE\u524D GPX \u9644\u8FD1\u5C1A\u7121\u53EF\u7528\u7684\u653F\u5E9C\u65E5\u7167\u53C3\u8003\u3002" : !profile.hasTiming ? profile.mode === "recorded" ? "\u5C1A\u7121\u53EF\u5C0D\u61C9\u6642\u9593\u7684\u8ECC\u8DE1\u5340\u6BB5\uFF0C\u66AB\u4E0D\u5224\u5B9A\u65E5\u591C\u3002" : "\u5C1A\u7121\u6709\u6548\u7AD9\u9593 ETA\uFF0C\u7070\u8272\u8DEF\u6BB5\u66AB\u4E0D\u5224\u5B9A\u65E5\u591C\u3002" : profile.hasUnknownDays ? "\u90E8\u5206\u65E5\u671F\u5C1A\u672A\u53D6\u5F97\u5B98\u65B9\u6642\u523B\uFF0C\u5C0D\u61C9\u8DEF\u6BB5\u4FDD\u7559\u7070\u8272\u3002" : profile.mode === "recorded" ? "\u4F9D\u81EA\u5DF1\u7D00\u9304\u7684\u5BE6\u969B\u6642\u523B\u986F\u793A\u65E5\u591C\u3002" : profile.mode === "forecast" ? "\u4F9D\u672C\u6B21\u51FA\u767C\u8207\u5230\u7AD9 ETA \u52D5\u614B\u66F4\u65B0\u3002" : "\u4EE5\u73FE\u5728\u51FA\u767C\u9810\u89BD\uFF1B\u958B\u59CB\u7D00\u9304\u5F8C\u4F9D\u5BE6\u969B\u51FA\u767C\u8207\u5230\u7AD9 ETA \u66F4\u65B0\u3002";
-      return `<div class="daylight-reference" data-county="${esc(profile.county)}"><span>\u65E5\u591C\u81EA\u52D5\u53C3\u8003</span><strong>${profile.nearby ? esc(profile.nearby.name) : "\u9644\u8FD1\u53C3\u8003\u5C1A\u672A\u63D0\u4F9B"}</strong>${profile.nearby ? `<small>\u8DEF\u7DDA\u4E2D\u6BB5\u9644\u8FD1 ${profile.nearby.distanceKm.toFixed(1)} km \xB7 \u63A1${esc(profile.countyName)}\u5B98\u65B9\u6642\u523B</small>` : ""}</div>${elevationSvg(file, profile)}<div class="daylight-legend" aria-label="\u65E5\u591C\u5857\u8272\u5716\u4F8B"><span><i class="phase-day"></i>\u767D\u5929\uFF08\u65E5\u51FA\u81F3\u65E5\u843D\uFF09</span><span><i class="phase-night"></i>\u591C\u9593</span>${profile.hasUnknownSegments || profile.hasUnknownDays || !profile.hasTiming || !profile.county ? '<span><i class="phase-unknown"></i>\u6642\u9593\u5F85\u88DC</span>' : ""}</div><p class="daylight-notice" role="status">${notice}${profile.hasTiming && profile.hasUnknownSegments ? " \u7070\u8272\u8DEF\u6BB5\u5C1A\u7121\u53EF\u78BA\u8A8D\u7684\u7D93\u904E\u6642\u523B\u3002" : ""}</p>${profile.county ? `<div class="solar-days">${profile.days.slice(0, 3).map(
+      return `<div class="daylight-reference" data-county="${esc(profile.county)}"><span>\u65E5\u591C\u81EA\u52D5\u53C3\u8003</span><strong>${profile.nearby ? esc(profile.nearby.name) : "\u9644\u8FD1\u53C3\u8003\u5C1A\u672A\u63D0\u4F9B"}</strong>${profile.nearby ? `<small>\u8DEF\u7DDA\u4E2D\u6BB5\u9644\u8FD1 ${profile.nearby.distanceKm.toFixed(1)} km \xB7 \u63A1${esc(profile.countyName)}\u5B98\u65B9\u6642\u523B</small>` : ""}</div>${elevationSvg(file, profile, stations, selected, cluster)}<div class="daylight-legend" aria-label="\u65E5\u591C\u5857\u8272\u5716\u4F8B"><span><i class="phase-day"></i>\u767D\u5929\uFF08\u65E5\u51FA\u81F3\u65E5\u843D\uFF09</span><span><i class="phase-night"></i>\u591C\u9593</span>${profile.hasUnknownSegments || profile.hasUnknownDays || !profile.hasTiming || !profile.county ? '<span><i class="phase-unknown"></i>\u6642\u9593\u5F85\u88DC</span>' : ""}</div><p class="daylight-notice" role="status">${notice}${profile.hasTiming && profile.hasUnknownSegments ? " \u7070\u8272\u8DEF\u6BB5\u5C1A\u7121\u53EF\u78BA\u8A8D\u7684\u7D93\u904E\u6642\u523B\u3002" : ""}</p>${profile.county ? `<div class="solar-days">${profile.days.slice(0, 3).map(
         (day) => `<div><strong>${esc(day.date)}</strong><span>\u65E5\u51FA ${day.sun ? hhmm(day.sun.sunrise) : "\u5F85\u88DC"}</span><span>\u65E5\u843D ${day.sun ? hhmm(day.sun.sunset) : "\u5F85\u88DC"}</span></div>`
       ).join("")}${profile.days.length > 3 ? `<details class="solar-extra" id="solar-extra"><summary>\u66F4\u591A\u65E5\u671F</summary>${profile.days.slice(3).map(
         (day) => `<div><strong>${esc(day.date)}</strong><span>\u65E5\u51FA ${day.sun ? hhmm(day.sun.sunrise) : "\u5F85\u88DC"}</span><span>\u65E5\u843D ${day.sun ? hhmm(day.sun.sunset) : "\u5F85\u88DC"}</span></div>`
       ).join("")}</details>` : ""}</div>` : ""}<p class="daylight-method">${profile.mode === "recorded" ? "\u8ECC\u8DE1\u9EDE\u9593\u4F9D\u5BE6\u969B\u6642\u9593\u5167\u63D2\u3002" : "\u7AD9\u9593\u6642\u523B\u6CBF\u5DF2\u6709 GPX \u7247\u6BB5\u6309\u8DDD\u96E2\u6BD4\u4F8B\u5167\u63D2\uFF0C\u4E2D\u65B7\u8655\u4E0D\u9023\u7DDA\u3002"}\u7E23\u5E02\u6642\u523B\u672A\u542B\u5C71\u5F62\u906E\u853D\u8207\u5929\u5019\u5F71\u97FF\u3002</p><a class="daylight-source" href="${profile.reference.sourcePage}" target="_blank" rel="noopener noreferrer">\u8CC7\u6599\u4F86\u6E90\uFF1A\u4EA4\u901A\u90E8\u4E2D\u592E\u6C23\u8C61\u7F72</a>`;
     }
     function panel(file) {
+      if (file !== displayedFile) {
+        selected = null;
+        cluster = false;
+        cachedProfile = null;
+      }
       displayedFile = file;
-      lastMinute = Math.floor(Date.now() / 6e4);
-      return `<div id="height-profile-body">${body(file)}</div>`;
+      lastHtml = body(file);
+      return `<div id="height-profile-body">${lastHtml}</div>`;
     }
     function update() {
       const element = document2.getElementById("height-profile-body");
-      const minute = Math.floor(Date.now() / 6e4);
-      if (!element || !displayedFile || minute === lastMinute) return;
-      lastMinute = minute;
-      const open = element.querySelector?.(".solar-extra")?.open;
-      element.innerHTML = body(displayedFile);
-      if (open) {
-        const extra = element.querySelector?.(".solar-extra");
+      if (!element || !displayedFile) return;
+      const html = body(displayedFile);
+      if (html === lastHtml) return;
+      const open = [...element.querySelectorAll?.("details[id]") ?? []].filter((e) => e.open).map((e) => e.id);
+      const focused = document2.activeElement?.closest?.("[data-height-visit]");
+      const focusKey = element.contains?.(focused) ? focused?.dataset.heightVisit : null;
+      const focusClass = focused?.getAttribute("class");
+      element.innerHTML = html;
+      lastHtml = html;
+      for (const id2 of open) {
+        const extra = document2.getElementById(id2);
         if (extra) extra.open = true;
       }
+      if (focusKey !== null) {
+        const replacement = [...element.querySelectorAll("[data-height-visit]")].find(
+          (e) => e.dataset.heightVisit === focusKey && e.getAttribute("class") === focusClass
+        );
+        replacement?.focus({ preventScroll: true });
+      }
     }
-    return { panel, update };
+    function select(event) {
+      let target = event.target.closest?.("[data-height-visit]");
+      const chart = event.target.closest?.(".elevation-chart");
+      if (!target && chart && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)) {
+        const nearby = [...chart.querySelectorAll(".profile-station")].map((element) => {
+          const rect = element.querySelector(".profile-station-dot").getBoundingClientRect();
+          return {
+            element,
+            distance: Math.hypot(
+              event.clientX - (rect.x + rect.width / 2),
+              event.clientY - (rect.y + rect.height / 2)
+            )
+          };
+        }).filter((item) => item.distance <= 28).sort((a, b) => a.distance - b.distance);
+        target = nearby[0]?.element;
+      }
+      if (!target || !target.closest?.("#height-profile-body")) return false;
+      selected = target.dataset.heightVisit;
+      if (target.closest("svg")) cluster = true;
+      update();
+      return true;
+    }
+    return { panel, update, select };
   }
 
   // src/core/state.js
@@ -1745,7 +2416,14 @@
       target.addEventListener(type, handler);
       cleanups.push(() => target.removeEventListener(type, handler));
     }
+    listen(document2, "keydown", (event) => {
+      if (["Enter", " "].includes(event.key) && event.target.closest?.("[data-height-visit]") && event.target.tagName !== "BUTTON") {
+        event.preventDefault();
+        heightProfile?.select(event);
+      }
+    });
     listen(document2, "click", (event) => {
+      if (heightProfile?.select(event)) return;
       const nav = event.target.closest?.("[data-view]");
       if (nav) {
         navigation.navigate(nav.dataset.view);
@@ -2002,8 +2680,8 @@
       const elevationText = value2(node, "ele"), elevation = number(elevationText);
       if (elevationText && elevation === null) badElevation++;
       const timeText = value2(node, "time");
-      const time2 = parseGpxTime(timeText);
-      if (timeText && !Number.isFinite(time2)) badTime++;
+      const time3 = parseGpxTime(timeText);
+      if (timeText && !Number.isFinite(time3)) badTime++;
       const extensions = children(node, "extensions")[0], quality = {};
       for (const key2 of ["accuracy", "altitudeAccuracy"]) {
         const element = extensions && Array.from(extensions.childNodes).find(
@@ -2019,8 +2697,8 @@
         lat,
         lon,
         elevation,
-        time: Number.isFinite(time2) ? time2 : null,
-        timeSource: !timeText ? "missing" : time2 === null ? "invalid" : ["synthetic", "interpolated", "estimated"].includes(declaredSource2) ? declaredSource2 : "gpx",
+        time: Number.isFinite(time3) ? time3 : null,
+        timeSource: !timeText ? "missing" : time3 === null ? "invalid" : ["synthetic", "interpolated", "estimated"].includes(declaredSource2) ? declaredSource2 : "gpx",
         ...quality
       };
     }
@@ -2592,216 +3270,6 @@
     };
   }
 
-  // src/domain/track-stream.js
-  function createTrackProcessor({ windowSize = 128, overlap = 32, filterOptions = {} } = {}) {
-    if (!Number.isInteger(windowSize) || windowSize < 32 || windowSize > 512 || !Number.isInteger(overlap) || overlap < 2 || overlap >= windowSize) {
-      throw new RangeError("Expected a window of 32\u2013512 points and an overlap of 2\u2013windowSize-1");
-    }
-    const { options: config2, version } = filterTrack([], filterOptions);
-    const rawSegments = [], correctedSegments = [], points = [];
-    let loaded = false;
-    let active = null, withElevation = 0, excludedPoints = 0;
-    let rawKm = 0, rawUp = 0, rawDown = 0, rawElevation = 0, rawExcluded = 0, lastRaw = null;
-    const display = [];
-    const work = { appendCalls: 0, tailPoints: 0, maxTailPoints: 0, finalizations: 0 };
-    const hasHeight = (p) => Boolean(p && !p.excluded && Number.isFinite(p.elevation));
-    function stats() {
-      const last = points.at(-1), complete = points.length > 0 && points.length === withElevation;
-      return {
-        km: last?.km ?? 0,
-        up: complete ? last.up : null,
-        down: complete ? last.down : null,
-        points: points.length,
-        withElevation,
-        segments: rawSegments.length,
-        excludedPoints
-      };
-    }
-    function rawStats() {
-      const complete = points.length > 0 && points.length === rawElevation;
-      return {
-        km: rawKm,
-        up: complete ? rawUp : null,
-        down: complete ? rawDown : null,
-        points: points.length,
-        withElevation: rawElevation,
-        segments: rawSegments.length,
-        excludedPoints: rawExcluded
-      };
-    }
-    function accountRaw(point, previous) {
-      if (point.excluded) rawExcluded++;
-      if (!point.excluded && Number.isFinite(point.elevation)) rawElevation++;
-      if (previous && !previous.excluded && !point.excluded) {
-        rawKm += haversine(previous, point);
-        if (Number.isFinite(previous.elevation) && Number.isFinite(point.elevation)) {
-          const delta = point.elevation - previous.elevation;
-          rawUp += Math.max(0, delta);
-          rawDown += Math.max(0, -delta);
-        }
-      }
-      lastRaw = point;
-    }
-    function patch(start, result) {
-      const segmentIndex = active.index, output = correctedSegments[segmentIndex];
-      const from = start > 0 ? start + 1 : 0;
-      const cursor = from ? active.cursors[from - 1] : active.displayBefore;
-      display.length = cursor.count;
-      if (display.length) display.at(-1).length = cursor.lastLength;
-      result.correctedSegments[0].forEach((point, i) => {
-        const sourceIndex = start + i, index = active.flatOffset + sourceIndex;
-        if (start > 0 && i === 0) return;
-        const old = points[index], previous = points[index - 1];
-        withElevation += Number(hasHeight(point)) - Number(hasHeight(old));
-        excludedPoints += Number(Boolean(point.excluded)) - Number(Boolean(old?.excluded));
-        const edge = previous?.segment === segmentIndex;
-        const usable = edge && !previous.excluded && !point.excluded;
-        const delta = usable && hasHeight(previous) && hasHeight(point) ? point.elevation - previous.elevation : 0;
-        const indexed = {
-          ...point,
-          segment: segmentIndex,
-          sourceIndex,
-          km: (previous?.km ?? 0) + (usable ? haversine(previous, point) : 0),
-          up: (previous?.up ?? 0) + Math.max(0, delta),
-          down: (previous?.down ?? 0) + Math.max(0, -delta),
-          elevationGapCount: (previous?.elevationGapCount ?? 0) + (edge && !(usable && hasHeight(previous) && hasHeight(point)) ? 1 : 0),
-          reasons: []
-        };
-        output[sourceIndex] = { ...point };
-        points[index] = indexed;
-        if (!point.excluded) {
-          if (!usable) display.push([]);
-          display.at(-1).push(output[sourceIndex]);
-        }
-        active.cursors[sourceIndex] = {
-          count: display.length,
-          lastLength: display.at(-1)?.length ?? 0
-        };
-      });
-      for (const diagnostic of result.diagnostics) {
-        if (start > 0 && diagnostic.sourceIndex === 0) continue;
-        points[active.flatOffset + start + diagnostic.sourceIndex].reasons = [...diagnostic.reasons];
-      }
-    }
-    function append(point) {
-      if (!active) throw new Error("Start a segment before appending a point");
-      if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lon) || Math.abs(point.lat) > 90 || Math.abs(point.lon) > 180)
-        throw new TypeError("Invalid coordinate");
-      const raw = rawSegments[active.index], previous = raw.at(-1), copy3 = { ...point };
-      raw.push(copy3);
-      accountRaw(copy3, previous);
-      const tail = raw.slice(active.start);
-      if (active.start > 0) tail[0] = { ...correctedSegments[active.index][active.start] };
-      const result = filterTrack([tail], config2);
-      work.appendCalls++;
-      work.tailPoints += tail.length;
-      work.maxTailPoints = Math.max(work.maxTailPoints, tail.length);
-      patch(active.start, result);
-      if (tail.length === windowSize) active.start = raw.length - overlap;
-    }
-    function endSegment() {
-      if (!active) return;
-      const raw = rawSegments[active.index];
-      if (raw.length) {
-        patch(0, filterTrack([raw], config2));
-        work.finalizations++;
-      }
-      active = null;
-    }
-    function startSegment() {
-      endSegment();
-      active = {
-        index: rawSegments.length,
-        start: 0,
-        flatOffset: points.length,
-        cursors: [],
-        displayBefore: { count: display.length, lastLength: display.at(-1)?.length ?? 0 }
-      };
-      rawSegments.push([]);
-      correctedSegments.push([]);
-    }
-    function load(segments) {
-      if (loaded || rawSegments.length) throw new Error("A processor may only be loaded once");
-      const result = filterTrack(segments, config2);
-      loaded = true;
-      rawSegments.push(...result.rawSegments);
-      correctedSegments.push(...result.correctedSegments);
-      for (const point of result.points) points.push(point);
-      withElevation = result.stats.withElevation;
-      excludedPoints = points.reduce((sum, p) => sum + Number(Boolean(p.excluded)), 0);
-      points.forEach((p) => {
-        p.reasons = [];
-      });
-      for (const diagnostic of result.diagnostics) {
-        const p = correctedSegments[diagnostic.segment];
-        p[diagnostic.sourceIndex].reasons = [...diagnostic.reasons];
-      }
-      let offset = 0;
-      rawSegments.forEach((segment, index) => {
-        segment.forEach((point, i) => {
-          accountRaw(point, segment[i - 1]);
-          const corrected = correctedSegments[index][i];
-          if (!corrected.excluded) {
-            if (!i || correctedSegments[index][i - 1].excluded) display.push([]);
-            display.at(-1).push(corrected);
-          }
-          points[offset + i].reasons = [...correctedSegments[index][i].reasons ?? []];
-        });
-        offset += segment.length;
-      });
-    }
-    const displaySegments = () => display;
-    function analysis() {
-      return {
-        points,
-        segments: correctedSegments,
-        rawSegments,
-        stats: stats(),
-        rawStats: rawStats(),
-        processing: {
-          version,
-          mode: active ? "incremental" : "batch",
-          windowSize,
-          overlap,
-          options: config2
-        }
-      };
-    }
-    return {
-      startSegment,
-      endSegment,
-      append,
-      load,
-      stats,
-      rawStats,
-      analysis,
-      displaySegments,
-      lastRawPoint: () => lastRaw,
-      latestPoint: () => points.at(-1),
-      work: () => ({ ...work })
-    };
-  }
-
-  // src/features/recording/analysis.js
-  var processors = /* @__PURE__ */ new WeakMap();
-  function recordingProcessor(gps) {
-    if (!processors.has(gps)) {
-      const processor = createTrackProcessor();
-      processor.load(gps.segments);
-      processors.set(gps, processor);
-    }
-    return processors.get(gps);
-  }
-  var recordingAnalysis = (gps) => recordingProcessor(gps).analysis();
-  var recordingStats = (gps) => recordingProcessor(gps).stats();
-  var recordingSegments = (gps) => recordingProcessor(gps).displaySegments();
-  var settleRecording = (gps) => processors.get(gps)?.endSegment();
-  function recordingFix(gps) {
-    const point = processors.get(gps)?.latestPoint();
-    if (point) return point.excluded ? null : point;
-    return gps.segments.findLast((segment) => segment.length)?.at(-1) ?? null;
-  }
-
   // src/features/recording/completion.js
   function createRecordingCompletion({
     state,
@@ -3037,253 +3505,6 @@
     anchor.download = fileName;
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 5e3);
-  }
-
-  // ../packages/route-stations/index.js
-  var radius = 6371e3;
-  var rad = (degrees) => degrees * Math.PI / 180;
-  var deltaLon = (degrees) => (degrees + 540) % 360 - 180;
-  var statuses = /* @__PURE__ */ new Set(["located", "pending", "ambiguous"]);
-  function requireCoordinate(point) {
-    if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lon) || Math.abs(point.lat) > 90 || Math.abs(point.lon) > 180) {
-      throw new Error("A valid latitude and longitude are required");
-    }
-  }
-  function distanceM(a, b) {
-    requireCoordinate(a);
-    requireCoordinate(b);
-    const h = Math.sin(rad(b.lat - a.lat) / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(rad(deltaLon(b.lon - a.lon)) / 2) ** 2;
-    return 2 * radius * Math.atan2(Math.sqrt(Math.min(1, h)), Math.sqrt(Math.max(0, 1 - h)));
-  }
-  function readCoordinateCatalog(data) {
-    if (!data || data.schemaVersion !== 2 || data.kind !== "station-coordinate-catalog" || data.coordinateReference !== "WGS84" || !Array.isArray(data.stations)) {
-      throw new Error("Expected station coordinate catalog schema v2 (WGS84)");
-    }
-    const ids = /* @__PURE__ */ new Set();
-    for (const station of data.stations) {
-      if (!station || typeof station.stationId !== "string" || !station.stationId || ids.has(station.stationId) || typeof station.name !== "string" || !station.name || !statuses.has(station.coordinateStatus)) {
-        throw new Error("Station identity or coordinate status is invalid");
-      }
-      ids.add(station.stationId);
-      if (station.coordinateStatus === "located") requireCoordinate(station);
-      else if (station.lat !== null || station.lon !== null) throw new Error("Unresolved station coordinates must remain null");
-      for (const field of ["edgeIndex", "fraction", "routeProgressM", "occurrenceId", "gpxWaypointId", "routeRevisionId", "confirmation"]) {
-        if (field in station) throw new Error("Route-specific marking fields do not belong in the coordinate catalog");
-      }
-    }
-    return data.stations;
-  }
-  function usableStations(stations) {
-    if (!Array.isArray(stations)) throw new Error("Expected station coordinate records");
-    return stations.filter((station) => station.coordinateStatus === "located").map((station) => {
-      requireCoordinate(station);
-      return station;
-    });
-  }
-  function createTrackMatcher(segments) {
-    if (!Array.isArray(segments) || !segments.length || segments.some((segment) => !Array.isArray(segment))) throw new Error("Missing GPX segments");
-    const edges = [];
-    let progress = 0;
-    segments.forEach((segment, segmentIndex) => {
-      segment.forEach(requireCoordinate);
-      for (let i = 1; i < segment.length; i++) {
-        const a = segment[i - 1], b = segment[i], length = distanceM(a, b);
-        edges.push({ a, b, length, startM: progress, segmentIndex });
-        progress += length;
-      }
-    });
-    return { match: (stations, options) => matchTrackEdges(stations, edges, progress, options) };
-  }
-  function matchTrackEdges(stations, edges, progress, { maxOffsetM = 100, mergeWithinM = 25, preserveReversals = false } = {}) {
-    if (!Number.isFinite(maxOffsetM) || maxOffsetM <= 0 || !Number.isFinite(mergeWithinM) || mergeWithinM < 0) throw new Error("Invalid matching distances");
-    const matches = [];
-    for (const station of usableStations(stations)) {
-      const groups = [];
-      for (const edge of edges) {
-        const { a, b, length, startM, segmentIndex } = edge;
-        const cos = Math.max(1e-8, Math.cos(rad((a.lat + b.lat) / 2)));
-        const bx = rad(deltaLon(b.lon - a.lon)) * cos * radius, by = rad(b.lat - a.lat) * radius;
-        const px = rad(deltaLon(station.lon - a.lon)) * cos * radius, py = rad(station.lat - a.lat) * radius;
-        const length2 = bx * bx + by * by;
-        const fraction = length2 ? Math.max(0, Math.min(1, (px * bx + py * by) / length2)) : 0;
-        const point = { lat: a.lat + (b.lat - a.lat) * fraction, lon: deltaLon(a.lon + deltaLon(b.lon - a.lon) * fraction) };
-        const offsetM = distanceM(station, point);
-        if (offsetM > maxOffsetM) continue;
-        const position2 = { segmentIndex, routeProgressM: startM + length * fraction, offsetM };
-        const group = groups.at(-1), last = group?.at(-1);
-        const reversal = preserveReversals && last && position2.routeProgressM - last.position.routeProgressM > 1e-6 && bx * last.dx + by * last.dy < 0;
-        const candidate = { position: position2, dx: length2 ? bx : last?.dx ?? 0, dy: length2 ? by : last?.dy ?? 0 };
-        if (last && !reversal && last.position.segmentIndex === segmentIndex && position2.routeProgressM - last.position.routeProgressM <= mergeWithinM) group.push(candidate);
-        else groups.push([candidate]);
-      }
-      const routePositions = groups.map((group) => group.reduce((a, b) => a.position.offsetM <= b.position.offsetM ? a : b).position);
-      if (!routePositions.length) continue;
-      matches.push({
-        station,
-        nearestTrackDistanceM: Math.min(...routePositions.map((point) => point.offsetM)),
-        routePositions,
-        matchStatus: routePositions.length > 1 ? "multiple_route_positions" : "near_track"
-      });
-    }
-    matches.sort((a, b) => a.routePositions[0].routeProgressM - b.routePositions[0].routeProgressM || a.station.stationId.localeCompare(b.station.stationId));
-    return {
-      matches,
-      totalTrackDistanceM: progress,
-      distanceUnit: "m",
-      gapsAreConnected: false,
-      note: "These are coordinate proximity matches. They do not confirm arrival, hut entry, or a complete Shanghe time path."
-    };
-  }
-
-  // src/features/itinerary/station-groups.js
-  function groupStations(stations) {
-    const groups = /* @__PURE__ */ new Map();
-    for (const station of stations) {
-      const key2 = station.coordinateStatus === "located" && station.placeId ? station.placeId : station.stationId;
-      const group = groups.get(key2);
-      if (group) {
-        if (group.lat !== station.lat || group.lon !== station.lon)
-          throw new Error("Conflicting coordinates for one physical station");
-        group.members.push(station);
-      } else groups.set(key2, { ...station, members: [station] });
-    }
-    return [...groups.values()];
-  }
-  var stationMembers = (station) => station.members ?? [station];
-
-  // src/features/itinerary/time-path.js
-  function createTimeGraph(database) {
-    const graph = /* @__PURE__ */ new Map();
-    for (const record of database?.records ?? []) {
-      if (record.mode !== "walk") continue;
-      const key2 = record.fromNodeId;
-      if (!graph.has(key2)) graph.set(key2, /* @__PURE__ */ new Set());
-      graph.get(key2).add(record.toNodeId);
-    }
-    return graph;
-  }
-  function uniqueTimePath(graph, from, to, blocked = /* @__PURE__ */ new Set()) {
-    if (!from || !to) return { nodes: null, reason: "\u672A\u5C0D\u61C9\u6642\u9593\u7BC0\u9EDE" };
-    const paths = [];
-    let visits = 0, limit = false;
-    function search(node, path) {
-      if (++visits > 5e3 || path.length > 30) {
-        limit = true;
-        return;
-      }
-      if (node === to) {
-        paths.push(path);
-        return;
-      }
-      for (const next of graph.get(node) ?? []) {
-        if (paths.length > 1) break;
-        if (!path.includes(next) && (next === to || !blocked.has(next)))
-          search(next, [...path, next]);
-      }
-    }
-    search(from, [from]);
-    if (limit) return { nodes: null, reason: "\u8DEF\u6BB5\u8CC7\u6599\u904E\u65BC\u8907\u96DC\uFF0C\u9700\u6838\u5C0D" };
-    if (paths.length !== 1)
-      return {
-        nodes: null,
-        reason: paths.length ? "\u6709\u591A\u689D\u53EF\u80FD\u8DEF\u5F91\uFF0C\u9700\u6838\u5C0D\u4E2D\u9593\u7AD9\u9EDE" : "\u7F3A\u5C11\u76F8\u9130\u6709\u5411\u8DEF\u6BB5"
-      };
-    return { nodes: paths[0], reason: null };
-  }
-
-  // src/features/itinerary/visit-resolution.js
-  var CLOSE_PASS_M = 25;
-  function resolveBranchVisits(candidates, { ids, graph } = {}) {
-    if (!ids || !graph) return { occurrences: candidates, bypassedOccurrences: [] };
-    const neighbors = /* @__PURE__ */ new Map();
-    for (const [from, targets] of graph)
-      for (const to of targets) {
-        if (!neighbors.has(from)) neighbors.set(from, /* @__PURE__ */ new Set());
-        if (!neighbors.has(to)) neighbors.set(to, /* @__PURE__ */ new Set());
-        neighbors.get(from).add(to);
-        neighbors.get(to).add(from);
-      }
-    const bindings2 = (point) => stationMembers(point.station).map((s) => ids.get(s.stationId));
-    const places = new Map(candidates.flatMap((p) => bindings2(p).map((id2) => [id2, p.station])));
-    const bypassedOccurrences = [];
-    const occurrences = candidates.filter((point, index) => {
-      if (point.offsetM <= CLOSE_PASS_M) return true;
-      const leafIds = bindings2(point);
-      const gates = leafIds.map((id2) => {
-        const adjacent = [...neighbors.get(id2) ?? []];
-        const gate2 = adjacent[0];
-        return adjacent.length === 1 && graph.get(id2)?.has(gate2) && graph.get(gate2)?.has(id2) && neighbors.get(gate2)?.size >= 3 ? places.get(gate2) : null;
-      });
-      if (!gates.length || gates.some((gate2) => !gate2 || gate2 !== gates[0])) return true;
-      const gate = gates[0];
-      if (distanceM(gate, point.station) <= 200) return true;
-      const before = candidates.slice(0, index).findLast((p) => p.station !== point.station);
-      const after = candidates.slice(index + 1).find((p) => p.station !== point.station);
-      if (!before || !after || before.segmentIndex !== point.segmentIndex || after.segmentIndex !== point.segmentIndex)
-        return true;
-      if (before.station === gate && after.station === gate) return true;
-      if (before.station !== gate && after.station !== gate) return true;
-      const mainPath = bindings2(before).some(
-        (a) => bindings2(after).some((b) => uniqueTimePath(graph, a, b, new Set(leafIds)).nodes)
-      );
-      if (!mainPath) return true;
-      bypassedOccurrences.push({
-        ...point,
-        reason: "terminal-branch-pass-without-return-gate",
-        gateStationId: gate.stationId
-      });
-      return false;
-    });
-    return { occurrences, bypassedOccurrences };
-  }
-
-  // src/features/itinerary/matching.js
-  var routeMatchers = /* @__PURE__ */ new WeakMap();
-  function routeMatcherFor(file) {
-    if (!routeMatchers.has(file)) routeMatchers.set(file, createTrackMatcher(file.segments));
-    return routeMatchers.get(file);
-  }
-  var DISPLAY_TYPES = /* @__PURE__ */ new Set(["trailhead", "exit", "summit", "hut", "water", "camp"]);
-  function matchItinerary(stations, file, topology) {
-    const found = routeMatcherFor(file).match(groupStations(stations));
-    const raw = found.matches.flatMap(
-      (match) => match.routePositions.map((position2) => ({
-        station: match.station,
-        ...position2
-      }))
-    ).sort((a, b) => a.routeProgressM - b.routeProgressM);
-    const resolved = resolveBranchVisits(raw, topology);
-    const occurrences = [];
-    for (const point of resolved.occurrences) {
-      const previous = occurrences.at(-1);
-      if (previous?.station.stationId === point.station.stationId) {
-        if (point.offsetM < previous.offsetM) occurrences[occurrences.length - 1] = point;
-      } else occurrences.push(point);
-    }
-    const areas = [
-      ...new Set(occurrences.flatMap((point) => stationMembers(point.station).map((s) => s.area)))
-    ];
-    return {
-      occurrences,
-      candidateOccurrences: raw,
-      bypassedOccurrences: resolved.bypassedOccurrences,
-      areas,
-      totalDistanceM: found.totalTrackDistanceM,
-      startCovered: Boolean(
-        occurrences.length && distanceM(file.points[0], occurrences[0].station) <= 100
-      ),
-      endCovered: Boolean(
-        occurrences.length && distanceM(file.points.at(-1), occurrences.at(-1).station) <= 100
-      )
-    };
-  }
-  function nearestRouteOffset(file, position2) {
-    const probe = { ...position2, stationId: "gps-position", coordinateStatus: "located" };
-    const found = routeMatcherFor(file).match([probe], {
-      maxOffsetM: 1e4,
-      mergeWithinM: 25
-    });
-    return found.matches[0]?.nearestTrackDistanceM ?? Infinity;
   }
 
   // src/domain/slope-time.js
@@ -6133,7 +6354,7 @@
     const rounded = Math.round(seconds);
     return `${Math.floor(rounded / 60)} \u5206 ${rounded % 60} \u79D2`;
   };
-  var fixTime = (time2) => Number.isFinite(time2) ? new Date(time2).toLocaleString("zh-TW", {
+  var fixTime = (time3) => Number.isFinite(time3) ? new Date(time3).toLocaleString("zh-TW", {
     timeZone: "Asia/Taipei",
     month: "numeric",
     day: "numeric",
@@ -7076,7 +7297,7 @@
     return `${rounded > 0 ? "+" : ""}${rounded.toFixed(1)}%`;
   };
   var position = (point) => point?.position ? `${point.position.lat.toFixed(6)}, ${point.position.lon.toFixed(6)}` : "\u672A\u77E5";
-  var time = (point) => point?.time == null ? "\u672A\u77E5" : new Date(point.time).toLocaleString("zh-TW", {
+  var time2 = (point) => point?.time == null ? "\u672A\u77E5" : new Date(point.time).toLocaleString("zh-TW", {
     timeZone: "Asia/Taipei",
     hourCycle: "h23"
   }) + "\uFF08\u53F0\u7063\u6642\u9593\uFF09";
@@ -7112,7 +7333,7 @@
         (entry) => `<li data-segment="${entry.segment ?? ""}" data-point="${entry.sourceIndex ?? ""}"><div class="correction-point-heading"><strong>${entry.segment === null ? "\u4F4D\u7F6E\u7D22\u5F15\u672A\u77E5" : `\u7B2C ${entry.segment + 1} \u6BB5 \xB7 \u7B2C ${entry.sourceIndex + 1} \u9EDE`}</strong><span>${entry.reasons.map((reason) => esc(reason.label)).join("\u3001") || "\u8655\u7406\u539F\u56E0\u672A\u77E5"}</span></div>
       <p class="small muted">\u539F\u59CB GPX \u9EDE\u4F4D\uFF1A${entry.gpxSegment === null ? "\u672A\u77E5" : `\u7B2C ${entry.gpxSegment + 1} \u6BB5 \xB7 \u7B2C ${entry.gpxIndex + 1} \u9EDE`}</p>
       <p class="small">${entry.reasons.map((reason) => esc(reason.description)).join(" ")}</p>
-      <dl class="correction-locations"><div><dt>\u539F\u59CB\u4F4D\u7F6E\uFF08\u7DEF\u5EA6\u3001\u7D93\u5EA6\uFF09</dt><dd>${position(entry.original)}</dd></div><div><dt>\u6821\u6B63\u5F8C\u4F4D\u7F6E\uFF08\u7DEF\u5EA6\u3001\u7D93\u5EA6\uFF09</dt><dd>${entry.excluded ? "\u4E0D\u7D0D\u5165\u5206\u6790" : position(entry.corrected)}</dd></div><div><dt>\u6D77\u62D4\uFF1A\u539F\u59CB \u2192 \u6821\u6B63\u5F8C</dt><dd>${value(entry.original?.elevation ?? null, "m")} \u2192 ${value(entry.corrected?.elevation ?? null, "m")}</dd></div><div><dt>\u539F\u59CB\u6642\u9593</dt><dd>${esc(time(entry.original))}</dd></div></dl></li>`
+      <dl class="correction-locations"><div><dt>\u539F\u59CB\u4F4D\u7F6E\uFF08\u7DEF\u5EA6\u3001\u7D93\u5EA6\uFF09</dt><dd>${position(entry.original)}</dd></div><div><dt>\u6821\u6B63\u5F8C\u4F4D\u7F6E\uFF08\u7DEF\u5EA6\u3001\u7D93\u5EA6\uFF09</dt><dd>${entry.excluded ? "\u4E0D\u7D0D\u5165\u5206\u6790" : position(entry.corrected)}</dd></div><div><dt>\u6D77\u62D4\uFF1A\u539F\u59CB \u2192 \u6821\u6B63\u5F8C</dt><dd>${value(entry.original?.elevation ?? null, "m")} \u2192 ${value(entry.corrected?.elevation ?? null, "m")}</dd></div><div><dt>\u539F\u59CB\u6642\u9593</dt><dd>${esc(time2(entry.original))}</dd></div></dl></li>`
       ).join("")}</ol>
       ${pages > 1 ? `<nav class="correction-pagination" aria-label="\u8A3A\u65B7\u5206\u9801">${button("\u4E0A\u4E00\u9801", "correction-page", "ghost", "", `data-page="${page - 1}" ${page === 0 ? "disabled" : ""}`)}<span role="status">\u7B2C ${page + 1} / ${pages} \u9801 \xB7 ${offset + 1}\u2013${offset + entries.length} \u9EDE</span>${button("\u4E0B\u4E00\u9801", "correction-page", "ghost", "", `data-page="${page + 1}" ${page === pages - 1 ? "disabled" : ""}`)}</nav>` : ""}
       </details>
@@ -8788,9 +9009,9 @@
   function visitedStations(gps, plan) {
     const keys = /* @__PURE__ */ new Set();
     for (const version of [...gps.navigation?.revisions ?? [], { plan, journey: gps.itinerary }]) {
-      for (const [index, time2] of Object.entries(version.journey?.arrivals ?? {})) {
+      for (const [index, time3] of Object.entries(version.journey?.arrivals ?? {})) {
         const row = version.plan?.rows?.[Number(index)];
-        if (row && Number.isFinite(time2)) keys.add(stationKey(row));
+        if (row && Number.isFinite(time3)) keys.add(stationKey(row));
       }
     }
     return keys;
@@ -10588,7 +10809,7 @@
       feedback
     });
     const daylight = createDaylightController({ itinerary });
-    const heightProfile = createHeightProfileView({ daylight, document: document2 });
+    const heightProfile = createHeightProfileView({ daylight, itinerary, state, document: document2 });
     const { mapPanel, heightPanel } = createMapView({
       state,
       terrainMap: map,
