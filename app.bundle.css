@@ -3137,9 +3137,12 @@ summary {
   color: #a14335;
 }
 @media (max-width: 700px) and (orientation: portrait) {
-  .compact-map .actual-map {
-    height: clamp(190px, calc(100dvh - 590px), 380px);
-    min-height: 190px;
+  .recording-scene:not(.recording-stopped) .compact-map .actual-map {
+    height: clamp(300px, 50dvh, 520px);
+    min-height: 300px;
+  }
+  .recording-scene:not(.recording-stopped) .recording-map-expanded .actual-map {
+    height: 85dvh;
   }
   .recording-stopped .compact-map .actual-map {
     height: clamp(130px, calc(100dvh - 680px), 210px);
@@ -3172,6 +3175,46 @@ summary {
 dialog {
   max-height: calc(100dvh - 32px);
   overflow: auto;
+}
+.recording-map-size {
+  display: none;
+}
+@media (max-width: 700px) and (orientation: portrait) {
+  .recording-map {
+    min-width: 0;
+  }
+  .recording-map-size {
+    position: sticky;
+    top: 0;
+    z-index: 1050;
+    display: flex;
+    justify-content: flex-end;
+    padding: calc(4px + env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 4px max(14px, env(safe-area-inset-left));
+    background: #f4f6ef;
+  }
+  .recording-map-size .button {
+    min-height: 44px;
+    font-size: 14px;
+    padding: 6px 12px;
+  }
+  .recording-map .terrain-toolbar {
+    flex-wrap: wrap;
+  }
+  .recording-map .terrain-toolbar .button {
+    min-height: 44px;
+  }
+  .recording-map .terrain-status-row {
+    flex-wrap: wrap;
+    overflow-wrap: anywhere;
+  }
+  .recording-map .actual-map {
+    scroll-margin-top: calc(60px + env(safe-area-inset-top));
+    scroll-margin-bottom: calc(160px + env(safe-area-inset-bottom));
+  }
+  .recording-scene .live-controls {
+    padding-left: max(20px, env(safe-area-inset-left));
+    padding-right: max(20px, env(safe-area-inset-right));
+  }
 }
 
 /* src/features/itinerary/live-factor.css */

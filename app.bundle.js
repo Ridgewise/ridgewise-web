@@ -2714,6 +2714,7 @@
       timeSourceBusy: false,
       timeSourceError: "",
       mapMode: "standard",
+      recordingMapExpandedId: null,
       libraryFilter: "all",
       recordingName: "",
       recordingBlocked: "",
@@ -5160,7 +5161,7 @@
     };
   }
 
-  // node_modules/@capacitor/core/dist/index.js
+  // ../../gpx-practical-20261020/app/node_modules/@capacitor/core/dist/index.js
   var ExceptionCode;
   (function(ExceptionCode2) {
     ExceptionCode2["Unimplemented"] = "UNIMPLEMENTED";
@@ -6028,8 +6029,9 @@
         paused: "\u5DF2\u66AB\u505C\u5B9A\u4F4D\uFF1B\u5730\u5716\u986F\u793A\u5DF2\u8A18\u9304\u8ECC\u8DE1\uFF0C\u4E0D\u4EE3\u8868\u76EE\u524D\u4F4D\u7F6E\u3002",
         error: "\u5B9A\u4F4D\u5DF2\u4E2D\u65B7\uFF1B\u5730\u5716\u50C5\u986F\u793A\u5148\u524D\u8ECC\u8DE1\uFF0C\u6700\u5F8C\u7D00\u9304\u4F4D\u7F6E\u4E0D\u4EE3\u8868\u76EE\u524D\u4F4D\u7F6E\u3002"
       }[gps.status];
+      const expanded = !stopped && state.recordingMapExpandedId === gps.id;
       const currentAccuracy = gps.status === "tracking" && Number.isFinite(gps.accuracy);
-      return `<section data-status="${esc(gps.status)}" class="recording-scene ${stopped ? "recording-stopped" : ""}"><header class="recording-heading"><div><span class="eyebrow">${stopped ? "YOUR WALK" : gps.status === "tracking" ? "LIVE GPS" : "GPS STATUS"}${gps.sourceRouteId ? gps.sourceRouteDirection === "reverse" ? " \xB7 \u53CD\u5411\u8D70" : " \xB7 \u539F\u5411\u8D70" : ""}</span><h2>${esc(gps.name || file.name)}</h2></div><span class="record-status" data-status="${esc(gps.status)}" role="status" aria-live="polite">${status}</span></header><p id="gps-location-status" class="recording-location-status"${stopped ? " hidden" : ""}>${locationStatus}</p><div class="recording-map" aria-describedby="gps-location-status">${mapPanel(file, null, recordingSegments(gps), { compact: true })}</div>${stopped ? completionView(gps, gpsElapsed()) : `<section class="recording-sheet"><div class="sheet-handle"></div>${itineraryViews?.liveFactorsPanel?.() ?? ""}${itineraryViews && gps.sourceRouteId ? itineraryViews.nextCard() : '<div class="direct-next"><span class="eyebrow">\u8A18\u4E0B\u81EA\u5DF1\u7684\u8DEF</span><h2>\u81EA\u7531\u7D00\u9304</h2><p class="small muted">\u85CD\u7DDA\u662F\u5DF2\u8A18\u9304\u8ECC\u8DE1\uFF0C\u76EE\u524D\u672A\u4F7F\u7528\u9810\u5B9A\u8DEF\u7DDA\u3002</p></div>'}<div class="live-stats"><div><small>\u7D00\u9304\u6642\u9593</small><strong id="gps-clock">${elapsedLabel(gpsElapsed())}</strong></div><div><small>\u6821\u6B63\u8DDD\u96E2</small><strong id="gps-distance">${stats.km.toFixed(2)} <small>km</small></strong></div><div><small>GPS \u7CBE\u5EA6</small><strong>${currentAccuracy ? `${Math.round(gps.accuracy)} <small>m</small>` : "\u2014"}</strong></div></div>${gps.error ? `<p class="error-message" role="status">${esc(gps.error)}</p>` : ""}${reroutePanel(state)}${itineraryViews?.departureNotice?.() ?? ""}<div class="live-controls">${button(["paused", "error"].includes(gps.status) ? "\u7E7C\u7E8C\u7D00\u9304" : "\u66AB\u505C\u7D00\u9304", ["paused", "error"].includes(gps.status) ? "gps-resume" : "gps-pause", "", ["paused", "error"].includes(gps.status) ? "play" : "pause")}${button("\u7D50\u675F\u7D00\u9304", "gps-finish", "end-recording", "stop")}</div><details class="recording-more" id="recording-more"><summary>\u7D00\u9304\u72C0\u614B\u8207\u66F4\u591A\u8CC7\u8A0A</summary><div class="stack">${itineraryViews?.departurePanel?.() ?? ""}<p id="gps-save-status" class="small muted" role="status">${esc(saveStatus())}</p>${button("\u91CD\u8A66\u4FDD\u5B58", "gps-save-retry", "", "refresh", `id="gps-save-retry" ${gps.saveError ? "" : "hidden"}`)}<p class="small muted">\u8ACB\u4FDD\u6301\u5206\u9801\u958B\u555F\uFF1B\u9396\u5C4F\u8207\u80CC\u666F\u5B9A\u4F4D\u53EF\u80FD\u4E2D\u65B7\u3002\u8349\u7A3F\u53EA\u4F9B\u6062\u5FA9\uFF0C\u4E0D\u6703\u81EA\u52D5\u52A0\u5165\u300C\u6211\u7684 GPX\u300D\u3002\u8DDD\u96E2\u8207\u9AD8\u5EA6\u6703\u96A8\u5F8C\u7E8C\u5B9A\u4F4D\u6821\u6B63\uFF0C\u539F\u59CB GPX \u4FDD\u7559\u3002</p>${button("\u4E0B\u8F09\u5099\u4EFD", "gps-download", "ghost", "download")}${button(stats.points ? "\u653E\u68C4\u9019\u6B21\u7D00\u9304" : "\u53D6\u6D88\u7A7A\u767D\u7D00\u9304", "gps-discard", "ghost", "close")}<p class="small muted">\u5DF2\u4FDD\u7559 ${stats.points} \u500B\u539F\u59CB\u9EDE \xB7 ${gps.segments.filter((segment) => segment.length).length} \u6BB5\u8ECC\u8DE1</p><p class="small muted">\u6821\u6B63\u722C\u5347 <span id="gps-ascent">${meters(stats.up)}</span> m \uFF0F\u4E0B\u964D <span id="gps-descent">${meters(stats.down)}</span> m \xB7 \u5E73\u5747\u901F\u5EA6 <span id="gps-average">\u2014</span></p></div></details></section>`}</section>${heightPanel ? `<details class="recording-height-profile" id="recording-height-profile"><summary>\u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762\u30FB\u65E5\u591C\u8DEF\u6BB5</summary>${heightPanel(file, recordingSegments(gps))}</details>` : ""}${!stopped && file === directMap ? `<details class="manual-reference" id="manual-reference"><summary>\u9032\u968E\uFF1A\u624B\u52D5\u4E0A\u6CB3\u8DEF\u6BB5\u8A08\u6642</summary>${shanghePanel()}</details>` : ""}`;
+      return `<section data-status="${esc(gps.status)}" class="recording-scene ${stopped ? "recording-stopped" : ""}"><header class="recording-heading"><div><span class="eyebrow">${stopped ? "YOUR WALK" : gps.status === "tracking" ? "LIVE GPS" : "GPS STATUS"}${gps.sourceRouteId ? gps.sourceRouteDirection === "reverse" ? " \xB7 \u53CD\u5411\u8D70" : " \xB7 \u539F\u5411\u8D70" : ""}</span><h2>${esc(gps.name || file.name)}</h2></div><span class="record-status" data-status="${esc(gps.status)}" role="status" aria-live="polite">${status}</span></header><p id="gps-location-status" class="recording-location-status"${stopped ? " hidden" : ""}>${locationStatus}</p><div class="recording-map ${expanded ? "recording-map-expanded" : ""}" aria-describedby="gps-location-status">${stopped ? "" : `<div class="recording-map-size"><button class="button" data-action="recording-map-toggle" aria-expanded="${expanded}" aria-controls="track-map">${expanded ? "\u7E2E\u5C0F\u5730\u5716" : "\u5C55\u958B\u5730\u5716"}</button></div>`}${mapPanel(file, null, recordingSegments(gps), { compact: true })}</div>${stopped ? completionView(gps, gpsElapsed()) : `<section class="recording-sheet"><div class="sheet-handle"></div>${itineraryViews?.liveFactorsPanel?.() ?? ""}${itineraryViews && gps.sourceRouteId ? itineraryViews.nextCard() : '<div class="direct-next"><span class="eyebrow">\u8A18\u4E0B\u81EA\u5DF1\u7684\u8DEF</span><h2>\u81EA\u7531\u7D00\u9304</h2><p class="small muted">\u85CD\u7DDA\u662F\u5DF2\u8A18\u9304\u8ECC\u8DE1\uFF0C\u76EE\u524D\u672A\u4F7F\u7528\u9810\u5B9A\u8DEF\u7DDA\u3002</p></div>'}<div class="live-stats"><div><small>\u7D00\u9304\u6642\u9593</small><strong id="gps-clock">${elapsedLabel(gpsElapsed())}</strong></div><div><small>\u6821\u6B63\u8DDD\u96E2</small><strong id="gps-distance">${stats.km.toFixed(2)} <small>km</small></strong></div><div><small>GPS \u7CBE\u5EA6</small><strong>${currentAccuracy ? `${Math.round(gps.accuracy)} <small>m</small>` : "\u2014"}</strong></div></div>${gps.error ? `<p class="error-message" role="status">${esc(gps.error)}</p>` : ""}${reroutePanel(state)}${itineraryViews?.departureNotice?.() ?? ""}<div class="live-controls">${button(["paused", "error"].includes(gps.status) ? "\u7E7C\u7E8C\u7D00\u9304" : "\u66AB\u505C\u7D00\u9304", ["paused", "error"].includes(gps.status) ? "gps-resume" : "gps-pause", "", ["paused", "error"].includes(gps.status) ? "play" : "pause")}${button("\u7D50\u675F\u7D00\u9304", "gps-finish", "end-recording", "stop")}</div><details class="recording-more" id="recording-more"><summary>\u7D00\u9304\u72C0\u614B\u8207\u66F4\u591A\u8CC7\u8A0A</summary><div class="stack">${itineraryViews?.departurePanel?.() ?? ""}<p id="gps-save-status" class="small muted" role="status">${esc(saveStatus())}</p>${button("\u91CD\u8A66\u4FDD\u5B58", "gps-save-retry", "", "refresh", `id="gps-save-retry" ${gps.saveError ? "" : "hidden"}`)}<p class="small muted">\u8ACB\u4FDD\u6301\u5206\u9801\u958B\u555F\uFF1B\u9396\u5C4F\u8207\u80CC\u666F\u5B9A\u4F4D\u53EF\u80FD\u4E2D\u65B7\u3002\u8349\u7A3F\u53EA\u4F9B\u6062\u5FA9\uFF0C\u4E0D\u6703\u81EA\u52D5\u52A0\u5165\u300C\u6211\u7684 GPX\u300D\u3002\u8DDD\u96E2\u8207\u9AD8\u5EA6\u6703\u96A8\u5F8C\u7E8C\u5B9A\u4F4D\u6821\u6B63\uFF0C\u539F\u59CB GPX \u4FDD\u7559\u3002</p>${button("\u4E0B\u8F09\u5099\u4EFD", "gps-download", "ghost", "download")}${button(stats.points ? "\u653E\u68C4\u9019\u6B21\u7D00\u9304" : "\u53D6\u6D88\u7A7A\u767D\u7D00\u9304", "gps-discard", "ghost", "close")}<p class="small muted">\u5DF2\u4FDD\u7559 ${stats.points} \u500B\u539F\u59CB\u9EDE \xB7 ${gps.segments.filter((segment) => segment.length).length} \u6BB5\u8ECC\u8DE1</p><p class="small muted">\u6821\u6B63\u722C\u5347 <span id="gps-ascent">${meters(stats.up)}</span> m \uFF0F\u4E0B\u964D <span id="gps-descent">${meters(stats.down)}</span> m \xB7 \u5E73\u5747\u901F\u5EA6 <span id="gps-average">\u2014</span></p></div></details></section>`}</section>${heightPanel ? `<details class="recording-height-profile" id="recording-height-profile"><summary>\u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762\u30FB\u65E5\u591C\u8DEF\u6BB5</summary>${heightPanel(file, recordingSegments(gps))}</details>` : ""}${!stopped && file === directMap ? `<details class="manual-reference" id="manual-reference"><summary>\u9032\u968E\uFF1A\u624B\u52D5\u4E0A\u6CB3\u8DEF\u6BB5\u8A08\u6642</summary>${shanghePanel()}</details>` : ""}`;
     }
     function shanghePanel(readonly = false) {
       const gps = state.gps, calibration = gps.calibration || { completed: [] }, active = calibration.active, factor = shangheFactor(calibration.completed);
@@ -6498,6 +6500,18 @@
       }
     }
     return {
+      resize: () => {
+        if (!map || !canvas?.isConnected) return;
+        const camera = {
+          center: map.getCenter(),
+          zoom: map.getZoom(),
+          pitch: map.getPitch(),
+          bearing: map.getBearing()
+        };
+        map.resize();
+        map.jumpTo(camera);
+        size = { width: canvas.clientWidth, height: canvas.clientHeight };
+      },
       mount,
       beforeRender: () => canvas?.remove(),
       view,
@@ -6886,6 +6900,7 @@
       }
     }
     return {
+      resize: () => map?.resize(),
       mount,
       fit,
       view,
@@ -7452,6 +7467,17 @@
     let status = { kind: "off", message: "\u55AE\u7D14\u8ECC\u8DE1\u6A21\u5F0F\uFF0C\u4E0D\u8F09\u5165\u5E95\u5716\u3002" };
     let offlineTarget = null, hasCoordinates = false;
     const views = /* @__PURE__ */ new Map();
+    let resizeObserver = null;
+    function observeSize(slot) {
+      resizeObserver?.disconnect();
+      if (!slot || !globalThis.ResizeObserver) return;
+      resizeObserver ??= new globalThis.ResizeObserver(() => {
+        if (usingOffline) offlineRenderer.resize();
+        else if (requestedMode === "terrain" && !terrain3d.unavailable()) terrain3d.resize();
+        else terrainMap?.invalidateSize({ pan: true, animate: false, debounceMoveend: true });
+      });
+      resizeObserver.observe(slot);
+    }
     let requestedMode = "plain", terrainContext = null;
     const report = (kind, message) => {
       status = { kind, message };
@@ -7623,11 +7649,13 @@
       status = { kind: "off", message: "\u55AE\u7D14\u8ECC\u8DE1\u6A21\u5F0F\uFF0C\u4E0D\u8F09\u5165\u5E95\u5716\u3002" };
     }
     function beforeRender() {
+      resizeObserver?.disconnect();
       canvas?.remove();
       terrain3d.beforeRender();
       offlineRenderer.beforeRender();
     }
     function mount(slot, file, live = [], mode = "standard", stations = []) {
+      observeSize(slot);
       requestedMode = mode;
       lastContext = { slot, file, live, mode, stations };
       if (!slot || !file || !file.points?.length && !file.recording) {
@@ -7762,6 +7790,8 @@
       if (terrainMap && mapMode !== "plain") startTiles();
     }
     function destroy() {
+      resizeObserver?.disconnect();
+      resizeObserver = null;
       releaseMap();
       terrain3d.destroy();
       offlineRenderer.destroy();
@@ -8221,6 +8251,16 @@
   // src/features/map/actions.js
   function createMapActions({ state, map, render, offlineMaps }) {
     return {
+      "recording-map-toggle": (target) => {
+        const container = target.closest(".recording-map");
+        if (!container) return;
+        const expanded = target.getAttribute("aria-expanded") !== "true";
+        state.recordingMapExpandedId = expanded ? state.gps.id : null;
+        container.classList.toggle("recording-map-expanded", expanded);
+        target.setAttribute("aria-expanded", String(expanded));
+        target.textContent = expanded ? "\u7E2E\u5C0F\u5730\u5716" : "\u5C55\u958B\u5730\u5716";
+        target.scrollIntoView({ block: "nearest", behavior: "instant" });
+      },
       "map-mode": (target) => {
         if (["standard", "terrain", "plain"].includes(target.dataset.mode)) {
           state.mapMode = target.dataset.mode;
