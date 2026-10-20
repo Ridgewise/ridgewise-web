@@ -190,7 +190,7 @@
       "format": "esm"
     },
     "src/domain/time-origin.js": {
-      "bytes": 7205,
+      "bytes": 7434,
       "imports": [],
       "format": "esm"
     },
@@ -294,9 +294,20 @@
       "imports": [],
       "format": "esm"
     },
-    "src/features/daylight/model.js": {
-      "bytes": 5402,
+    "src/features/daylight/gpx-model.js": {
+      "bytes": 1100,
       "imports": [],
+      "format": "esm"
+    },
+    "src/features/daylight/model.js": {
+      "bytes": 5540,
+      "imports": [
+        {
+          "path": "src/features/daylight/gpx-model.js",
+          "kind": "import-statement",
+          "original": "./gpx-model.js"
+        }
+      ],
       "format": "esm"
     },
     "src/features/daylight/location.js": {
@@ -479,7 +490,7 @@
       "format": "esm"
     },
     "src/features/daylight/view.js": {
-      "bytes": 6516,
+      "bytes": 6682,
       "imports": [
         {
           "path": "src/ui/html.js",
@@ -762,8 +773,40 @@
       ],
       "format": "esm"
     },
+    "src/features/itinerary/gpx-time-model.js": {
+      "bytes": 6457,
+      "imports": [
+        {
+          "path": "src/domain/time-origin.js",
+          "kind": "import-statement",
+          "original": "../../domain/time-origin.js"
+        },
+        {
+          "path": "src/domain/track-time.js",
+          "kind": "import-statement",
+          "original": "../../domain/track-time.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/features/itinerary/time-query.js": {
+      "bytes": 507,
+      "imports": [
+        {
+          "path": "src/features/itinerary/time-interpolation.js",
+          "kind": "import-statement",
+          "original": "./time-interpolation.js"
+        },
+        {
+          "path": "src/features/itinerary/gpx-time-model.js",
+          "kind": "import-statement",
+          "original": "./gpx-time-model.js"
+        }
+      ],
+      "format": "esm"
+    },
     "src/features/itinerary/live-factor.js": {
-      "bytes": 24477,
+      "bytes": 24565,
       "imports": [
         {
           "path": "../packages/route-stations/index.js",
@@ -781,9 +824,9 @@
           "original": "./matching.js"
         },
         {
-          "path": "src/features/itinerary/time-interpolation.js",
+          "path": "src/features/itinerary/time-query.js",
           "kind": "import-statement",
-          "original": "./time-interpolation.js"
+          "original": "./time-query.js"
         }
       ],
       "format": "esm"
@@ -932,7 +975,7 @@
       "format": "esm"
     },
     "src/features/itinerary/reroute-view.js": {
-      "bytes": 4358,
+      "bytes": 4500,
       "imports": [
         {
           "path": "src/features/itinerary/smart-view.js",
@@ -1074,7 +1117,7 @@
       "format": "esm"
     },
     "src/features/itinerary/live-factor-view.js": {
-      "bytes": 10308,
+      "bytes": 10954,
       "imports": [
         {
           "path": "src/ui/html.js",
@@ -1133,7 +1176,7 @@
       "format": "esm"
     },
     "src/features/itinerary/views.js": {
-      "bytes": 16410,
+      "bytes": 17621,
       "imports": [
         {
           "path": "src/features/itinerary/timing-issues.js",
@@ -1263,7 +1306,7 @@
       "format": "esm"
     },
     "src/features/gpx/time-source-view.js": {
-      "bytes": 3201,
+      "bytes": 3668,
       "imports": [
         {
           "path": "src/ui/html.js",
@@ -1279,7 +1322,7 @@
       "format": "esm"
     },
     "src/features/routes/views.js": {
-      "bytes": 5113,
+      "bytes": 5602,
       "imports": [
         {
           "path": "src/features/routes/direction-view.js",
@@ -1639,8 +1682,60 @@
       ],
       "format": "esm"
     },
+    "src/features/itinerary/gpx-progress.js": {
+      "bytes": 6688,
+      "imports": [
+        {
+          "path": "src/features/itinerary/matching.js",
+          "kind": "import-statement",
+          "original": "./matching.js"
+        },
+        {
+          "path": "src/features/itinerary/gpx-time-model.js",
+          "kind": "import-statement",
+          "original": "./gpx-time-model.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/features/itinerary/gpx-forecast.js": {
+      "bytes": 2020,
+      "imports": [],
+      "format": "esm"
+    },
+    "src/features/itinerary/time-basis.js": {
+      "bytes": 3376,
+      "imports": [
+        {
+          "path": "src/features/itinerary/model.js",
+          "kind": "import-statement",
+          "original": "./model.js"
+        },
+        {
+          "path": "src/features/itinerary/gpx-progress.js",
+          "kind": "import-statement",
+          "original": "./gpx-progress.js"
+        },
+        {
+          "path": "src/features/itinerary/gpx-forecast.js",
+          "kind": "import-statement",
+          "original": "./gpx-forecast.js"
+        },
+        {
+          "path": "src/features/itinerary/station-groups.js",
+          "kind": "import-statement",
+          "original": "./station-groups.js"
+        },
+        {
+          "path": "src/features/itinerary/data.js",
+          "kind": "import-statement",
+          "original": "./data.js"
+        }
+      ],
+      "format": "esm"
+    },
     "src/features/itinerary/next-eta.js": {
-      "bytes": 4442,
+      "bytes": 4521,
       "imports": [
         {
           "path": "src/features/itinerary/live-factor.js",
@@ -1648,15 +1743,15 @@
           "original": "./live-factor.js"
         },
         {
-          "path": "src/features/itinerary/time-interpolation.js",
+          "path": "src/features/itinerary/time-query.js",
           "kind": "import-statement",
-          "original": "./time-interpolation.js"
+          "original": "./time-query.js"
         }
       ],
       "format": "esm"
     },
     "src/features/itinerary/rerouting.js": {
-      "bytes": 16988,
+      "bytes": 17432,
       "imports": [
         {
           "path": "../packages/route-stations/index.js",
@@ -1682,7 +1777,7 @@
       "format": "esm"
     },
     "src/features/itinerary/reroute-eta.js": {
-      "bytes": 1950,
+      "bytes": 2043,
       "imports": [
         {
           "path": "src/features/itinerary/matching.js",
@@ -1746,12 +1841,12 @@
       "format": "esm"
     },
     "src/features/itinerary/smart-summary.js": {
-      "bytes": 2333,
+      "bytes": 2348,
       "imports": [
         {
-          "path": "src/features/itinerary/model.js",
+          "path": "src/features/itinerary/time-basis.js",
           "kind": "import-statement",
-          "original": "./model.js"
+          "original": "./time-basis.js"
         },
         {
           "path": "src/features/daylight/model.js",
@@ -1777,7 +1872,7 @@
       "format": "esm"
     },
     "src/features/itinerary/smart-controller.js": {
-      "bytes": 9643,
+      "bytes": 9835,
       "imports": [
         {
           "path": "src/features/gpx/parser.js",
@@ -1829,7 +1924,7 @@
       "format": "esm"
     },
     "src/features/itinerary/controller.js": {
-      "bytes": 20583,
+      "bytes": 24568,
       "imports": [
         {
           "path": "src/features/recording/analysis.js",
@@ -1852,9 +1947,14 @@
           "original": "../../data/shanghe-reference.js"
         },
         {
-          "path": "src/features/itinerary/model.js",
+          "path": "src/features/itinerary/time-basis.js",
           "kind": "import-statement",
-          "original": "./model.js"
+          "original": "./time-basis.js"
+        },
+        {
+          "path": "src/features/itinerary/time-query.js",
+          "kind": "import-statement",
+          "original": "./time-query.js"
         },
         {
           "path": "src/features/itinerary/matching.js",
@@ -1895,7 +1995,7 @@
       "format": "esm"
     },
     "src/features/history/model.js": {
-      "bytes": 8315,
+      "bytes": 8303,
       "imports": [
         {
           "path": "src/features/location/provider.js",
@@ -1913,9 +2013,9 @@
           "original": "../itinerary/matching.js"
         },
         {
-          "path": "src/features/itinerary/time-interpolation.js",
+          "path": "src/features/itinerary/time-query.js",
           "kind": "import-statement",
-          "original": "../itinerary/time-interpolation.js"
+          "original": "../itinerary/time-query.js"
         },
         {
           "path": "../packages/route-stations/index.js",
@@ -1931,7 +2031,7 @@
       "format": "esm"
     },
     "src/features/history/controller.js": {
-      "bytes": 9579,
+      "bytes": 10301,
       "imports": [
         {
           "path": "src/domain/time-origin.js",
@@ -1962,12 +2062,12 @@
       "format": "esm"
     },
     "src/features/personal-factor/model.js": {
-      "bytes": 6474,
+      "bytes": 7017,
       "imports": [],
       "format": "esm"
     },
     "src/features/personal-factor/controller.js": {
-      "bytes": 653,
+      "bytes": 953,
       "imports": [
         {
           "path": "src/features/personal-factor/model.js",
@@ -1978,7 +2078,7 @@
       "format": "esm"
     },
     "src/features/personal-factor/view.js": {
-      "bytes": 5692,
+      "bytes": 6329,
       "imports": [
         {
           "path": "src/ui/html.js",
@@ -2186,7 +2286,7 @@
       "imports": [],
       "exports": [],
       "inputs": {},
-      "bytes": 4887972
+      "bytes": 4940139
     },
     "dist/app.bundle.js": {
       "imports": [],
@@ -2210,7 +2310,7 @@
           "bytesInOutput": 2539
         },
         "src/domain/time-origin.js": {
-          "bytesInOutput": 7103
+          "bytesInOutput": 7386
         },
         "src/features/routes/direction.js": {
           "bytesInOutput": 1948
@@ -2245,8 +2345,11 @@
         "src/data/daylight-locations.js": {
           "bytesInOutput": 40889
         },
+        "src/features/daylight/gpx-model.js": {
+          "bytesInOutput": 878
+        },
         "src/features/daylight/model.js": {
-          "bytesInOutput": 4715
+          "bytesInOutput": 4804
         },
         "src/features/daylight/location.js": {
           "bytesInOutput": 1608
@@ -2285,7 +2388,7 @@
           "bytesInOutput": 7307
         },
         "src/features/daylight/view.js": {
-          "bytesInOutput": 6740
+          "bytesInOutput": 7023
         },
         "src/core/state.js": {
           "bytesInOutput": 2166
@@ -2347,8 +2450,14 @@
         "src/features/itinerary/time-interpolation.js": {
           "bytesInOutput": 12126
         },
+        "src/features/itinerary/gpx-time-model.js": {
+          "bytesInOutput": 5953
+        },
+        "src/features/itinerary/time-query.js": {
+          "bytesInOutput": 272
+        },
         "src/features/itinerary/live-factor.js": {
-          "bytesInOutput": 22949
+          "bytesInOutput": 23055
         },
         "src/features/history/observations.js": {
           "bytesInOutput": 1650
@@ -2378,7 +2487,7 @@
           "bytesInOutput": 7103
         },
         "src/features/itinerary/reroute-view.js": {
-          "bytesInOutput": 5155
+          "bytesInOutput": 5315
         },
         "src/features/routes/direction-view.js": {
           "bytesInOutput": 1686
@@ -2405,7 +2514,7 @@
           "bytesInOutput": 717
         },
         "src/features/itinerary/live-factor-view.js": {
-          "bytesInOutput": 13457
+          "bytesInOutput": 14341
         },
         "src/features/itinerary/route-progress.js": {
           "bytesInOutput": 2201
@@ -2417,7 +2526,7 @@
           "bytesInOutput": 2699
         },
         "src/features/itinerary/views.js": {
-          "bytesInOutput": 19519
+          "bytesInOutput": 21169
         },
         "src/features/itinerary/markers.js": {
           "bytesInOutput": 1115
@@ -2438,10 +2547,10 @@
           "bytesInOutput": 6862
         },
         "src/features/gpx/time-source-view.js": {
-          "bytesInOutput": 4077
+          "bytesInOutput": 4879
         },
         "src/features/routes/views.js": {
-          "bytesInOutput": 6172
+          "bytesInOutput": 6874
         },
         "src/ui/feedback.js": {
           "bytesInOutput": 4054
@@ -2474,7 +2583,7 @@
           "bytesInOutput": 1053
         },
         "../packages/prediction-engine/eta.js": {
-          "bytesInOutput": 4778
+          "bytesInOutput": 4793
         },
         "../packages/route-time-adapter/internal/contracts.js": {
           "bytesInOutput": 1626
@@ -2506,14 +2615,23 @@
         "src/features/itinerary/model.js": {
           "bytesInOutput": 5307
         },
+        "src/features/itinerary/gpx-progress.js": {
+          "bytesInOutput": 6074
+        },
+        "src/features/itinerary/gpx-forecast.js": {
+          "bytesInOutput": 1829
+        },
+        "src/features/itinerary/time-basis.js": {
+          "bytesInOutput": 2822
+        },
         "src/features/itinerary/next-eta.js": {
-          "bytesInOutput": 3739
+          "bytesInOutput": 3809
         },
         "src/features/itinerary/rerouting.js": {
-          "bytesInOutput": 16154
+          "bytesInOutput": 16689
         },
         "src/features/itinerary/reroute-eta.js": {
-          "bytesInOutput": 1784
+          "bytesInOutput": 1877
         },
         "src/features/itinerary/smart-location.js": {
           "bytesInOutput": 3864
@@ -2525,31 +2643,31 @@
           "bytesInOutput": 6491
         },
         "src/features/itinerary/smart-summary.js": {
-          "bytesInOutput": 2039
+          "bytesInOutput": 2044
         },
         "src/features/itinerary/smart-controller.js": {
-          "bytesInOutput": 10332
+          "bytesInOutput": 10480
         },
         "src/features/itinerary/live-checkpoint.js": {
           "bytesInOutput": 2201
         },
         "src/features/itinerary/controller.js": {
-          "bytesInOutput": 20314
+          "bytesInOutput": 24058
         },
         "src/features/history/model.js": {
-          "bytesInOutput": 7810
+          "bytesInOutput": 7808
         },
         "src/features/history/controller.js": {
-          "bytesInOutput": 8832
+          "bytesInOutput": 9513
         },
         "src/features/personal-factor/model.js": {
-          "bytesInOutput": 6293
+          "bytesInOutput": 6669
         },
         "src/features/personal-factor/controller.js": {
-          "bytesInOutput": 477
+          "bytesInOutput": 760
         },
         "src/features/personal-factor/view.js": {
-          "bytesInOutput": 7196
+          "bytesInOutput": 7981
         },
         "src/integrations/web-mcp.js": {
           "bytesInOutput": 2276
@@ -2561,7 +2679,7 @@
           "bytesInOutput": 100
         }
       },
-      "bytes": 3187128
+      "bytes": 3216912
     },
     "dist/app.bundle.css.map": {
       "imports": [],
