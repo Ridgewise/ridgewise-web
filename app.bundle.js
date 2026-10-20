@@ -7,7 +7,7 @@
     return 6371 * 2 * Math.atan2(Math.sqrt(Math.min(1, x)), Math.sqrt(Math.max(0, 1 - x)));
   }
   function trackStats(segments) {
-    let km = 0, up = 0, down = 0, points = 0, withElevation = 0, excludedPoints = 0;
+    let km2 = 0, up = 0, down = 0, points = 0, withElevation = 0, excludedPoints = 0;
     for (const segment of segments) {
       segment.forEach((point, index) => {
         points++;
@@ -16,7 +16,7 @@
         if (!index) return;
         const previous = segment[index - 1];
         if (previous.excluded || point.excluded) return;
-        km += haversine(previous, point);
+        km2 += haversine(previous, point);
         if (Number.isFinite(point.elevation) && Number.isFinite(previous.elevation)) {
           const delta = point.elevation - previous.elevation;
           up += Math.max(0, delta);
@@ -26,7 +26,7 @@
     }
     const complete = points > 0 && points === withElevation;
     return {
-      km,
+      km: km2,
       up: complete ? up : null,
       down: complete ? down : null,
       points,
@@ -50,12 +50,12 @@
   }
   function indexTrack(segments) {
     const points = [];
-    let km = 0;
+    let km2 = 0;
     segments.forEach((segment, segmentIndex) => {
       segment.forEach((point, sourceIndex) => {
         if (sourceIndex && !segment[sourceIndex - 1].excluded && !point.excluded)
-          km += haversine(segment[sourceIndex - 1], point);
-        points.push({ ...point, segment: segmentIndex, sourceIndex, km });
+          km2 += haversine(segment[sourceIndex - 1], point);
+        points.push({ ...point, segment: segmentIndex, sourceIndex, km: km2 });
       });
     });
     const { up, down, missing: missing3 } = elevationPrefixes(points);
@@ -90,13 +90,13 @@
     return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
   };
   function settings(options) {
-    for (const key3 of Object.keys(options)) {
-      if (!Object.hasOwn(TRACK_FILTER_DEFAULTS, key3))
-        throw new TypeError("Unknown track filter option: " + key3);
+    for (const key2 of Object.keys(options)) {
+      if (!Object.hasOwn(TRACK_FILTER_DEFAULTS, key2))
+        throw new TypeError("Unknown track filter option: " + key2);
     }
     const result = { ...TRACK_FILTER_DEFAULTS, ...options };
-    for (const [key3, value2] of Object.entries(result)) {
-      if (!Number.isFinite(value2) || value2 < 0) throw new RangeError(key3 + " must be non-negative");
+    for (const [key2, value2] of Object.entries(result)) {
+      if (!Number.isFinite(value2) || value2 < 0) throw new RangeError(key2 + " must be non-negative");
     }
     if (!Number.isInteger(result.elevationWindow) || result.elevationWindow < 1 || result.elevationWindow > 31 || result.elevationWindow % 2 === 0) {
       throw new RangeError("elevationWindow must be an odd integer from 1 to 31");
@@ -511,9 +511,9 @@
     segments.forEach((segment, segmentIndex) => {
       let highTime = null, dwell = [], anchor = null;
       const flushDwell = () => {
-        const duration4 = dwell.reduce((sum, item) => sum + item.elapsedMs, 0);
+        const duration5 = dwell.reduce((sum, item) => sum + item.elapsedMs, 0);
         for (const item of dwell) {
-          item.status = duration4 >= config2.stationaryDurationMs ? "stationary" : "uncertain-stationary";
+          item.status = duration5 >= config2.stationaryDurationMs ? "stationary" : "uncertain-stationary";
           item.movingMs = item.status === "stationary" ? 0 : null;
         }
         dwell = [];
@@ -540,8 +540,8 @@
         if (index) {
           const previous = segment[index - 1], before = positions.get(key(segmentIndex, index - 1));
           const elapsedMs = validTime(previous) && validTime(point) ? point.time - previous.time : null;
-          const metres2 = haversine(previous, point) * 1e3;
-          const speedMps = elapsedMs > 0 ? metres2 / (elapsedMs / 1e3) : null;
+          const metres3 = haversine(previous, point) * 1e3;
+          const speedMps = elapsedMs > 0 ? metres3 / (elapsedMs / 1e3) : null;
           const issues = [];
           if (source !== "track") issues.push(source === "route" ? "planned-route" : source);
           if ([previous, point].some((p) => nonrecorded.has(p.timeSource)))
@@ -581,7 +581,7 @@
             (i) => corrections.get(key(segmentIndex, i))?.includes("stationary-drift")
           );
           const dwellPoint = stationaryDrift ? at : point;
-          if (!issues.length && (stationaryDrift || speedMps <= config2.stationarySpeedMps && metres2 <= config2.stationaryRadiusM)) {
+          if (!issues.length && (stationaryDrift || speedMps <= config2.stationarySpeedMps && metres3 <= config2.stationaryRadiusM)) {
             if (anchor && haversine(anchor, dwellPoint) * 1e3 > config2.stationaryRadiusM)
               flushDwell();
             anchor ??= stationaryDrift ? before : previous;
@@ -1501,7 +1501,7 @@
     const span2 = Math.max(high - low, 20), floor = Math.floor(low - span2 * 0.12), ceiling = Math.ceil(high + span2 * 0.12);
     const left = 56, right = 620, top = 18, bottom = 154;
     const y = (value2) => bottom - (value2 - floor) / (ceiling - floor) * (bottom - top);
-    const distanceX = (km) => left + km / Math.max(file.stats.km, 1e-6) * (right - left);
+    const distanceX = (km2) => left + km2 / Math.max(file.stats.km, 1e-6) * (right - left);
     const x = (point) => distanceX(point.km);
     const groups = [];
     let group = [], previous = null;
@@ -2005,13 +2005,13 @@
       const time2 = parseGpxTime(timeText);
       if (timeText && !Number.isFinite(time2)) badTime++;
       const extensions = children(node, "extensions")[0], quality = {};
-      for (const key3 of ["accuracy", "altitudeAccuracy"]) {
+      for (const key2 of ["accuracy", "altitudeAccuracy"]) {
         const element = extensions && Array.from(extensions.childNodes).find(
-          (child) => child.nodeType === 1 && child.localName === key3 && child.namespaceURI === RIDGEWISE_GPX_NAMESPACE
+          (child) => child.nodeType === 1 && child.localName === key2 && child.namespaceURI === RIDGEWISE_GPX_NAMESPACE
         );
         if (element) {
           const parsed = number(element.textContent.trim());
-          quality[key3] = parsed !== null && parsed >= 0 ? parsed : null;
+          quality[key2] = parsed !== null && parsed >= 0 ? parsed : null;
         }
       }
       const declaredSource2 = extensionValue(extensions, "timeSource").toLowerCase();
@@ -2097,7 +2097,7 @@
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&apos;" })[c]
   );
   var qualityXml = (point) => {
-    const values = ["accuracy", "altitudeAccuracy"].filter((key3) => Number.isFinite(point[key3]) && point[key3] >= 0).map((key3) => "<rw:" + key3 + ">" + point[key3] + "</rw:" + key3 + ">").join("");
+    const values = ["accuracy", "altitudeAccuracy"].filter((key2) => Number.isFinite(point[key2]) && point[key2] >= 0).map((key2) => "<rw:" + key2 + ">" + point[key2] + "</rw:" + key2 + ">").join("");
     return values ? "<extensions>" + values + "</extensions>" : "";
   };
   function recordingGpx(gps) {
@@ -3139,13 +3139,13 @@
   function groupStations(stations) {
     const groups = /* @__PURE__ */ new Map();
     for (const station of stations) {
-      const key3 = station.coordinateStatus === "located" && station.placeId ? station.placeId : station.stationId;
-      const group = groups.get(key3);
+      const key2 = station.coordinateStatus === "located" && station.placeId ? station.placeId : station.stationId;
+      const group = groups.get(key2);
       if (group) {
         if (group.lat !== station.lat || group.lon !== station.lon)
           throw new Error("Conflicting coordinates for one physical station");
         group.members.push(station);
-      } else groups.set(key3, { ...station, members: [station] });
+      } else groups.set(key2, { ...station, members: [station] });
     }
     return [...groups.values()];
   }
@@ -3156,9 +3156,9 @@
     const graph = /* @__PURE__ */ new Map();
     for (const record of database?.records ?? []) {
       if (record.mode !== "walk") continue;
-      const key3 = record.fromNodeId;
-      if (!graph.has(key3)) graph.set(key3, /* @__PURE__ */ new Set());
-      graph.get(key3).add(record.toNodeId);
+      const key2 = record.fromNodeId;
+      if (!graph.has(key2)) graph.set(key2, /* @__PURE__ */ new Set());
+      graph.get(key2).add(record.toNodeId);
     }
     return graph;
   }
@@ -3656,9 +3656,9 @@
         ["gps-signal-unavailable", "rejected-gps-fix", "gps-time-quality-exclusion"].includes(reason)
       );
     }
-    function retainedMetric(key3, reason, now, allow) {
+    function retainedMetric(key2, reason, now, allow) {
       const metric3 = { ...missing(reason), state: "unavailable", asOf: null };
-      const saved = retained[key3];
+      const saved = retained[key2];
       if (allow && saved && Number.isFinite(now) && now >= saved.asOf && now - saved.asOf <= config2.retainLastValidMs) {
         metric3.lastValid = {
           ...structuredClone(saved),
@@ -3763,12 +3763,12 @@
         recent.source.requestedStartTime = target;
         recent.source.endpointToleranceMs = config2.endpointToleranceMs;
       }
-      for (const [key3, metric3] of Object.entries({ total, recent })) {
+      for (const [key2, metric3] of Object.entries({ total, recent })) {
         if (Number.isFinite(metric3.factor)) {
           metric3.state = "live";
           metric3.asOf = current.fix.time;
           metric3.quality = current.quality;
-          retained[key3] = structuredClone(metric3);
+          retained[key2] = structuredClone(metric3);
         } else metric3.state = "unavailable";
       }
       return { version: LIVE_FACTOR_VERSION, asOf: current.fix.time, total, recent };
@@ -4623,10 +4623,10 @@
       cookies.split(";").forEach((cookie) => {
         if (cookie.length <= 0)
           return;
-        let [key3, value2] = cookie.replace(/=/, "CAP_COOKIE").split("CAP_COOKIE");
-        key3 = decode(key3).trim();
+        let [key2, value2] = cookie.replace(/=/, "CAP_COOKIE").split("CAP_COOKIE");
+        key2 = decode(key2).trim();
         value2 = decode(value2).trim();
-        cookieMap[key3] = value2;
+        cookieMap[key2] = value2;
       });
       return cookieMap;
     }
@@ -4682,8 +4682,8 @@
   var normalizeHttpHeaders = (headers = {}) => {
     const originalKeys = Object.keys(headers);
     const loweredKeys = Object.keys(headers).map((k) => k.toLocaleLowerCase());
-    const normalized = loweredKeys.reduce((acc, key3, index) => {
-      acc[key3] = headers[originalKeys[index]];
+    const normalized = loweredKeys.reduce((acc, key2, index) => {
+      acc[key2] = headers[originalKeys[index]];
       return acc;
     }, {});
     return normalized;
@@ -4692,19 +4692,19 @@
     if (!params)
       return null;
     const output = Object.entries(params).reduce((accumulator, entry) => {
-      const [key3, value2] = entry;
+      const [key2, value2] = entry;
       let encodedValue;
       let item;
       if (Array.isArray(value2)) {
         item = "";
         value2.forEach((str) => {
           encodedValue = shouldEncode ? encodeURIComponent(str) : str;
-          item += `${key3}=${encodedValue}&`;
+          item += `${key2}=${encodedValue}&`;
         });
         item.slice(0, -1);
       } else {
         encodedValue = shouldEncode ? encodeURIComponent(value2) : value2;
-        item = `${key3}=${encodedValue}`;
+        item = `${key2}=${encodedValue}`;
       }
       return `${accumulator}&${item}`;
     }, "");
@@ -4718,19 +4718,19 @@
       output.body = options.data;
     } else if (type.includes("application/x-www-form-urlencoded")) {
       const params = new URLSearchParams();
-      for (const [key3, value2] of Object.entries(options.data || {})) {
-        params.set(key3, value2);
+      for (const [key2, value2] of Object.entries(options.data || {})) {
+        params.set(key2, value2);
       }
       output.body = params.toString();
     } else if (type.includes("multipart/form-data") || options.data instanceof FormData) {
       const form = new FormData();
       if (options.data instanceof FormData) {
-        options.data.forEach((value2, key3) => {
-          form.append(key3, value2);
+        options.data.forEach((value2, key2) => {
+          form.append(key2, value2);
         });
       } else {
-        for (const key3 of Object.keys(options.data)) {
-          form.append(key3, options.data[key3]);
+        for (const key2 of Object.keys(options.data)) {
+          form.append(key2, options.data[key2]);
         }
       }
       output.body = form;
@@ -4774,8 +4774,8 @@
           data = await response.text();
       }
       const headers = {};
-      response.headers.forEach((value2, key3) => {
-        headers[key3] = value2;
+      response.headers.forEach((value2, key2) => {
+        headers[key2] = value2;
       });
       return {
         data,
@@ -5046,15 +5046,80 @@
     return { begin: beginCalibration, complete: endCalibration, update: updateEstimate, cancel };
   }
 
+  // src/features/itinerary/smart-view.js
+  var km = (m) => Number.isFinite(m) ? (m / 1e3).toFixed(2) + " km" : "\u4E0D\u53EF\u7528";
+  var metres2 = (m) => Number.isFinite(m) ? Math.round(m) + " m" : "\u672A\u77E5";
+  var duration = (s) => Number.isFinite(s) ? `${Math.floor(Math.ceil(s / 60) / 60)} \u5C0F\u6642 ${Math.ceil(s / 60) % 60} \u5206` : "\u4E0D\u53EF\u7528";
+  var arrival = (ms) => Number.isFinite(ms) ? new Date(ms).toLocaleString("zh-TW", {
+    timeZone: "Asia/Taipei",
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }) : "\u4E0D\u53EF\u7528";
+  var short = (summary2) => summary2 ? `${km(summary2.distanceM)} \xB7 \u722C\u5347 ${metres2(summary2.ascentM)} \xB7 \u7D04 ${duration(summary2.totalSeconds)}` : "";
+  function smartPanel(state) {
+    const data = state.itinerary.smart;
+    if (!data)
+      return '<p class="small muted">\u9EDE\u958B\u5F8C\u81EA\u52D5\u4F9D\u76EE\u524D\u4F4D\u7F6E\u627E\u51FA\u6298\u8FD4\u3001\u55AE\u4E00\u5C71\u9802\u5F8C\u8FD4\u56DE\u8207\u5176\u4ED6\u76EE\u7684\u5730\u3002</p>';
+    const card = (item) => `<li class="smart-option"><button type="button" class="button smart-option-button"
+    data-action="smart-reroute-preview" data-option="${esc(item.id)}" ${item.available ? "" : "disabled"}>
+    <strong>${esc(item.title)}</strong><span>${esc(item.subtitle)}</span>
+    <small>${item.available ? item.paths > 1 ? "\u6709\u591A\u689D\u53EF\u884C\u8DEF\u5F91\uFF0C\u9EDE\u9078\u5F8C\u6838\u5C0D" : esc(short(item.summary)) : "\u76EE\u524D\u4E0D\u53EF\u7528"}</small>
+    </button>${!item.available ? `<p class="small error-message">${esc(item.reason)}</p>` : item.summary?.arrivalUtcMs === null ? '<p class="small muted">GPX \u8DEF\u6BB5\u53EF\u7528\uFF1B\u4E0A\u6CB3\u6642\u9593\u4E0D\u8DB3\uFF0CETA \u8207\u90E8\u5206\u65E5\u591C\u9810\u4F30\u4E0D\u53EF\u7528\u3002</p>' : ""}</li>`;
+    const featured = data.options?.filter((r) => r.kind !== "destination") ?? [];
+    const others = data.options?.filter((r) => r.kind === "destination") ?? [];
+    const preview = data.preview, summary2 = preview?.summary;
+    return `<div class="smart-reroute stack" aria-label="\u667A\u6167\u6539\u9053\u65B9\u6848" aria-busy="${Boolean(data.busy)}">
+    <p class="small muted">\u9078\u60F3\u8D70\u7684\u76EE\u7684\u5730\uFF0C\u78BA\u8A8D\u5269\u9918\u8DEF\u7DDA\u5F8C\u5957\u7528\u3002GPS \u6703\u6301\u7E8C\u7D00\u9304\u3002</p>
+    ${data.busy ? '<p role="status">\u6B63\u5728\u6838\u5C0D\u76EE\u524D\u4F4D\u7F6E\u8207\u53EF\u929C\u63A5\u8DEF\u7DDA\u2026</p>' : ""}
+    ${data.error ? `<p role="status" class="error-message">${esc(data.error)}</p>` : ""}
+    ${data.locations?.length ? `<div class="stack"><h3>\u4F60\u76EE\u524D\u5728\u54EA\u689D\u6B65\u9053\uFF1F</h3>${data.locations.map(
+      (p, i) => button(
+        p.label + (data.locations.filter((other) => other.label === p.label).length > 1 ? `\uFF08\u53EF\u80FD\u4F4D\u7F6E ${i + 1}\uFF09` : ""),
+        "smart-reroute-location",
+        "",
+        "",
+        `data-location="${esc(p.id)}"`
+      )
+    ).join("")}</div>` : ""}
+    ${featured.length ? `<ul class="smart-options">${featured.map(card).join("")}</ul>` : ""}
+    ${others.length ? `<details id="smart-other-destinations"><summary>\u5176\u4ED6\u76EE\u7684\u5730\uFF08${others.length}\uFF09</summary><ul class="smart-options">${others.map(card).join("")}</ul></details>` : ""}
+    ${data.alternatives?.length ? `<section class="stack" aria-label="\u9078\u64C7\u6539\u9053\u8DEF\u5F91"><h3>\u6709\u4E0D\u540C\u8DEF\u5F91\uFF0C\u8ACB\u6838\u5C0D\u8DEF\u7DDA\u5716\u8207\u9014\u7D93\u7AD9\u9EDE</h3><p class="small muted">\u6700\u591A\u986F\u793A\u4E09\u689D\u5DF2\u9A57\u8B49\u8DEF\u5F91\uFF1B\u8ACB\u6838\u5C0D\u5F62\u72C0\u3001\u7AD9\u5E8F\u53CA\u8DDD\u96E2\uFF0C\u7121\u6CD5\u78BA\u8A8D\u6642\u4F7F\u7528\u9032\u968E\u6A21\u5F0F\u3002</p>${data.alternatives.map(
+      (p, i) => `<button type="button" class="button smart-path" data-action="smart-reroute-path" data-path="${i}"><strong>\u65B9\u6848 ${i + 1} \xB7 \u7D93 ${p.via.map(esc).join(" \u2192 ")}</strong><small>${esc(short(p.summary))}</small>${mapSvg(p.file, null, [], true)}</button>`
+    ).join("")}</section>` : ""}
+    ${summary2 ? `<section class="smart-preview stack" aria-label="\u667A\u6167\u6539\u9053\u9810\u89BD"><h3 id="smart-preview-title" tabindex="-1">${esc(preview.request.title)}</h3>
+      <dl class="smart-metrics"><div><dt>\u5269\u9918\u8DDD\u96E2</dt><dd>${km(summary2.distanceM)}</dd></div><div><dt>\u722C\u5347\uFF0F\u4E0B\u964D</dt><dd>${metres2(summary2.ascentM)}\uFF0F${metres2(summary2.descentM)}</dd></div>
+      <div><dt>\u9810\u4F30\u8017\u6642</dt><dd>${duration(summary2.totalSeconds)}</dd></div><div><dt>\u62B5\u9054\u7D42\u9EDE\uFF08\u53F0\u5317\u6642\u9593\uFF09</dt><dd>${arrival(summary2.arrivalUtcMs)}</dd></div></dl>
+      ${mapSvg(preview.file, null, [], true)}
+      <p class="small muted">\u9810\u89BD\u6642\u9593\uFF1A${arrival(summary2.departureUtcMs)}\u3002\u65B0\u8DEF\u7DDA\u5C1A\u7121\u6709\u6548\u5373\u6642\u500D\u7387\uFF0C\u56DE\u9000\u8A2D\u5B9A\u500D\u7387 ${summary2.factor.toFixed(2)}\uFF1B\u5957\u7528\u5F8C\u91CD\u65B0\u7D2F\u7A4D\u672C\u7248\u5BE6\u6E2C\u500D\u7387\u3002</p>
+      <div class="smart-daylight" role="group" aria-label="\u6539\u9053\u5F8C\u65E5\u591C\u9810\u4F30"><strong>\u65E5\u591C\u9810\u4F30${summary2.daylight.countyName ? ` \xB7 ${esc(summary2.daylight.countyName)}` : ""}</strong><p>\u65E5\u9593 ${km(summary2.daylight.dayM)} \xB7 \u591C\u9593 ${km(summary2.daylight.nightM)} \xB7 \u672A\u77E5 ${km(summary2.daylight.unknownM)}</p>
+      ${summary2.daylight.reason ? `<p class="small muted">${esc(summary2.daylight.reason)}</p>` : ""}<p class="small muted">\u4F9D\u5B98\u65B9\u65E5\u51FA\u65E5\u843D\u8207\u9810\u4F30\u6642\u9593\uFF0C\u4E0D\u542B\u5C71\u5F62\u906E\u853D\u3001\u5929\u5019\u8B8A\u5316\u3002</p></div>
+      <details id="smart-station-order" open><summary>\u5269\u9918\u7AD9\u5E8F\u8207 ETA</summary><ol>${summary2.rows.slice(1).map(
+      (r) => `<li><span>${esc(r.station.name)}</span><span>${arrival(r.arrivalUtcMs)}</span>${r.reason ? `<p class="small error-message">${esc(r.reason)}</p>` : ""}</li>`
+    ).join("")}</ol></details>
+      ${summary2.arrivalUtcMs === null ? '<p class="error-message">\u6642\u9593\u8CC7\u6599\u4E0D\u8DB3\uFF0C\u5B8C\u6574 ETA \u4E0D\u53EF\u7528\uFF1B\u4FDD\u7559\u5DF2\u77E5 GPX \u8DEF\u7DDA\u3002</p>' : ""}
+      <p class="small muted">\u539F\u59CB GPX\u3001\u5DF2\u8D70\u8ECC\u8DE1\u3001\u8A08\u6642\u3001\u5230\u7AD9\u8207\u6539\u9053\u6B77\u53F2\u90FD\u6703\u4FDD\u7559\u3002</p>
+      <p id="smart-location-status" class="small error-message" role="status"></p>
+      ${button("\u78BA\u8A8D\u6539\u9053\uFF0C\u7E7C\u7E8C\u7D00\u9304", "smart-reroute-apply", "primary", "", 'id="smart-reroute-confirm"')}
+    </section>` : ""}
+    ${data.applied ? '<p role="status">\u667A\u6167\u6539\u9053\u5DF2\u5957\u7528\uFF0CGPS \u6301\u7E8C\u7D00\u9304\u3002</p>' : ""}
+    ${button("\u66F4\u65B0\u4F4D\u7F6E\u8207\u65B9\u6848", "smart-reroute-refresh", "ghost", "refresh", data.busy ? "disabled" : "")}
+  </div>`;
+  }
+
   // src/features/itinerary/reroute-view.js
-  var duration = (seconds) => Number.isFinite(seconds) ? `${Math.ceil(seconds / 60)} \u5206` : "\u4E0D\u53EF\u7528";
+  var duration2 = (seconds) => Number.isFinite(seconds) ? `${Math.ceil(seconds / 60)} \u5206` : "\u4E0D\u53EF\u7528";
   function reroutePanel(state) {
     const data = state.itinerary.reroute;
     const options = (items, field) => items.map(
       (item) => `<option value="${esc(item.id)}" ${String(item.id) === state.itinerary.rerouteForm?.[field] ? "selected" : ""}>${esc(item.name)}</option>`
     ).join("");
     const preview = data?.preview;
-    return `<details id="reroute-panel" class="panel panel-body stack"><summary>\u9014\u4E2D\u6539\u9053\uFF0F\u539F\u8DEF\u6298\u8FD4</summary>
+    return `<details id="reroute-panel" class="panel panel-body stack"><summary data-action="smart-reroute-open">\u4E00\u9375\u667A\u6167\u6539\u9053\uFF0F\u6298\u8FD4</summary>
+    ${smartPanel(state)}
+    <details id="reroute-advanced"><summary>\u9032\u968E\uFF1A\u624B\u52D5\u9078\u8DEF\u7DDA\u8207\u65B9\u5411</summary>
     <p class="small muted">GPS \u6301\u7E8C\u7D00\u9304\u3002\u5F9E\u53EF\u4FE1\u5B9A\u4F4D\u9078\u64C7 GPX \u8DEF\u6BB5\u53CA\u65B9\u5411\uFF0C\u518D\u9078\u76EE\u7684\u5730\uFF1B\u5C94\u8DEF\u4F9D\u65E2\u6709 GPX \u5E7E\u4F55\u898F\u5283\u3002\u53EF\u9078\u767B\u5C71\u53E3\u76F4\u63A5\u6298\u8FD4\uFF0C\u6216\u9078\u5C71\u9802\u518D\u8FD4\u56DE\u3002\u8ACB\u6838\u5C0D\u5B8C\u6574\u7AD9\u5E8F\u3002</p>
     <label for="reroute-source">\u53C3\u8003 GPX</label><select id="reroute-source">${options(
       state.library.filter((f) => f.kind !== "recording").map((f) => ({ id: f.id, name: f.name })),
@@ -5066,10 +5131,11 @@
     <label for="reroute-return">\u62B5\u9054\u5F8C\u8FD4\u56DE\uFF08\u9078\u586B\uFF09</label><select id="reroute-return"><option value="">\u62B5\u9054\u76EE\u7684\u5730\u7D50\u675F</option>${options(data.destinations, "reroute-return")}</select>
     ${button("\u9810\u89BD\u5269\u9918\u8DEF\u7DDA", "reroute-preview")}` : ""}
     ${preview ? `<section aria-label="\u6539\u9053\u9810\u89BD"><h3>${esc(preview.file.name)}</h3><p>GPX \u5DF2\u77E5\u7247\u6BB5 ${preview.file.stats.km.toFixed(2)} km \xB7 \u722C\u5347\uFF0F\u4E0B\u964D ${preview.file.points.every((p) => Number.isFinite(p.elevation)) ? `${Math.round(preview.file.stats.up)}\uFF0F${Math.round(preview.file.stats.down)} m` : "\u672A\u77E5"}</p>
-    <p>\u4E0A\u6CB3\u57FA\u6E96\uFF1A${duration(preview.plan.timeModel.totalSeconds)}\u3002\u65B0\u8DEF\u7DDA\u7121\u6709\u6548\u5373\u6642\u500D\u7387\u6642\uFF0C\u660E\u78BA\u56DE\u9000\u8A2D\u5B9A\u500D\u7387 ${(state.gps.itinerary?.factor ?? state.itinerary.factor).toFixed(2)}\u3002</p>
+    <p>\u4E0A\u6CB3\u57FA\u6E96\uFF1A${duration2(preview.plan.timeModel.totalSeconds)}\u3002\u65B0\u8DEF\u7DDA\u7121\u6709\u6548\u5373\u6642\u500D\u7387\u6642\uFF0C\u660E\u78BA\u56DE\u9000\u8A2D\u5B9A\u500D\u7387 ${(state.gps.itinerary?.factor ?? state.itinerary.factor).toFixed(2)}\u3002</p>
     <ol>${preview.plan.rows.slice(1).map((r) => `<li>${esc(r.station.name)}${r.reason ? `\uFF1A${esc(r.reason)}` : ""}</li>`).join("")}</ol>
     ${preview.warnings.map((w) => `<p class="error-message">${esc(w)}</p>`).join("")}
     <p class="small muted">\u5206\u6BB5\u63A5\u9EDE\u4E0D\u756B\u9023\u7DDA\uFF1B\u672A\u77E5\u6642\u9593\u4FDD\u7559\u4E0D\u53EF\u7528\u3002\u539F\u59CB GPX\u3001\u539F\u8A08\u756B\u3001\u5230\u7AD9\u53CA\u6539\u9053\u524D\u500D\u7387\u5C07\u4FDD\u7559\u3002</p>${button("\u5957\u7528\u6539\u9053\uFF0C\u7E7C\u7E8C\u7D00\u9304", "reroute-apply", "primary")}</section>` : ""}
+    </details>
     ${data?.applied ? '<p role="status">\u6539\u9053\u5DF2\u5957\u7528\uFF0CGPS \u6301\u7E8C\u7D00\u9304\uFF1B\u7121\u6709\u6548\u65B0\u500D\u7387\u6642\u4F7F\u7528\u8A2D\u5B9A\u500D\u7387\u3002</p>' : ""}
     ${data?.error ? `<p class="error-message" role="status">${esc(data.error)}</p>` : ""}
     ${state.gps.navigation ? `<p class="small muted">\u5DF2\u6539\u9053 ${state.gps.navigation.revisions.length} \u6B21\uFF1B\u539F\u8A08\u756B\uFF1A${esc(state.gps.navigation.original.file.name)}\u3002\u539F\u59CB\u8207\u6BCF\u7248\u7AD9\u5E8F\u3001\u5230\u7AD9\u53CA\u500D\u7387\u4FDD\u5B58\u5728\u672C\u6B21\u7D00\u9304\u3002</p><details id="reroute-history"><summary>\u67E5\u770B\u539F\u8A08\u756B\u8207\u6B77\u6B21\u6539\u9053</summary>${state.gps.navigation.revisions.map((revision, i) => `<section><h3>\u7248\u672C ${i} \xB7 ${esc(revision.file.name)}</h3><p>${new Date(revision.endedAt).toLocaleString("zh-TW", { timeZone: "Asia/Taipei" })} \u524D \xB7 \u5DF2\u78BA\u8A8D ${Object.keys(revision.journey?.arrivals ?? {}).length} \u6B21\u5230\u7AD9</p><p>\u5373\u6642\u500D\u7387\uFF1A${revision.live?.total?.factor?.toFixed(2) ?? "\u4E0D\u53EF\u7528"}\uFF08\u5C01\u5B58\uFF0C\u4F9B\u67E5\u95B1\uFF09</p><ol>${(revision.plan?.rows ?? revision.file.reroutePlan?.rows ?? []).map((row) => `<li>${esc(row.station.name)} \xB7 ${Number.isFinite(revision.journey?.arrivals?.[row.index]) ? new Date(revision.journey.arrivals[row.index]).toLocaleString("zh-TW", { timeZone: "Asia/Taipei" }) : "\u672A\u78BA\u8A8D\u5230\u7AD9"}</li>`).join("")}</ol></section>`).join("")}</details>` : ""}
@@ -5329,7 +5395,7 @@
     },
     load = loadMapLibre
   } = {}) {
-    let map = null, canvas = null, file = null, live = [], stations = [], key3 = null, version = 0, loading = false, unavailable2 = false;
+    let map = null, canvas = null, file = null, live = [], stations = [], key2 = null, version = 0, loading = false, unavailable2 = false;
     let timer = null, failed = false, loadedTopo = false, loadedHeight = false, hasCoordinates = false, needsFirstFix = false, initialView = null;
     let size = null, drawnFile = null;
     let status = { kind: "loading", message: "\u6B63\u5728\u8F09\u5165 3D \u5730\u5F62\u2026" };
@@ -5348,7 +5414,7 @@
       if (!map) return null;
       const center = map.getCenter();
       return {
-        key: key3,
+        key: key2,
         center: [center.lat, center.lng],
         zoom: map.getZoom() + 1,
         pitch: map.getPitch(),
@@ -5358,7 +5424,7 @@
     function remember() {
       const camera = view();
       if (!camera) return;
-      views.set(key3, camera);
+      views.set(key2, camera);
       if (views.size > 20) views.delete(views.keys().next().value);
     }
     function draw() {
@@ -5534,7 +5600,7 @@
       globalThis.window?.removeEventListener("offline", offline);
       map?.remove();
       canvas?.remove();
-      map = canvas = file = key3 = null;
+      map = canvas = file = key2 = null;
       live = [];
       stations = [];
       loading = false;
@@ -5549,21 +5615,21 @@
         return;
       }
       const nextKey = nextFile.id ?? nextFile;
-      if (key3 !== null && nextKey !== key3) release();
+      if (key2 !== null && nextKey !== key2) release();
       const firstFix = map && !hasCoordinates && nextLive.some((segment) => segment.length);
       file = nextFile;
       live = nextLive;
       stations = nextStations;
-      key3 = nextKey;
+      key2 = nextKey;
       hasCoordinates = Boolean(file.points.length || live.some((segment) => segment.length));
       if (!canvas) {
         needsFirstFix = !hasCoordinates;
         initialView = camera ? {
-          ...views.get(key3),
+          ...views.get(key2),
           ...camera,
-          pitch: views.get(key3)?.pitch ?? 55,
-          bearing: views.get(key3)?.bearing ?? 0
-        } : views.get(key3) ?? null;
+          pitch: views.get(key2)?.pitch ?? 55,
+          bearing: views.get(key2)?.bearing ?? 0
+        } : views.get(key2) ?? null;
         canvas = slot.ownerDocument.createElement("div");
         canvas.className = "terrain-map-canvas terrain-3d-canvas";
         canvas.setAttribute("aria-label", "3D \u5730\u5F62\u5730\u5716\uFF0C\u53EF\u7E2E\u653E\u3001\u65CB\u8F49\u8207\u50BE\u659C");
@@ -5754,9 +5820,9 @@
       const occupied = [];
       const add2 = (coordinates, name, station = null) => {
         if (!name || !bounds.contains(coordinates)) return;
-        const key3 = `${name}:${coordinates.map((v) => v.toFixed(4)).join(":")}`;
-        if (used.has(key3)) return;
-        used.add(key3);
+        const key2 = `${name}:${coordinates.map((v) => v.toFixed(4)).join(":")}`;
+        if (used.has(key2)) return;
+        used.add(key2);
         const point = map.project(coordinates);
         if (!station && occupied.some((p) => Math.abs(p.x - point.x) < 80 && Math.abs(p.y - point.y) < 26))
           return;
@@ -6089,17 +6155,17 @@
       );
       if (times.length) lastFixTime = Math.max(...times);
       const values = { "live-factor-last-fix": fixTime(lastFixTime) };
-      for (const key3 of ["total", "recent"]) {
-        const live = data[key3];
+      for (const key2 of ["total", "recent"]) {
+        const live = data[key2];
         const held = !valid(live) && live?.lastValid?.state === "stale" && valid(live.lastValid);
         const metric3 = held ? live.lastValid : live;
         const usable = valid(metric3);
-        values[`live-factor-${key3}-freshness`] = held ? "\u4E0A\u6B21\u6709\u6548\u503C\u30FB\u8CC7\u6599\u5DF2\u904E\u671F" : usable ? metric3.quality === "limited" ? "\u5373\u6642\u503C\u30FBGPS \u7CBE\u5EA6\u53D7\u9650" : "\u5373\u6642\u503C" : "";
+        values[`live-factor-${key2}-freshness`] = held ? "\u4E0A\u6B21\u6709\u6548\u503C\u30FB\u8CC7\u6599\u5DF2\u904E\u671F" : usable ? metric3.quality === "limited" ? "\u5373\u6642\u503C\u30FBGPS \u7CBE\u5EA6\u53D7\u9650" : "\u5373\u6642\u503C" : "";
         const delta = usable ? (metric3.factor - 1) * 100 : null;
-        values[`live-factor-${key3}-value`] = usable ? metric3.factor.toFixed(2) + " \u500D" : "\u2014";
-        values[`live-factor-${key3}-comparison`] = !usable ? "" : Math.abs(delta) < 0.05 ? "\u8207\u4E0A\u6CB3\u57FA\u6E96\u8017\u6642\u76F8\u540C\uFF080.0%\uFF09" : `${held ? "\u4E0A\u6B21\uFF1A" : ""}\u8017\u6642\u8F03\u4E0A\u6CB3${delta > 0 ? "\u591A" : "\u5C11"} ${Math.abs(delta).toFixed(1)}%\uFF08${delta > 0 ? "\u8F03\u6162" : "\u8F03\u5FEB"}\uFF09`;
-        values[`live-factor-${key3}-reason`] = held ? `\u4E0A\u6B21\u6709\u6548\u5B9A\u4F4D\uFF1A${fixTime(metric3.asOf)}\uFF08\u53F0\u5317\u6642\u9593\uFF09\u3002\u8CC7\u6599\u5DF2\u904E\u671F\uFF0C\u975E\u5373\u6642\u503C\uFF1B${reasons[live.reason] ?? "\u7B49\u5F85\u65B0\u6709\u6548\u5B9A\u4F4D\u3002"}` : usable ? "" : !state.gps.sourceRouteId ? reasons["missing-reference"] : metric3?.reason === "gps-not-tracking" ? state.gps.status === "error" ? "\u5B9A\u4F4D\u5DF2\u4E2D\u65B7\uFF1B\u8ACB\u7E7C\u7E8C\u7D00\u9304\u4E26\u53D6\u5F97\u65B0\u6709\u6548\u5B9A\u4F4D\u3002" : state.gps.accuracy > 50 || state.gps.error ? reasons["gps-quality"] : "\u7B49\u5F85\u65B0\u6709\u6548\u5B9A\u4F4D\uFF1B\u6062\u5FA9\u7D00\u9304\u5F8C\u9808\u5148\u78BA\u8A8D\u4F4D\u7F6E\u3002" : reasons[metric3?.reason] ?? unavailable;
-        values[`live-factor-${key3}-duration`] = usable ? `${held ? "\u4E0A\u6B21\u6709\u6548\u503C\uFF1A" : ""}\u5BE6\u969B ${span(metric3.actualSeconds)} \uFF0F\u4E0A\u6CB3\u57FA\u6E96 ${span(metric3.baselineSeconds)}` : "\u76EE\u524D\u7121\u6709\u6548\u500D\u7387";
+        values[`live-factor-${key2}-value`] = usable ? metric3.factor.toFixed(2) + " \u500D" : "\u2014";
+        values[`live-factor-${key2}-comparison`] = !usable ? "" : Math.abs(delta) < 0.05 ? "\u8207\u4E0A\u6CB3\u57FA\u6E96\u8017\u6642\u76F8\u540C\uFF080.0%\uFF09" : `${held ? "\u4E0A\u6B21\uFF1A" : ""}\u8017\u6642\u8F03\u4E0A\u6CB3${delta > 0 ? "\u591A" : "\u5C11"} ${Math.abs(delta).toFixed(1)}%\uFF08${delta > 0 ? "\u8F03\u6162" : "\u8F03\u5FEB"}\uFF09`;
+        values[`live-factor-${key2}-reason`] = held ? `\u4E0A\u6B21\u6709\u6548\u5B9A\u4F4D\uFF1A${fixTime(metric3.asOf)}\uFF08\u53F0\u5317\u6642\u9593\uFF09\u3002\u8CC7\u6599\u5DF2\u904E\u671F\uFF0C\u975E\u5373\u6642\u503C\uFF1B${reasons[live.reason] ?? "\u7B49\u5F85\u65B0\u6709\u6548\u5B9A\u4F4D\u3002"}` : usable ? "" : !state.gps.sourceRouteId ? reasons["missing-reference"] : metric3?.reason === "gps-not-tracking" ? state.gps.status === "error" ? "\u5B9A\u4F4D\u5DF2\u4E2D\u65B7\uFF1B\u8ACB\u7E7C\u7E8C\u7D00\u9304\u4E26\u53D6\u5F97\u65B0\u6709\u6548\u5B9A\u4F4D\u3002" : state.gps.accuracy > 50 || state.gps.error ? reasons["gps-quality"] : "\u7B49\u5F85\u65B0\u6709\u6548\u5B9A\u4F4D\uFF1B\u6062\u5FA9\u7D00\u9304\u5F8C\u9808\u5148\u78BA\u8A8D\u4F4D\u7F6E\u3002" : reasons[metric3?.reason] ?? unavailable;
+        values[`live-factor-${key2}-duration`] = usable ? `${held ? "\u4E0A\u6B21\u6709\u6548\u503C\uFF1A" : ""}\u5BE6\u969B ${span(metric3.actualSeconds)} \uFF0F\u4E0A\u6CB3\u57FA\u6E96 ${span(metric3.baselineSeconds)}` : "\u76EE\u524D\u7121\u6709\u6548\u500D\u7387";
       }
       const sources = [
         data.total?.source ?? data.total?.lastValid?.source,
@@ -6124,7 +6190,7 @@
         ["total", "\u672C\u6B21\u5168\u7A0B\u5373\u6642\u500D\u7387"],
         ["recent", "\u6700\u8FD1 30 \u5206\u9418\u500D\u7387"]
       ].map(
-        ([key3, title]) => `<section class="live-factor-card" aria-labelledby="live-factor-${key3}-title"><h3 id="live-factor-${key3}-title">${title}</h3><p class="live-factor-freshness" id="live-factor-${key3}-freshness" data-state="${values[`live-factor-${key3}-freshness`].startsWith("\u4E0A\u6B21") ? "stale" : "live"}">${text(`live-factor-${key3}-freshness`)}</p><p class="live-factor-value" id="live-factor-${key3}-value">${text(`live-factor-${key3}-value`)}</p><p class="live-factor-comparison" id="live-factor-${key3}-comparison">${text(`live-factor-${key3}-comparison`)}</p><p class="live-factor-reason" id="live-factor-${key3}-reason" role="status" aria-atomic="true">${text(`live-factor-${key3}-reason`)}</p></section>`
+        ([key2, title]) => `<section class="live-factor-card" aria-labelledby="live-factor-${key2}-title"><h3 id="live-factor-${key2}-title">${title}</h3><p class="live-factor-freshness" id="live-factor-${key2}-freshness" data-state="${values[`live-factor-${key2}-freshness`].startsWith("\u4E0A\u6B21") ? "stale" : "live"}">${text(`live-factor-${key2}-freshness`)}</p><p class="live-factor-value" id="live-factor-${key2}-value">${text(`live-factor-${key2}-value`)}</p><p class="live-factor-comparison" id="live-factor-${key2}-comparison">${text(`live-factor-${key2}-comparison`)}</p><p class="live-factor-reason" id="live-factor-${key2}-reason" role="status" aria-atomic="true">${text(`live-factor-${key2}-reason`)}</p></section>`
       ).join(
         ""
       )}</div><p class="small">\u672C\u6B21\u89C0\u6E2C\u50C5\u4F9B\u53C3\u8003\uFF1B\u4E0B\u4E00\u7AD9\u5206\u5225\u986F\u793A\u5169\u7A2E\u5373\u6642\u500D\u7387 ETA\uFF0C\u4E26\u4FDD\u7559\u8A2D\u5B9A\u500D\u7387 ETA \u4F5C\u6BD4\u8F03\u3002</p><details id="live-factor-details" class="live-factor-details"><summary id="live-factor-summary">\u500D\u7387\u8A08\u7B97\u8207\u5B9A\u4F4D\u4F86\u6E90</summary><p>\u6700\u5F8C\u6709\u6548\u5B9A\u4F4D\uFF08\u53F0\u5317\u6642\u9593\uFF09\uFF1A<span id="live-factor-last-fix">${text("live-factor-last-fix")}</span></p><p>\u5168\u7A0B\uFF1A<span id="live-factor-total-duration">${text("live-factor-total-duration")}</span><br>\u6700\u8FD1\uFF1A<span id="live-factor-recent-duration">${text("live-factor-recent-duration")}</span></p><p>\u500D\u7387\uFF1D\u5BE6\u969B\u7D93\u904E\u6642\u9593 \xF7 \u5DF2\u8D70\u8DEF\u6BB5\u7684\u4E0A\u6CB3\u57FA\u6E96\u3002\u5FEB\u6162\u767E\u5206\u6BD4\u6BD4\u8F03\u8017\u6642\uFF0C1.20 \u500D\u4EE3\u8868\u591A\u7528\u6642 20%\u3002\u5168\u7A0B\u5305\u542B\u4F11\u606F\u8207\u66AB\u505C\uFF0C\u53EA\u5728\u6709\u6548\u5B9A\u4F4D\u6642\u66F4\u65B0\u3002</p><p>\u6700\u8FD1\u7A97\u63A1\u771F\u5BE6\u5B9A\u4F4D\u7AEF\u9EDE\uFF0C\u5BE6\u969B\u9577\u5EA6\u70BA 30 \u5206\u81F3 30 \u5206 30 \u79D2\uFF1B\u4E2D\u65B7\u6216\u91CD\u8F09\u5F8C\u91CD\u65B0\u7D2F\u7A4D\uFF0C\u4E0D\u88DC\u9020\u5B9A\u4F4D\u3002</p><p>\u4E0A\u6CB3\u5206\u914D\uFF1A<span id="live-factor-distribution">${text("live-factor-distribution")}</span></p><p id="live-factor-provenance">${text("live-factor-provenance")}</p><p>\u8A2D\u5B9A\u500D\u7387 ETA \u4FDD\u7559\u4F5C\u6BD4\u8F03\uFF1B\u5373\u6642\u500D\u7387\u4E0D\u6703\u81EA\u52D5\u8986\u5BEB\u8A2D\u5B9A\u3002</p></details></section>`;
@@ -6159,6 +6225,17 @@
     const candidates = found.matches[0]?.routePositions.filter(
       (point) => point.segmentIndex === next.segmentIndex && point.routeProgressM >= previous.routeProgressM - 25 && point.routeProgressM <= next.routeProgressM + 25
     ) ?? [];
+    const accepted = gps.itinerary?.routePosition;
+    if (file.rerouted && accepted?.revisionId === file.id && accepted.time === fix.time && accepted.segmentIndex === next.segmentIndex && accepted.routeProgressM >= previous.routeProgressM - 25 && accepted.routeProgressM <= next.routeProgressM + 25) {
+      return {
+        segmentIndex: next.segmentIndex,
+        fromM: Math.min(
+          next.routeProgressM,
+          Math.max(previous.routeProgressM, accepted.routeProgressM)
+        ),
+        toM: next.routeProgressM
+      };
+    }
     candidates.sort((a, b) => a.offsetM - b.offsetM);
     if (!candidates.length) return null;
     if (file.rerouted && candidates.length !== 1) return null;
@@ -6269,7 +6346,7 @@
       ascentM += part.ascentM;
       descentM += part.descentM;
     }
-    const gap = file.reroutePlan?.warnings.some((w) => w.includes("\u63A5\u9EDE"));
+    const gap = file.reroutePlan?.geometryComplete === false || file.reroutePlan?.rows.some((r) => r.reasonCode === "gpx-unconnected-join") || file.reroutePlan?.geometryComplete === void 0 && file.reroutePlan?.warnings.some((w) => w.includes("\u63A5\u9EDE"));
     return {
       distanceM: gap ? null : file.stats.km * 1e3 - progress.fromM,
       knownDistanceM: file.stats.km * 1e3 - progress.fromM,
@@ -6279,12 +6356,12 @@
   }
 
   // src/features/itinerary/views.js
-  var duration2 = (seconds) => {
+  var duration3 = (seconds) => {
     if (seconds === null || !Number.isFinite(seconds)) return "\u5C1A\u672A\u63D0\u4F9B";
     const minutes = Math.max(0, Math.ceil(seconds / 60));
     return `${Math.floor(minutes / 60)} \u5C0F\u6642 ${minutes % 60} \u5206`;
   };
-  var arrival = (milliseconds) => milliseconds === null ? "\u2014" : new Date(milliseconds).toLocaleString("zh-TW", {
+  var arrival2 = (milliseconds) => milliseconds === null ? "\u2014" : new Date(milliseconds).toLocaleString("zh-TW", {
     timeZone: "Asia/Taipei",
     month: "numeric",
     day: "numeric",
@@ -6324,14 +6401,14 @@
       const passed = data.active && row.index < data.nextIndex;
       const unavailable2 = (data.active ? row.arrivalUtcMs : row.cumulativeSeconds) === null;
       const status = passed ? "\u5DF2\u901A\u904E" : data.active ? row.index === data.nextIndex ? "\u4E0B\u4E00\u7AD9 \xB7 \u672A\u5230\u9054" : "\u672A\u5230\u9054" : "\u5C1A\u672A\u51FA\u767C";
-      return `<li class="${passed ? "station-passed" : ""}"><div class="station-number">${number}</div><div><strong>${esc(row.station.name)}</strong><span class="small station-status">${status}${unavailable2 ? " \xB7 \u6642\u9593\u8CC7\u6599\u4E0D\u8DB3" : ""}</span><span class="small muted">${typeLabels[row.station.type] ?? "\u7AD9\u9EDE"} \xB7 ${row.gap ? "GPX \u5206\u6BB5\u9593\u8DDD\u96E2\u672A\u77E5" : "GPX \u7D2F\u8A08 " + (row.routeProgressM / 1e3).toFixed(2) + " km"}</span>${row.reason ? `<span class="small error-message">${esc(row.reason)}</span>` : ""}<details class="small muted station-timing" id="station-time-${row.index}"><summary>\u6642\u9593\u4F9D\u64DA${row.timeNodeNames?.length > 2 ? ` \xB7 \u542B ${row.timeNodeNames.length - 2} \u500B\u6642\u9593\u4E2D\u9593\u7BC0\u9EDE` : ""}</summary><p>${row.index === 0 ? "\u4E0A\u6CB3\u8D77\u59CB\u7AD9" : `\u524D\u6BB5\u57FA\u6E96\uFF1A${duration2(row.baselineSeconds)}`}</p>${row.index && data.timeModel ? `<p data-time-distribution="${data.timeModel.legs[row.index - 1]?.method ?? "unavailable"}">\u7AD9\u9593\u5206\u914D\uFF1A${esc(timeDistributionLabel(data.timeModel.legs[row.index - 1]))}</p>` : ""}${row.timeNodeNames?.length > 2 ? `<p>${row.timeNodeNames.map(esc).join(" \u2192 ")}</p><p>\u4E2D\u9593\u7BC0\u9EDE\u672A\u5FC5\u5DF2\u6709\u5EA7\u6A19\uFF0C\u4ECD\u9700\u6838\u5C0D\u8207 GPX \u540C\u4E00\u8DEF\u5F91\u3002</p>` : ""}</details></div><div class="station-eta"><small>${data.active ? "\u9810\u4F30\u62B5\u9054" : "\u7D2F\u8A08\u8017\u6642"}</small><strong>${data.active ? arrival(row.arrivalUtcMs) : duration2(row.cumulativeSeconds)}</strong></div></li>`;
+      return `<li class="${passed ? "station-passed" : ""}"><div class="station-number">${number}</div><div><strong>${esc(row.station.name)}</strong><span class="small station-status">${status}${unavailable2 ? " \xB7 \u6642\u9593\u8CC7\u6599\u4E0D\u8DB3" : ""}</span><span class="small muted">${typeLabels[row.station.type] ?? "\u7AD9\u9EDE"} \xB7 ${row.gap ? "GPX \u5206\u6BB5\u9593\u8DDD\u96E2\u672A\u77E5" : "GPX \u7D2F\u8A08 " + (row.routeProgressM / 1e3).toFixed(2) + " km"}</span>${row.reason ? `<span class="small error-message">${esc(row.reason)}</span>` : ""}<details class="small muted station-timing" id="station-time-${row.index}"><summary>\u6642\u9593\u4F9D\u64DA${row.timeNodeNames?.length > 2 ? ` \xB7 \u542B ${row.timeNodeNames.length - 2} \u500B\u6642\u9593\u4E2D\u9593\u7BC0\u9EDE` : ""}</summary><p>${row.index === 0 ? "\u4E0A\u6CB3\u8D77\u59CB\u7AD9" : `\u524D\u6BB5\u57FA\u6E96\uFF1A${duration3(row.baselineSeconds)}`}</p>${row.index && data.timeModel ? `<p data-time-distribution="${data.timeModel.legs[row.index - 1]?.method ?? "unavailable"}">\u7AD9\u9593\u5206\u914D\uFF1A${esc(timeDistributionLabel(data.timeModel.legs[row.index - 1]))}</p>` : ""}${row.timeNodeNames?.length > 2 ? `<p>${row.timeNodeNames.map(esc).join(" \u2192 ")}</p><p>\u4E2D\u9593\u7BC0\u9EDE\u672A\u5FC5\u5DF2\u6709\u5EA7\u6A19\uFF0C\u4ECD\u9700\u6838\u5C0D\u8207 GPX \u540C\u4E00\u8DEF\u5F91\u3002</p>` : ""}</details></div><div class="station-eta"><small>${data.active ? "\u9810\u4F30\u62B5\u9054" : "\u7D2F\u8A08\u8017\u6642"}</small><strong>${data.active ? arrival2(row.arrivalUtcMs) : duration3(row.cumulativeSeconds)}</strong></div></li>`;
     }
     function stationsPanel() {
       const data = itinerary.snapshot();
       if (!data)
         return `<section class="panel panel-body stack"><h2>\u6CBF\u9014\u7AD9\u9EDE</h2><p class="small muted">\u5167\u5EFA\u8CC7\u6599\u5C1A\u672A\u627E\u5230\u9019\u689D GPX \u7684\u5C0D\u61C9\u7AD9\u9EDE\u3002</p></section>`;
       const rows = data.rows.filter((row) => row.visible);
-      return `<section class="panel panel-body stack itinerary-panel"><div><span class="eyebrow">YOUR STOPS</span><h2>\u6CBF\u9014\u7AD9\u9EDE\u8207 ETA</h2><p class="small muted">${data.active ? "\u62B5\u9054\u5F8C\u6703\u91CD\u65B0\u63A8\u7B97\u5F8C\u7E8C\u6642\u9593\uFF1B\u5F80\u8FD4\u7AD9\u9EDE\u5206\u6B21\u986F\u793A\u3002" : "\u6309\u300C\u958B\u59CB\u767B\u5C71\u7D00\u9304\u300D\u5F8C\uFF0C\u4EE5\u5BE6\u969B\u51FA\u767C\u6642\u9593\u986F\u793A\u62B5\u9054\u6642\u523B\u3002"}</p></div>${!data.compatible ? '<p class="error-message">\u7AD9\u9EDE\u8CC7\u6599\u5DF2\u66F4\u65B0\uFF1B\u7D50\u675F\u76EE\u524D\u7D00\u9304\u5F8C\uFF0C\u91CD\u65B0\u958B\u59CB\u624D\u80FD\u5957\u7528\u65B0\u7684 ETA\u3002</p>' : ""}<div class="itinerary-summary"><span>\u5168\u7A0B\u9810\u4F30</span><strong>${duration2(data.totalSeconds)}</strong><small>\u8A2D\u5B9A\u500D\u7387 ${data.factor.toFixed(2)} \xB7 \u5F71\u97FF ETA</small></div>${!data.startCovered || !data.endCovered ? '<p class="soft-notice">GPX \u8D77\u9EDE\u6216\u7D42\u9EDE\u6C92\u6709\u5C0D\u61C9\u6642\u9593\u7AD9\u9EDE\uFF1B\u53EA\u986F\u793A\u6709\u57FA\u6E96\u7684\u7AD9\u9593\u6642\u9593\u3002</p>' : ""}${rows.length ? `<ol class="station-list">${rows.map((row, index) => stationRow(row, data, index + 1)).join("")}</ol>` : '<p class="small muted">\u76EE\u524D GPX \u9644\u8FD1\u672A\u627E\u5230\u9019\u516D\u985E\u7AD9\u9EDE\uFF0C\u8ACB\u88DC\u9F4A\u7AD9\u9EDE\u5EA7\u6A19\u3002</p>'}${timingIssuesPanel(data)}<p class="small muted">\u4F4D\u7F6E\u63A5\u8FD1\u4E0D\u4EE3\u8868\u5DF2\u9032\u5165\u5C71\u5C4B\uFF1B\u6C34\u6E90\u53EF\u7528\u6027\u8ACB\u53E6\u884C\u78BA\u8A8D\u3002</p><details id="station-source-details" class="small muted"><summary>\u7AD9\u9EDE\u4F86\u6E90\u8207 ETA \u8A08\u7B97\u9650\u5236</summary><p class="small muted">\u4F9D\u4E0A\u6CB3\u6709\u5411\u6642\u9593\u8A08\u7B97\uFF0C\u4E0D\u4EE5 GPX \u6B77\u53F2\u6642\u9593\u6216\u8DDD\u96E2\u88DC\u6642\u9593\u3002\u7F3A\u503C\u6216\u591A\u689D\u53EF\u80FD\u8DEF\u5F91\u6703\u4FDD\u7559\u5F85\u88DC\u3002</p><p class="small muted">\u7AD9\u9EDE\u5EA7\u6A19\u53C3\u8003\uFF1A\u653F\u5E9C\u516C\u958B\u8CC7\u6599\u53CA <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors\uFF08ODbL\uFF09</a>\uFF0C\u4EE5\u53CA <a href="https://joyhike.com/path/31" target="_blank" rel="noopener noreferrer">Joyhike \u5730\u9EDE\u6BD4\u5C0D\u8CC7\u6599</a>\u3002\u6EAA\u6E90\u5EA7\u6A19\u7531\u4F7F\u7528\u8005\u65BC OSM \u67E5\u627E\u63D0\u4F9B\u3002</p></details></section>`;
+      return `<section class="panel panel-body stack itinerary-panel"><div><span class="eyebrow">YOUR STOPS</span><h2>\u6CBF\u9014\u7AD9\u9EDE\u8207 ETA</h2><p class="small muted">${data.active ? "\u62B5\u9054\u5F8C\u6703\u91CD\u65B0\u63A8\u7B97\u5F8C\u7E8C\u6642\u9593\uFF1B\u5F80\u8FD4\u7AD9\u9EDE\u5206\u6B21\u986F\u793A\u3002" : "\u6309\u300C\u958B\u59CB\u767B\u5C71\u7D00\u9304\u300D\u5F8C\uFF0C\u4EE5\u5BE6\u969B\u51FA\u767C\u6642\u9593\u986F\u793A\u62B5\u9054\u6642\u523B\u3002"}</p></div>${!data.compatible ? '<p class="error-message">\u7AD9\u9EDE\u8CC7\u6599\u5DF2\u66F4\u65B0\uFF1B\u7D50\u675F\u76EE\u524D\u7D00\u9304\u5F8C\uFF0C\u91CD\u65B0\u958B\u59CB\u624D\u80FD\u5957\u7528\u65B0\u7684 ETA\u3002</p>' : ""}<div class="itinerary-summary"><span>\u5168\u7A0B\u9810\u4F30</span><strong>${duration3(data.totalSeconds)}</strong><small>\u8A2D\u5B9A\u500D\u7387 ${data.factor.toFixed(2)} \xB7 \u5F71\u97FF ETA</small></div>${!data.startCovered || !data.endCovered ? '<p class="soft-notice">GPX \u8D77\u9EDE\u6216\u7D42\u9EDE\u6C92\u6709\u5C0D\u61C9\u6642\u9593\u7AD9\u9EDE\uFF1B\u53EA\u986F\u793A\u6709\u57FA\u6E96\u7684\u7AD9\u9593\u6642\u9593\u3002</p>' : ""}${rows.length ? `<ol class="station-list">${rows.map((row, index) => stationRow(row, data, index + 1)).join("")}</ol>` : '<p class="small muted">\u76EE\u524D GPX \u9644\u8FD1\u672A\u627E\u5230\u9019\u516D\u985E\u7AD9\u9EDE\uFF0C\u8ACB\u88DC\u9F4A\u7AD9\u9EDE\u5EA7\u6A19\u3002</p>'}${timingIssuesPanel(data)}<p class="small muted">\u4F4D\u7F6E\u63A5\u8FD1\u4E0D\u4EE3\u8868\u5DF2\u9032\u5165\u5C71\u5C4B\uFF1B\u6C34\u6E90\u53EF\u7528\u6027\u8ACB\u53E6\u884C\u78BA\u8A8D\u3002</p><details id="station-source-details" class="small muted"><summary>\u7AD9\u9EDE\u4F86\u6E90\u8207 ETA \u8A08\u7B97\u9650\u5236</summary><p class="small muted">\u4F9D\u4E0A\u6CB3\u6709\u5411\u6642\u9593\u8A08\u7B97\uFF0C\u4E0D\u4EE5 GPX \u6B77\u53F2\u6642\u9593\u6216\u8DDD\u96E2\u88DC\u6642\u9593\u3002\u7F3A\u503C\u6216\u591A\u689D\u53EF\u80FD\u8DEF\u5F91\u6703\u4FDD\u7559\u5F85\u88DC\u3002</p><p class="small muted">\u7AD9\u9EDE\u5EA7\u6A19\u53C3\u8003\uFF1A\u653F\u5E9C\u516C\u958B\u8CC7\u6599\u53CA <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors\uFF08ODbL\uFF09</a>\uFF0C\u4EE5\u53CA <a href="https://joyhike.com/path/31" target="_blank" rel="noopener noreferrer">Joyhike \u5730\u9EDE\u6BD4\u5C0D\u8CC7\u6599</a>\u3002\u6EAA\u6E90\u5EA7\u6A19\u7531\u4F7F\u7528\u8005\u65BC OSM \u67E5\u627E\u63D0\u4F9B\u3002</p></details></section>`;
     }
     const heightLabel = (value2) => value2 === null ? "\u2014" : `${meters(value2)} m`;
     const etaReasons = {
@@ -6344,17 +6421,17 @@
     function nextEtaFields() {
       const data = itinerary.nextEtas?.();
       return Object.fromEntries(
-        ["total", "recent"].flatMap((key3) => {
-          const metric3 = data?.[key3];
+        ["total", "recent"].flatMap((key2) => {
+          const metric3 = data?.[key2];
           const usable = Number.isFinite(metric3?.arrivalUtcMs);
           return [
-            [`itinerary-${key3}-arrival`, usable ? arrival(metric3.arrivalUtcMs) : "\u2014"],
+            [`itinerary-${key2}-arrival`, usable ? arrival2(metric3.arrivalUtcMs) : "\u2014"],
             [
-              `itinerary-${key3}-remaining`,
-              usable ? `${metric3.factorBasis === "configured-fallback" ? "\u56DE\u9000\u8A2D\u5B9A\u500D\u7387 \xB7 " : ""}\u5269\u9918 ${duration2(metric3.remainingSeconds)}` : "\u4E0D\u53EF\u7528"
+              `itinerary-${key2}-remaining`,
+              usable ? `${metric3.factorBasis === "configured-fallback" ? "\u56DE\u9000\u8A2D\u5B9A\u500D\u7387 \xB7 " : ""}\u5269\u9918 ${duration3(metric3.remainingSeconds)}` : "\u4E0D\u53EF\u7528"
             ],
             [
-              `itinerary-${key3}-eta-reason`,
+              `itinerary-${key2}-eta-reason`,
               usable ? "" : etaReasons[metric3?.reason] ?? liveFactorReason(metric3?.reason)
             ]
           ];
@@ -6367,7 +6444,7 @@
         ["total", "\u5168\u7A0B\u500D\u7387 ETA"],
         ["recent", "\u6700\u8FD1 30 \u5206\u9418\u500D\u7387 ETA"]
       ].map(
-        ([key3, title]) => `<section class="next-live-eta" aria-label="${title}"><h3>${title}</h3><strong id="itinerary-${key3}-arrival">${esc(values[`itinerary-${key3}-arrival`])}</strong><span id="itinerary-${key3}-remaining">${esc(values[`itinerary-${key3}-remaining`])}</span><p id="itinerary-${key3}-eta-reason" class="small muted" role="status" aria-atomic="true">${esc(values[`itinerary-${key3}-eta-reason`])}</p></section>`
+        ([key2, title]) => `<section class="next-live-eta" aria-label="${title}"><h3>${title}</h3><strong id="itinerary-${key2}-arrival">${esc(values[`itinerary-${key2}-arrival`])}</strong><span id="itinerary-${key2}-remaining">${esc(values[`itinerary-${key2}-remaining`])}</span><p id="itinerary-${key2}-eta-reason" class="small muted" role="status" aria-atomic="true">${esc(values[`itinerary-${key2}-eta-reason`])}</p></section>`
       ).join(
         ""
       )}<p class="small muted">\u9810\u4F30\u62B5\u9054\uFF08\u53F0\u5317\u6642\u9593\uFF09\uFF1B\u4EE5\u73FE\u5728\u52A0\u4E0A\u5269\u9918\u4E0A\u6CB3\u57FA\u6E96 \xD7 \u5404\u81EA\u5373\u6642\u500D\u7387\u3002\u542B\u672A\u4F86\u4F11\u606F\u7684\u8017\u6642\u63A8\u4F30\uFF0C\u50C5\u4F9B\u53C3\u8003\u3002</p></div>`;
@@ -6376,9 +6453,17 @@
       const data = itinerary.snapshot(), next = data?.next, file = recordingRoute2?.() ?? state.library.find((entry) => entry.id === state.gps.sourceRouteId), metrics = remainingRouteMetrics(file, data, state.gps), remaining = metrics.distanceM;
       const journeyMetrics = file?.rerouted ? remainingJourneyMetrics(file, data, state.gps) : null;
       const revisedSummary = file?.rerouted ? `<p id="reroute-remaining" class="small muted">\u6539\u9053\u5F8C\u81F3\u7D42\u9EDE\uFF1A${journeyMetrics?.distanceM != null ? (journeyMetrics.distanceM / 1e3).toFixed(2) + " km" : "\u8DDD\u96E2\u4E0D\u53EF\u7528"} \xB7 \u722C\u5347 ${heightLabel(journeyMetrics?.ascentM ?? null)} \uFF0F\u4E0B\u964D ${heightLabel(journeyMetrics?.descentM ?? null)}</p>` : "";
-      return `<section class="panel next-card itinerary-next"><span class="eyebrow">NEXT STOP</span><h2>${next ? esc(next.station.name) : data?.active ? "\u6CBF\u9014\u7AD9\u9EDE\u5DF2\u5B8C\u6210" : "\u4E0B\u4E00\u7AD9\u5F85\u63D0\u4F9B"}</h2><p class="small station-status">${data?.active ? next ? "\u672A\u5230\u9054" : "\u5DF2\u901A\u904E\u5168\u90E8\u7AD9\u9EDE" : "\u5C1A\u672A\u51FA\u767C"}</p><p class="small">${next ? typeLabels[next.station.type] ?? "\u6CBF\u9014\u7AD9\u9EDE" : "\u9078\u7528 GPX \u5F8C\u81EA\u52D5\u986F\u793A\u3002"}</p><div class="next-metrics"><div><strong id="itinerary-distance">${remaining !== null ? (remaining / 1e3).toFixed(2) + " km" : next ? (next.routeProgressM / 1e3).toFixed(2) + " km" : "\u2014"}</strong><small id="itinerary-distance-label">${remaining !== null ? "\u6CBF GPX \u5269\u9918\u8DDD\u96E2" : "GPX \u7D2F\u8A08\u4F4D\u7F6E"}</small></div><div><strong id="itinerary-next-arrival">${data?.active && next ? arrival(next.arrivalUtcMs) : "\u958B\u59CB\u5F8C\u986F\u793A"}</strong><small>\u8A2D\u5B9A\u500D\u7387 ETA\uFF08\u53F0\u5317\u6642\u9593\uFF0C\u6BD4\u8F03\u57FA\u6E96\uFF09</small></div></div>${nextEtaPanel()}${revisedSummary}<div class="next-elevation" role="group" aria-label="\u5230\u4E0B\u4E00\u7AD9\u7684\u5269\u9918\u9AD8\u5EA6"><div><span>\u5269\u9918\u722C\u5347</span><strong id="itinerary-remaining-ascent" title="${esc(metrics.message)}">${heightLabel(metrics.ascentM)}</strong></div><div><span>\u5269\u9918\u4E0B\u964D</span><strong id="itinerary-remaining-descent" title="${esc(metrics.message)}">${heightLabel(metrics.descentM)}</strong></div></div><p id="itinerary-countdown" class="small"></p>${data?.offRoute ? '<p class="error-message">\u76EE\u524D\u4F4D\u7F6E\u504F\u96E2\u9810\u5B9A GPX\uFF0C\u8ACB\u78BA\u8A8D\u8DEF\u7DDA\u3002</p>' : ""}${data?.active && next && next.arrivalUtcMs === null ? '<p class="small error-message">\u8A2D\u5B9A\u500D\u7387 ETA \u5C1A\u7121\u6709\u6548\u6642\u9593\u8CC7\u6599\u3002</p>' : ""}${next?.reason ? `<p class="small error-message">${esc(next.reason)}</p>` : ""}<p id="itinerary-elevation-status" class="small muted">${esc(metrics.message)}</p><details class="next-details" id="next-details"><summary>\u5230\u7AD9\u78BA\u8A8D\u8207\u5BE6\u6E2C\u500D\u7387</summary>${data?.active && !data.finished && next ? button("\u5DF2\u62B5\u9054\uFF0C\u5207\u63DB\u4E0B\u4E00\u7AD9", "itinerary-arrived", "", "") : ""}<p class="small muted">\u5230\u7AD9\u5BE6\u6E2C\u500D\u7387\uFF1A<strong>${data?.observedFactor === null || !data?.observedFactor ? "\u5C1A\u5F85\u6709\u6548\u5230\u7AD9\u7D00\u9304" : data.observedFactor.toFixed(2) + " \u500D"}</strong></p><p class="small muted">\u5230\u7AD9\u5BE6\u6E2C\u500D\u7387\u4F7F\u7528\u5DF2\u78BA\u8A8D\u5230\u7AD9\u4E4B\u9593\u7684\u8017\u6642\uFF0C\u5305\u542B\u4F11\u606F\u8207\u66AB\u505C\uFF0C\u8207 GPS \u5373\u6642\u500D\u7387\u5206\u958B\u3002\u8A2D\u5B9A\u500D\u7387 ETA \u4FDD\u7559\u4F5C\u6BD4\u8F03\uFF1B\u5373\u6642\u500D\u7387\u4E0D\u6703\u8986\u5BEB\u8A2D\u5B9A\u3002</p></details></section>`;
+      return `<section class="panel next-card itinerary-next"><span class="eyebrow">NEXT STOP</span><h2>${next ? esc(next.station.name) : data?.active ? "\u6CBF\u9014\u7AD9\u9EDE\u5DF2\u5B8C\u6210" : "\u4E0B\u4E00\u7AD9\u5F85\u63D0\u4F9B"}</h2><p class="small station-status">${data?.active ? next ? "\u672A\u5230\u9054" : "\u5DF2\u901A\u904E\u5168\u90E8\u7AD9\u9EDE" : "\u5C1A\u672A\u51FA\u767C"}</p><p class="small">${next ? typeLabels[next.station.type] ?? "\u6CBF\u9014\u7AD9\u9EDE" : "\u9078\u7528 GPX \u5F8C\u81EA\u52D5\u986F\u793A\u3002"}</p><div class="next-metrics"><div><strong id="itinerary-distance">${remaining !== null ? (remaining / 1e3).toFixed(2) + " km" : next ? (next.routeProgressM / 1e3).toFixed(2) + " km" : "\u2014"}</strong><small id="itinerary-distance-label">${remaining !== null ? "\u6CBF GPX \u5269\u9918\u8DDD\u96E2" : "GPX \u7D2F\u8A08\u4F4D\u7F6E"}</small></div><div><strong id="itinerary-next-arrival">${data?.active && next ? arrival2(next.arrivalUtcMs) : "\u958B\u59CB\u5F8C\u986F\u793A"}</strong><small>\u8A2D\u5B9A\u500D\u7387 ETA\uFF08\u53F0\u5317\u6642\u9593\uFF0C\u6BD4\u8F03\u57FA\u6E96\uFF09</small></div></div>${nextEtaPanel()}${revisedSummary}<div class="next-elevation" role="group" aria-label="\u5230\u4E0B\u4E00\u7AD9\u7684\u5269\u9918\u9AD8\u5EA6"><div><span>\u5269\u9918\u722C\u5347</span><strong id="itinerary-remaining-ascent" title="${esc(metrics.message)}">${heightLabel(metrics.ascentM)}</strong></div><div><span>\u5269\u9918\u4E0B\u964D</span><strong id="itinerary-remaining-descent" title="${esc(metrics.message)}">${heightLabel(metrics.descentM)}</strong></div></div><p id="itinerary-countdown" class="small"></p>${data?.offRoute ? '<p class="error-message">\u76EE\u524D\u4F4D\u7F6E\u504F\u96E2\u9810\u5B9A GPX\uFF0C\u8ACB\u78BA\u8A8D\u8DEF\u7DDA\u3002</p>' : ""}${data?.active && next && next.arrivalUtcMs === null ? '<p class="small error-message">\u8A2D\u5B9A\u500D\u7387 ETA \u5C1A\u7121\u6709\u6548\u6642\u9593\u8CC7\u6599\u3002</p>' : ""}${next?.reason ? `<p class="small error-message">${esc(next.reason)}</p>` : ""}<p id="itinerary-elevation-status" class="small muted">${esc(metrics.message)}</p><details class="next-details" id="next-details"><summary>\u5230\u7AD9\u78BA\u8A8D\u8207\u5BE6\u6E2C\u500D\u7387</summary>${data?.active && !data.finished && next ? button("\u5DF2\u62B5\u9054\uFF0C\u5207\u63DB\u4E0B\u4E00\u7AD9", "itinerary-arrived", "", "") : ""}<p class="small muted">\u5230\u7AD9\u5BE6\u6E2C\u500D\u7387\uFF1A<strong>${data?.observedFactor === null || !data?.observedFactor ? "\u5C1A\u5F85\u6709\u6548\u5230\u7AD9\u7D00\u9304" : data.observedFactor.toFixed(2) + " \u500D"}</strong></p><p class="small muted">\u5230\u7AD9\u5BE6\u6E2C\u500D\u7387\u4F7F\u7528\u5DF2\u78BA\u8A8D\u5230\u7AD9\u4E4B\u9593\u7684\u8017\u6642\uFF0C\u5305\u542B\u4F11\u606F\u8207\u66AB\u505C\uFF0C\u8207 GPS \u5373\u6642\u500D\u7387\u5206\u958B\u3002\u8A2D\u5B9A\u500D\u7387 ETA \u4FDD\u7559\u4F5C\u6BD4\u8F03\uFF1B\u5373\u6642\u500D\u7387\u4E0D\u6703\u8986\u5BEB\u8A2D\u5B9A\u3002</p></details></section>`;
     }
     function updateNumbers() {
+      const smartConfirm = document2.getElementById("smart-reroute-confirm");
+      if (smartConfirm && itinerary.canApplySmart) {
+        const usable = itinerary.canApplySmart();
+        smartConfirm.disabled = !usable;
+        const status = document2.getElementById("smart-location-status");
+        if (status)
+          status.textContent = usable ? "" : "GPS \u4E2D\u65B7\u3001\u904E\u671F\u6216\u8DEF\u7DDA\u5DF2\u8B8A\u66F4\uFF0C\u8ACB\u91CD\u65B0\u5B9A\u4F4D\u4E26\u66F4\u65B0\u65B9\u6848\u3002";
+      }
       liveFactors.updateNumbers();
       for (const [id2, value2] of Object.entries(nextEtaFields())) {
         const field = document2.getElementById(id2);
@@ -6416,11 +6501,11 @@
         return;
       }
       if (element)
-        element.textContent = next?.arrivalUtcMs !== null && Number.isFinite(next?.arrivalUtcMs) ? next.arrivalUtcMs > Date.now() ? `\u8A2D\u5B9A\u500D\u7387\u9810\u4F30\u5269\u9918 ${duration2((next.arrivalUtcMs - Date.now()) / 1e3)}` : "\u8A2D\u5B9A\u500D\u7387\u9810\u4F30\u6642\u523B\u5DF2\u904E\uFF0C\u5C1A\u672A\u78BA\u8A8D\u62B5\u9054" : "\u7B49\u5F85\u6709\u6548\u6642\u9593\u8CC7\u6599";
+        element.textContent = next?.arrivalUtcMs !== null && Number.isFinite(next?.arrivalUtcMs) ? next.arrivalUtcMs > Date.now() ? `\u8A2D\u5B9A\u500D\u7387\u9810\u4F30\u5269\u9918 ${duration3((next.arrivalUtcMs - Date.now()) / 1e3)}` : "\u8A2D\u5B9A\u500D\u7387\u9810\u4F30\u6642\u523B\u5DF2\u904E\uFF0C\u5C1A\u672A\u78BA\u8A8D\u62B5\u9054" : "\u7B49\u5F85\u6709\u6548\u6642\u9593\u8CC7\u6599";
     }
     function referenceDuration() {
       const data = itinerary.snapshot();
-      return data?.totalSeconds === null || !data ? "\u5C1A\u672A\u63D0\u4F9B" : duration2(data.totalSeconds / data.factor);
+      return data?.totalSeconds === null || !data ? "\u5C1A\u672A\u63D0\u4F9B" : duration3(data.totalSeconds / data.factor);
     }
     return {
       liveFactorsPanel: liveFactors.panel,
@@ -6431,7 +6516,7 @@
       nextCard,
       updateNumbers,
       referenceDuration,
-      estimatedDuration: () => duration2(itinerary.snapshot()?.totalSeconds)
+      estimatedDuration: () => duration3(itinerary.snapshot()?.totalSeconds)
     };
   }
 
@@ -6444,7 +6529,7 @@
       points.set(row.station.stationId, {
         ...row.station,
         label: esc(row.station.name),
-        arrivalLabel: data.active ? arrival(row.arrivalUtcMs) : "",
+        arrivalLabel: data.active ? arrival2(row.arrivalUtcMs) : "",
         next: row.station.stationId === data.next?.station.stationId
       });
     }
@@ -6692,15 +6777,15 @@
         terrainContext = null;
         return;
       }
-      const key3 = file.id ?? file;
+      const key2 = file.id ?? file;
       const offlinePack = mode === "standard" && !offlineFailed ? offlineMaps?.forRoute(file) : null;
       if (offlinePack) {
         const center = terrainMap?.getCenter();
-        const camera = terrainMap && routeKey === key3 ? {
-          key: key3,
+        const camera = terrainMap && routeKey === key2 ? {
+          key: key2,
           center: [center.lat ?? center[0], center.lng ?? center[1]],
           zoom: terrainMap.getZoom()
-        } : terrain3d.view()?.key === key3 ? terrain3d.view() : views.has(key3) ? { ...views.get(key3), key: key3 } : null;
+        } : terrain3d.view()?.key === key2 ? terrain3d.view() : views.has(key2) ? { ...views.get(key2), key: key2 } : null;
         releaseMap();
         terrain3d.mount(null, null);
         usingOffline = true;
@@ -6717,7 +6802,7 @@
       if (mode === "terrain") terrainContext = { slot, file, live, stations };
       if (mode === "terrain" && !terrain3d.unavailable()) {
         const center = terrainMap?.getCenter();
-        const camera = terrainMap && routeKey === key3 ? {
+        const camera = terrainMap && routeKey === key2 ? {
           center: [center.lat ?? center[0], center.lng ?? center[1]],
           zoom: terrainMap.getZoom()
         } : null;
@@ -6726,7 +6811,7 @@
         return;
       }
       const from3d = terrain3d.view();
-      if (from3d?.key === key3) views.set(key3, from3d);
+      if (from3d?.key === key2) views.set(key2, from3d);
       terrain3d.mount(null, null);
       const nextMode = Object.hasOwn(MAP_SOURCES, mode) ? mode : "plain";
       if (!leaflet?.map) {
@@ -6734,13 +6819,13 @@
         report("error", "\u5730\u5716\u5143\u4EF6\u7121\u6CD5\u8F09\u5165\uFF0C\u76EE\u524D\u986F\u793A GPX \u5E73\u9762\u8ECC\u8DE1\u3002");
         return;
       }
-      if (terrainMap && routeKey !== key3) releaseMap();
+      if (terrainMap && routeKey !== key2) releaseMap();
       const changedRoute = !terrainMap || currentFile2 !== file;
       const firstFix = terrainMap && !hasCoordinates && live.some((segment) => segment.length);
       currentFile2 = file;
       currentLive = live;
       if (!terrainMap) {
-        routeKey = key3;
+        routeKey = key2;
         canvas = slot.ownerDocument.createElement("div");
         canvas.className = "terrain-map-canvas";
         canvas.setAttribute("aria-label", "GPX \u8DEF\u7DDA\u5730\u5716\uFF0C\u53EF\u4F7F\u7528\u65B9\u5411\u9375\u79FB\u52D5\u53CA\u52A0\u6E1B\u9375\u7E2E\u653E");
@@ -6761,7 +6846,7 @@
           zoomOutText: "\u2212"
         }).addTo(terrainMap);
         leaflet.control.scale({ imperial: false, position: "bottomleft" }).addTo(terrainMap);
-        const previous = views.get(key3);
+        const previous = views.get(key2);
         if (previous) terrainMap.setView(previous.center, previous.zoom, { animate: false });
         else if (allCoordinates().length) fit();
         else terrainMap.setView([23.7, 121], 7, { animate: false });
@@ -6913,10 +6998,10 @@
       time: Number.isFinite(point.time) && Math.abs(point.time) <= 864e13 ? point.time : null
     };
   }
-  function metric2(stats, key3) {
+  function metric2(stats, key2) {
     if (stats?.points === 0 || stats?.points > 0 && stats.points === stats.excludedPoints)
       return null;
-    return nonnegative(stats?.[key3]);
+    return nonnegative(stats?.[key2]);
   }
   function comparison(original, corrected) {
     original = nonnegative(original);
@@ -6968,11 +7053,11 @@
         ["km", "\u8DDD\u96E2", "km"],
         ["up", "\u722C\u5347", "m"],
         ["down", "\u4E0B\u964D", "m"]
-      ].map(([key3, label, unit]) => ({
-        key: key3,
+      ].map(([key2, label, unit]) => ({
+        key: key2,
         label,
         unit,
-        ...comparison(metric2(file?.rawStats, key3), processed ? metric2(file?.stats, key3) : null)
+        ...comparison(metric2(file?.rawStats, key2), processed ? metric2(file?.stats, key2) : null)
       })),
       reasons: [...counts].map(([code, count]) => ({
         code,
@@ -7153,7 +7238,34 @@
         render();
       }
     };
+    const runSmart = (operation) => async () => {
+      try {
+        return await operation();
+      } catch (error) {
+        state.itinerary.smart ??= { options: [], locations: [] };
+        state.itinerary.smart.error = error.message;
+        render();
+      }
+    };
     return {
+      "smart-reroute-open": (target) => {
+        const panel = target.closest("#reroute-panel");
+        if (panel?.open) return;
+        if (panel) panel.open = true;
+        return runSmart(() => itinerary.loadSmartOptions())();
+      },
+      "smart-reroute-refresh": runSmart(() => itinerary.loadSmartOptions()),
+      "smart-reroute-location": (target) => runSmart(() => itinerary.loadSmartOptions(target.dataset.location))(),
+      "smart-reroute-preview": (target) => runSmart(() => itinerary.previewSmart(target.dataset.option))(),
+      "smart-reroute-path": (target) => runSmart(() => {
+        const alternative = state.itinerary.smart?.alternatives?.[Number(target.dataset.path)];
+        if (!alternative) throw new Error("\u8ACB\u91CD\u65B0\u9078\u64C7\u8DEF\u5F91\u3002");
+        return itinerary.previewSmart(alternative.requestId, alternative.routeKey);
+      })(),
+      "smart-reroute-apply": runSmart(async () => {
+        itinerary.applySmart();
+        await persistence.save();
+      }),
       "reroute-load": run(
         () => itinerary.rerouteOptions(document2.querySelector("#reroute-source")?.value)
       ),
@@ -7516,7 +7628,7 @@
       else if (!Number.isFinite(baseline) || baseline <= 0) reasons2.push("invalid_baseline_time");
       if (segment.sourceIds.length === 0) reasons2.push("baseline_source_missing");
       let predictedSeconds = null;
-      let arrival2 = null;
+      let arrival3 = null;
       let cumulativeSeconds = null;
       let cumulativeBaselineSeconds = null;
       if (reasons2.length === 0) {
@@ -7537,7 +7649,7 @@
             predictedTotal = nextPredicted;
             cumulativeBaselineSeconds = asNumber(baselineTotal);
             cumulativeSeconds = asNumber(predictedTotal);
-            arrival2 = Number(nextArrival);
+            arrival3 = Number(nextArrival);
           }
         }
       }
@@ -7554,7 +7666,7 @@
       }
       const reason = uniqueReasons[0] ?? (blocked ? "upstream_unavailable" : null);
       if (uniqueReasons.length) blocked = true;
-      const confidence = arrival2 === null ? "unavailable" : "low";
+      const confidence = arrival3 === null ? "unavailable" : "low";
       legs.push({
         segmentIndex: index,
         segmentId: segment.id,
@@ -7568,7 +7680,7 @@
         predictedMoveSeconds: predictedSeconds,
         cumulativeBaselineSeconds,
         cumulativeSeconds,
-        predictedArrivalUtcMs: arrival2,
+        predictedArrivalUtcMs: arrival3,
         confidence,
         reason,
         reasons: uniqueReasons
@@ -7577,7 +7689,7 @@
         sequence: index + 1,
         waypointId: segment.toWaypointId,
         cumulativeSeconds,
-        predictedArrivalUtcMs: arrival2,
+        predictedArrivalUtcMs: arrival3,
         confidence,
         reason
       });
@@ -7717,10 +7829,10 @@
         path
       );
       requireValue(object(record.metadata), "invalid_metadata", path);
-      const key3 = JSON.stringify([record.area, record.fromNodeId, record.toNodeId]);
-      const group = pairs.get(key3) ?? [];
+      const key2 = JSON.stringify([record.area, record.fromNodeId, record.toNodeId]);
+      const group = pairs.get(key2) ?? [];
       group.push(record);
-      pairs.set(key3, group);
+      pairs.set(key2, group);
     }
     return { nodes, names, pairs };
   }
@@ -7979,10 +8091,10 @@
       return { reason: "\u5171\u7528\u5730\u9EDE\u7684\u4E0A\u6CB3\u6642\u9593\u5716\u4ECD\u6709\u6B67\u7FA9\u6216\u885D\u7A81\uFF0C\u9700\u6838\u5C0D" };
     if (candidates.some((candidate) => candidate.signature !== candidates[0].signature))
       return { reason: "\u4E0D\u540C\u4E0A\u6CB3\u5716\u7684\u8DEF\u5F91\u6216\u6709\u5411\u6642\u9593\u4E0D\u4E00\u81F4\uFF0C\u9700\u6838\u5C0D" };
-    const subsequence = (short, long) => {
+    const subsequence = (short2, long) => {
       let cursor = 0;
-      for (const id2 of long) if (id2 === short[cursor]) cursor++;
-      return cursor === short.length;
+      for (const id2 of long) if (id2 === short2[cursor]) cursor++;
+      return cursor === short2.length;
     };
     for (const candidate of candidates)
       for (const other of candidates)
@@ -8194,7 +8306,7 @@
   }
 
   // src/features/itinerary/rerouting.js
-  var key2 = (row) => row.station.placeId ?? row.station.stationId;
+  var stationKey = (row) => row.station.placeId ?? row.station.stationId;
   var EPS = 1e-6;
   var wrap = (lon) => (lon + 540) % 360 - 180;
   function trustedRerouteFix(gps, fix, now = Date.now()) {
@@ -8207,25 +8319,25 @@
       if (!plan) continue;
       plan.rows.slice(1).forEach((to, i) => {
         const from = plan.rows[i];
-        destinations.set(key2(from), from.station);
-        destinations.set(key2(to), to.station);
+        destinations.set(stationKey(from), from.station);
+        destinations.set(stationKey(to), to.station);
         if (from.segmentIndex !== to.segmentIndex || to.routeProgressM <= from.routeProgressM) return;
         edges.push({
           source,
           plan,
           from,
           to,
-          fromKey: key2(from),
-          toKey: key2(to),
+          fromKey: stationKey(from),
+          toKey: stationKey(to),
           startM: from.routeProgressM,
           endM: to.routeProgressM,
           segment: from.segmentIndex
         });
       });
     }
-    return { edges, destinations };
+    return { edges, destinations, sourceFile: file };
   }
-  function pointAt(file, segment, m) {
+  function routePointAt(file, segment, m) {
     const points = file.points.filter((p) => p.segment === segment);
     for (let i = 1; i < points.length; i++) {
       const a = points[i - 1], b = points[i], left = a.km * 1e3, right = b.km * 1e3;
@@ -8240,7 +8352,7 @@
     return null;
   }
   function geometry(edge) {
-    const first = edge.startPoint ?? pointAt(edge.source, edge.segment, edge.startM), last = edge.endPoint ?? pointAt(edge.source, edge.segment, edge.endM);
+    const first = edge.startPoint ?? routePointAt(edge.source, edge.segment, edge.startM), last = edge.endPoint ?? routePointAt(edge.source, edge.segment, edge.endM);
     if (!first || !last) return null;
     return [
       first,
@@ -8307,8 +8419,12 @@
             (e) => e.fromKey === step.fromKey && e.toKey === step.toKey
           )) {
             const options = variants.map((variant) => {
-              const end = variant.previous && pointAt(variant.previous.source, variant.previous.segment, variant.previous.endM);
-              const begin = pointAt(edge.source, edge.segment, edge.startM);
+              const end = variant.previous && routePointAt(
+                variant.previous.source,
+                variant.previous.segment,
+                variant.previous.endM
+              );
+              const begin = routePointAt(edge.source, edge.segment, edge.startM);
               const gap = end && begin && distanceM(end, begin) >= 1e-6 && !junctionSplice(variant.previous, edge) ? 1 : 0;
               return {
                 previous: edge,
@@ -8369,17 +8485,41 @@
     if (!tail) throw new Error("\u76EE\u7684\u5730\u4E4B\u9593\u6C92\u6709\u9023\u7E8C\u7684\u65E2\u6709 GPX \u5E7E\u4F55\uFF0C\u7121\u6CD5\u5EFA\u7ACB\u8DEF\u7DDA\u3002");
     const home = returnTo ? pathBetween(network.edges, destination, returnTo, tail.at(-1) ?? start) : [];
     if (!home) throw new Error("\u76EE\u7684\u5730\u81F3\u8FD4\u56DE\u9EDE\u6C92\u6709\u65E2\u6709 GPX \u5E7E\u4F55\u3002");
-    const arcs = [start, ...tail, ...home].map((arc) => ({ ...arc }));
+    return buildReroute({ network, arcs: [start, ...tail, ...home], destination, returnTo, id: id2, now });
+  }
+  function connectRerouteArcs(incoming, outgoing) {
+    if (incoming.toKey !== outgoing.fromKey) return null;
+    const end = incoming.endPoint ?? routePointAt(incoming.source, incoming.segment, incoming.endM);
+    const begin = outgoing.startPoint ?? routePointAt(outgoing.source, outgoing.segment, outgoing.startM);
+    if (!end || !begin) return null;
+    if (distanceM(end, begin) < 1e-6) return { incoming, outgoing };
+    const splice = junctionSplice(incoming, outgoing);
+    return splice ? {
+      incoming: {
+        ...incoming,
+        endM: splice.incomingM,
+        endPoint: { ...splice.point, elevation: splice.heightA }
+      },
+      outgoing: {
+        ...outgoing,
+        startM: splice.outgoingM,
+        startPoint: { ...splice.point, elevation: splice.heightB }
+      }
+    } : null;
+  }
+  function buildReroute({ network, arcs: input, destination, returnTo = null, id: id2, now }) {
+    if (!input?.length || input.some(
+      (arc) => !Number.isFinite(arc.startM) || !Number.isFinite(arc.endM) || arc.endM <= arc.startM
+    ))
+      throw new Error("\u6C92\u6709\u53EF\u7528\u7684 GPX \u8DEF\u6BB5\u3002");
+    const start = input[0];
+    const arcs = input.map((arc) => ({ ...arc }));
     for (let i = 1; i < arcs.length; i++) {
       const previous = arcs[i - 1], next = arcs[i];
-      const end = pointAt(previous.source, previous.segment, previous.endM), begin = pointAt(next.source, next.segment, next.startM);
-      if (distanceM(end, begin) < 1e-6) continue;
-      const splice = junctionSplice(previous, next);
-      if (splice) {
-        previous.endM = splice.incomingM;
-        next.startM = splice.outgoingM;
-        previous.endPoint = { ...splice.point, elevation: splice.heightA };
-        next.startPoint = { ...splice.point, elevation: splice.heightB };
+      const joined = connectRerouteArcs(previous, next);
+      if (joined) {
+        arcs[i - 1] = joined.incoming;
+        arcs[i] = joined.outgoing;
       }
     }
     const fragments = arcs.map(geometry);
@@ -8395,8 +8535,12 @@
       spans.push({ segment: segments.length - 1, fromM: distance2, toM: distance2 + length });
       distance2 += length;
     });
+    const geometryComplete = fragments.every(
+      (fragment, i) => !i || distanceM(fragments[i - 1].at(-1), fragment[0]) < 1e-6
+    );
     const file = {
       id: id2,
+      geometryComplete,
       name: network.destinations.get(destination)?.name ?? "\u6539\u9053\u8DEF\u7DDA",
       kind: "route",
       direction: "forward",
@@ -8458,6 +8602,7 @@
         direction: "forward",
         originalDirection: arc.source.direction ?? "forward",
         originalRouteId: arc.source.id,
+        originalCanonicalSegment: arc.source.direction === "reverse" ? arc.source.segments.length - 1 - arc.segment : arc.segment,
         originalFromM: arc.startM,
         originalToM: arc.endM
       };
@@ -8483,6 +8628,7 @@
         gap: false,
         baselineSeconds: seconds,
         reason,
+        reasonCode: joinGap ? "gpx-unconnected-join" : !usable ? "shanghe-time-unavailable" : null,
         incoming: [
           {
             id: id2 + "-leg-" + i,
@@ -8505,6 +8651,7 @@
       startCovered: true,
       endCovered: true,
       rerouted: true,
+      geometryComplete,
       warnings,
       timeModel: {
         version: start.plan.timeModel.version,
@@ -8535,12 +8682,15 @@
     const result = nextStopEtas(file, data, live, now);
     if (!file?.rerouted || !data?.next || !trustedRerouteFix(gps, fix, now)) return result;
     const previous = data.rows[Math.max(0, data.nextIndex - 1)];
-    const positions = routeMatcherFor(file).match([{ ...fix, stationId: "configured-eta", coordinateStatus: "located" }], {
+    let positions = routeMatcherFor(file).match([{ ...fix, stationId: "configured-eta", coordinateStatus: "located" }], {
       maxOffsetM: 50,
       mergeWithinM: 25
     }).matches[0]?.routePositions.filter(
       (p) => p.segmentIndex === data.next.segmentIndex && p.routeProgressM >= previous.routeProgressM - 1e-6 && p.routeProgressM <= data.next.routeProgressM + 1e-6
     ) ?? [];
+    const accepted = gps.itinerary?.routePosition;
+    if (accepted?.revisionId === file.id && accepted.time === fix.time && accepted.segmentIndex === data.next.segmentIndex && accepted.routeProgressM >= previous.routeProgressM - 1e-6 && accepted.routeProgressM <= data.next.routeProgressM + 1e-6)
+      positions = [accepted];
     if (positions.length !== 1) return result;
     const metric3 = {
       factor: data.factor,
@@ -8569,6 +8719,607 @@
         };
     }
     return result;
+  }
+
+  // src/features/itinerary/smart-location.js
+  function smartLocations(file, plan, journey, fix, accepted = null) {
+    if (!file?.points?.length || !plan) return [];
+    const matched = routeMatcherFor(file).match(
+      [{ ...fix, stationId: "smart-reroute-origin", coordinateStatus: "located" }],
+      { maxOffsetM: 50, mergeWithinM: 25 }
+    ).matches[0]?.routePositions ?? [];
+    const locked = accepted?.fix?.time === fix.time && !accepted.fix.excluded ? matched.filter(
+      (p) => p.segmentIndex === accepted.position?.segmentIndex && Math.abs(p.routeProgressM - accepted.position.routeProgressM) < 1e-6
+    ) : [];
+    let candidates = locked.length === 1 ? locked : matched;
+    if (locked.length !== 1 && journey) {
+      const next = plan.rows[journey.nextIndex];
+      const previous = plan.rows[Math.max(0, journey.nextIndex - 1)];
+      if (previous && next) {
+        const corridor = matched.filter(
+          (p) => (p.segmentIndex === previous.segmentIndex || p.segmentIndex === next.segmentIndex) && p.routeProgressM >= previous.routeProgressM - 25 && p.routeProgressM <= next.routeProgressM + (journey.nextIndex === 0 ? 50 : 25)
+        );
+        if (corridor.length) candidates = corridor;
+      }
+    }
+    return candidates.map((position2) => {
+      const target = plan.rows.find(
+        (row) => row.routeProgressM >= position2.routeProgressM - 1e-6 && row.segmentIndex === position2.segmentIndex && row.index > 0
+      );
+      const previous = target && plan.rows[target.index - 1];
+      return {
+        ...position2,
+        id: JSON.stringify([file.id, position2.segmentIndex, previous?.index, target?.index]),
+        label: previous && target ? `${previous.station.name}\u8207${target.station.name}\u4E4B\u9593` : "GPX \u8D77\u7D42\u9EDE\u9644\u8FD1",
+        fromM: previous?.routeProgressM ?? position2.routeProgressM,
+        toM: target?.routeProgressM ?? position2.routeProgressM
+      };
+    });
+  }
+  function canonicalLocation(file, plan, location, provenance = []) {
+    if (!file.rerouted)
+      return {
+        sourceId: file.id,
+        m: file.direction === "reverse" ? file.stats.km * 1e3 - location.routeProgressM : location.routeProgressM,
+        segment: file.direction === "reverse" ? file.segments.length - 1 - location.segmentIndex : location.segmentIndex
+      };
+    const leg = plan.timeModel.legs.find(
+      (l) => l.segmentIndex === location.segmentIndex && location.routeProgressM >= l.fromM - 1e-6 && location.routeProgressM <= l.toM + 1e-6
+    );
+    if (!leg || !leg.source?.originalRouteId || leg.toM <= leg.fromM) return null;
+    const source = leg.source;
+    return {
+      sourceId: source.originalRouteId,
+      direction: source.originalDirection,
+      segment: source.originalCanonicalSegment,
+      directedSegment: provenance[leg.index]?.segment,
+      directedM: source.originalFromM + (source.originalToM - source.originalFromM) * (location.routeProgressM - leg.fromM) / (leg.toM - leg.fromM)
+    };
+  }
+  function smartHome(source, plan, originalFile, originalPlan) {
+    const row = originalPlan?.rows[0];
+    if (!row) return null;
+    const result = { key: stationKey(row), name: row.station.name, sourceId: originalFile.id };
+    if (source.id === originalFile.id) {
+      result.canonicalM = originalFile.direction === "reverse" ? source.stats.km * 1e3 - row.routeProgressM : row.routeProgressM;
+    }
+    return plan.rows.some((r) => stationKey(r) === result.key) ? result : null;
+  }
+  function visitedStations(gps, plan) {
+    const keys = /* @__PURE__ */ new Set();
+    for (const version of [...gps.navigation?.revisions ?? [], { plan, journey: gps.itinerary }]) {
+      for (const [index, time2] of Object.entries(version.journey?.arrivals ?? {})) {
+        const row = version.plan?.rows?.[Number(index)];
+        if (row && Number.isFinite(time2)) keys.add(stationKey(row));
+      }
+    }
+    return keys;
+  }
+
+  // src/features/itinerary/connected-routing.js
+  var edgeId = (edge) => JSON.stringify([
+    edge.source.id,
+    edge.source.direction ?? "forward",
+    edge.segment,
+    edge.from.index,
+    edge.to.index
+  ]);
+  function createPathKey(network) {
+    const shapes = /* @__PURE__ */ new Map(), tokens = /* @__PURE__ */ new WeakMap();
+    const token = (edge) => {
+      let rows = tokens.get(edge.source);
+      if (!rows) {
+        rows = /* @__PURE__ */ new Map();
+        tokens.set(edge.source, rows);
+      }
+      const rowKey = JSON.stringify([edge.segment, edge.from.index, edge.to.index]);
+      if (!rows.has(rowKey)) {
+        const fromM = edge.from.routeProgressM, toM = edge.to.routeProgressM;
+        const points = [
+          routePointAt(edge.source, edge.segment, fromM),
+          ...edge.source.points.filter(
+            (p) => p.segment === edge.segment && p.km * 1e3 > fromM + 1e-6 && p.km * 1e3 < toM - 1e-6
+          ),
+          routePointAt(edge.source, edge.segment, toM)
+        ];
+        const shape = JSON.stringify(
+          points.map(
+            (p) => p && [
+              Number(p.lat.toFixed(7)),
+              Number(p.lon.toFixed(7)),
+              Number.isFinite(p.elevation) ? Number(p.elevation.toFixed(3)) : null
+            ]
+          )
+        );
+        if (!shapes.has(shape)) shapes.set(shape, shapes.size);
+        rows.set(rowKey, shapes.get(shape));
+      }
+      return rows.get(rowKey);
+    };
+    network.edges.forEach(token);
+    return (arcs) => JSON.stringify(
+      arcs.map((edge) => [
+        edge.toKey,
+        edge.to.incoming.flatMap((part) => part.sourceIds ?? []).sort(),
+        token(edge)
+      ])
+    );
+  }
+  function connectedPaths(network, start, goal, {
+    exclude = /* @__PURE__ */ new Set(),
+    allow = () => true,
+    limit = 3,
+    maxStates = 4e3,
+    blockFrom = false,
+    join = connectRerouteArcs,
+    key: key2 = createPathKey(network)
+  } = {}) {
+    if (!start || exclude.has(start.toKey) || !allow(start)) return [];
+    const pending = [
+      {
+        arcs: [start],
+        cost: start.endM - start.startM,
+        visited: /* @__PURE__ */ new Set([edgeId(start)])
+      }
+    ];
+    const best = /* @__PURE__ */ new Map(), found = /* @__PURE__ */ new Map();
+    let states = 0;
+    while (pending.length) {
+      if (++states > maxStates)
+        throw new Error("\u53EF\u884C\u8DEF\u5F91\u904E\u591A\uFF0C\u7121\u6CD5\u53EF\u9760\u81EA\u52D5\u5224\u65B7\uFF0C\u8ACB\u4F7F\u7528\u9032\u968E\u6A21\u5F0F\u6838\u5C0D\u3002");
+      pending.sort((a, b) => a.cost - b.cost);
+      const item = pending.shift(), previous = item.arcs.at(-1);
+      const identity = JSON.stringify([edgeId(previous), previous.startM]), signature = key2(item.arcs);
+      const known = best.get(identity) ?? [];
+      if (known.includes(signature) || known.length >= limit) continue;
+      best.set(identity, [...known, signature]);
+      if (previous.toKey === goal) {
+        if (!found.has(signature)) found.set(signature, item.arcs);
+        if (found.size >= limit) break;
+        continue;
+      }
+      for (const next of network.edges) {
+        if (next.fromKey !== previous.toKey || item.visited.has(edgeId(next)) || blockFrom && next.toKey === start.fromKey || exclude.has(next.toKey) || !allow(next))
+          continue;
+        const joined = join(previous, next);
+        if (!joined) continue;
+        pending.push({
+          arcs: [...item.arcs.slice(0, -1), joined.incoming, joined.outgoing],
+          cost: item.cost + next.endM - next.startM,
+          visited: /* @__PURE__ */ new Set([...item.visited, edgeId(next)])
+        });
+      }
+    }
+    return [...found.values()];
+  }
+  function createConnectedRouter(network) {
+    const cache2 = /* @__PURE__ */ new WeakMap(), key2 = createPathKey(network);
+    function join(previous, next) {
+      let targets = cache2.get(previous);
+      if (!targets) {
+        targets = /* @__PURE__ */ new WeakMap();
+        cache2.set(previous, targets);
+      }
+      if (!targets.has(next)) targets.set(next, connectRerouteArcs(previous, next));
+      return targets.get(next);
+    }
+    const route = (start, goal, options = {}) => connectedPaths(network, start, goal, { ...options, join, key: key2 });
+    route.pathKey = key2;
+    return route;
+  }
+
+  // src/features/itinerary/smart-routing.js
+  var canonicalM = (file, m) => file.direction === "reverse" ? file.stats.km * 1e3 - m : m;
+  function startsAtSmartLocation(network, fix, location) {
+    if (!location || location.sourceId !== network.sourceFile.id) return [];
+    const total = network.sourceFile.stats.km * 1e3;
+    const m = location.m ?? (location.direction === "reverse" ? total - location.directedM : location.directedM);
+    const knownSegment = location.segment ?? (Number.isInteger(location.directedSegment) ? location.direction === "reverse" ? network.sourceFile.segments.length - 1 - location.directedSegment : location.directedSegment : void 0);
+    return rerouteStarts(network, fix).filter((edge) => {
+      const segment = edge.source.direction === "reverse" ? edge.source.segments.length - 1 - edge.segment : edge.segment;
+      return (knownSegment === void 0 || knownSegment === segment) && Math.abs(canonicalM(edge.source, edge.startM) - m) <= 25;
+    });
+  }
+  function smartRequests(network, home) {
+    const requests = [
+      {
+        id: "return",
+        kind: "return",
+        destination: home?.key ?? null,
+        title: "\u7ACB\u5373\u539F\u8DEF\u6298\u8FD4",
+        subtitle: home ? `\u8FD4\u56DE${home.name}` : "\u539F\u8A08\u756B\u8D77\u9EDE\u7121\u6CD5\u78BA\u8A8D"
+      }
+    ];
+    for (const [id2, station] of network.destinations) {
+      if (station.type === "summit" && id2 !== home?.key)
+        requests.push({
+          id: "summit:" + id2,
+          kind: "summit",
+          destination: id2,
+          title: `\u53EA\u8D70${station.name}\u5F8C\u8FD4\u56DE`,
+          subtitle: home ? `\u8FD4\u56DE${home.name}` : "\u539F\u8A08\u756B\u8D77\u9EDE\u7121\u6CD5\u78BA\u8A8D"
+        });
+    }
+    for (const [id2, station] of network.destinations) {
+      if (id2 !== home?.key && station.type !== "summit")
+        requests.push({
+          id: "destination:" + id2,
+          kind: "destination",
+          destination: id2,
+          title: `\u524D\u5F80${station.name}`,
+          subtitle: "\u5176\u4ED6\u76EE\u7684\u5730"
+        });
+    }
+    return requests;
+  }
+  function createSmartPlanner(network) {
+    const route = createConnectedRouter(network);
+    return function plan({
+      request,
+      starts,
+      location,
+      home,
+      visited = /* @__PURE__ */ new Set(),
+      now,
+      id: id2 = crypto.randomUUID()
+    }) {
+      if (!starts.length) throw new Error("\u76EE\u524D\u5B9A\u4F4D\u7121\u6CD5\u5C0D\u61C9\u539F GPX \u7684\u53EF\u4FE1\u8DEF\u6BB5\u3002");
+      if (!request.destination || request.kind !== "destination" && !home)
+        throw new Error("\u7121\u6CD5\u78BA\u8A8D\u539F\u8A08\u756B\u8D77\u9EDE\uFF0C\u8ACB\u4F7F\u7528\u9032\u968E\u6A21\u5F0F\u6838\u5C0D\u8FD4\u56DE\u5730\u9EDE\u3002");
+      const exclude = /* @__PURE__ */ new Set();
+      if (request.kind === "summit") {
+        for (const [key2, station] of network.destinations)
+          if (station.type === "summit" && key2 !== request.destination && key2 !== home.key)
+            exclude.add(key2);
+      }
+      let allow = () => true;
+      if (request.kind === "return") {
+        if (home.canonicalM === void 0)
+          throw new Error("\u76EE\u524D GPX \u8207\u539F\u51FA\u767C GPX \u4E0D\u540C\uFF0C\u7121\u6CD5\u78BA\u8A8D\u539F\u8DEF\uFF0C\u8ACB\u6838\u5C0D\u8FD4\u56DE\u8DEF\u5F91\u3002");
+        const total = network.sourceFile.stats.km * 1e3;
+        const currentM = location.m ?? (location.direction === "reverse" ? total - location.directedM : location.directedM);
+        const pair = (edge) => JSON.stringify([edge.fromKey, edge.toKey].sort());
+        const prefixPairs = new Set(starts.map(pair));
+        for (const edge of network.edges) {
+          const from = canonicalM(edge.source, edge.startM), to = canonicalM(edge.source, edge.endM);
+          if (Math.min(from, to) >= Math.min(currentM, home.canonicalM) - 1e-6 && Math.max(from, to) <= Math.max(currentM, home.canonicalM) + 1e-6)
+            prefixPairs.add(pair(edge));
+        }
+        allow = (edge) => prefixPairs.has(pair(edge));
+        for (const [key2, station] of network.destinations)
+          if (station.type === "summit" && key2 !== home.key && !visited.has(key2)) exclude.add(key2);
+      }
+      const variants = /* @__PURE__ */ new Map();
+      for (const start of starts) {
+        const outward = route(start, request.destination, { exclude, allow });
+        for (const path of outward) {
+          const returns = request.kind === "summit" ? route(path.at(-1), home.key, { exclude }) : [[path.at(-1)]];
+          for (const back of returns) {
+            const arcs = request.kind === "summit" ? [...path.slice(0, -1), ...back] : path;
+            const identity = route.pathKey(arcs);
+            if (variants.has(identity)) continue;
+            const result = buildReroute({
+              network,
+              arcs,
+              destination: request.destination,
+              returnTo: request.kind === "summit" ? home.key : null,
+              id: id2,
+              now
+            });
+            if (!result.plan.geometryComplete) continue;
+            result.file.name = request.title;
+            variants.set(identity, { ...result, routeKey: identity, request });
+          }
+        }
+      }
+      const candidates = [...variants.values()].sort((a, b) => a.file.stats.km - b.file.stats.km);
+      const sequence = (result) => JSON.parse(result.routeKey).map((part) => JSON.stringify(part));
+      const subsequence = (short2, long) => {
+        let cursor = 0;
+        for (const key2 of long) if (short2[cursor] === key2) cursor++;
+        return cursor === short2.length;
+      };
+      const results = candidates.filter(
+        (result) => !candidates.some(
+          (other) => other !== result && other.file.stats.km <= result.file.stats.km && other.plan.rows.length < result.plan.rows.length && subsequence(sequence(other), sequence(result))
+        )
+      );
+      if (!results.length)
+        throw new Error(
+          request.kind === "summit" ? "\u7121\u6CD5\u4EE5\u73FE\u6709 GPX \u53EF\u9760\u929C\u63A5\u55AE\u4E00\u5C71\u9802\u53CA\u8FD4\u56DE\u8DEF\u7DDA\uFF1B\u53EF\u80FD\u9808\u7D93\u5176\u4ED6\u5C71\u9802\u6216\u5B58\u5728\u65B7\u8ECC\u3001\u672A\u78BA\u8A8D\u63A5\u9EDE\u3002" : "\u7121\u6CD5\u4EE5\u73FE\u6709 GPX \u53EF\u9760\u929C\u63A5\u76EE\u7684\u5730\uFF1B\u5B58\u5728\u65B7\u8ECC\u6216\u672A\u78BA\u8A8D\u63A5\u9EDE\uFF0C\u4E0D\u88DC\u756B\u9053\u8DEF\u3002"
+        );
+      return results.slice(0, 3);
+    };
+  }
+
+  // src/features/itinerary/smart-summary.js
+  function smartSummary(preview, factor, now = Date.now()) {
+    const forecast = forecastItinerary(preview.plan, factor, now);
+    const nearby = nearbyDaylightReference(preview.file, daylightLocations);
+    const daylight = buildDaylightProfile(
+      daylightReference,
+      nearby?.county ?? "",
+      preview.file,
+      { ...forecast, active: true, compatible: true, departureUtcMs: now },
+      now
+    );
+    const distribution = { dayM: 0, nightM: 0, unknownM: preview.file.stats.km * 1e3 };
+    for (const band of daylight.bands)
+      if (band.phase === "day" || band.phase === "night") {
+        distribution[band.phase + "M"] += band.toM - band.fromM;
+        distribution.unknownM -= band.toM - band.fromM;
+      }
+    distribution.unknownM = Math.max(0, distribution.unknownM);
+    const heights = preview.file.points.every((p) => Number.isFinite(p.elevation));
+    return {
+      distanceM: preview.plan.geometryComplete ? preview.file.stats.km * 1e3 : null,
+      ascentM: heights && preview.plan.geometryComplete ? preview.file.stats.up : null,
+      descentM: heights && preview.plan.geometryComplete ? preview.file.stats.down : null,
+      totalSeconds: forecast.totalSeconds,
+      arrivalUtcMs: forecast.rows.at(-1)?.arrivalUtcMs ?? null,
+      rows: forecast.rows,
+      factor,
+      factorBasis: "configured-fallback",
+      departureUtcMs: now,
+      daylight: {
+        ...distribution,
+        county: nearby?.county ?? null,
+        countyName: daylightReference.counties.find((c) => c.id === nearby?.county)?.name ?? null,
+        reason: !nearby ? "\u627E\u4E0D\u5230\u9069\u7528\u7684\u5B98\u65B9\u65E5\u7167\u5730\u5340\uFF0C\u65E5\u591C\u9810\u4F30\u4E0D\u53EF\u7528\u3002" : daylight.hasUnknownDays ? "\u7F3A\u5C11\u8A72\u65E5\u671F\u5B98\u65B9\u65E5\u7167\u8CC7\u6599\uFF0C\u5C0D\u61C9\u65E5\u591C\u9810\u4F30\u4E0D\u53EF\u7528\u3002" : distribution.unknownM > 1 ? "\u90E8\u5206\u4E0A\u6CB3\u6642\u9593\u4E0D\u8DB3\uFF0C\u5C0D\u61C9\u65E5\u591C\u9810\u4F30\u672A\u77E5\u3002" : null
+      }
+    };
+  }
+
+  // src/features/itinerary/smart-controller.js
+  function createSmartRerouteController({
+    state,
+    recordingRoute: recordingRoute2,
+    planFor,
+    compatible,
+    acceptedPosition,
+    referenceVersion,
+    activate,
+    render,
+    yieldTask = () => new Promise((r) => setTimeout(r, 0))
+  }) {
+    const networks = /* @__PURE__ */ new WeakMap(), parsed = /* @__PURE__ */ new WeakMap();
+    let generation = 0, disposed = false, session = null, reviewed = null;
+    function sourceFor(file) {
+      if (!file.rerouted) {
+        const original = state.library.find((f) => f.id === file.id);
+        if (original) return original;
+        if (file.direction !== "reverse") return file;
+      } else {
+        const embedded = state.gps.navigation?.active?.sourceRoute;
+        if (embedded) return embedded;
+        const id2 = state.gps.navigation?.active?.provenance?.[0]?.routeId;
+        const original = state.library.find((f) => f.id === id2);
+        if (original) return original;
+        const old = state.gps.navigation?.original?.file;
+        if (old?.id === id2 && old.direction !== "reverse") return old;
+      }
+      if (!parsed.has(file)) {
+        if (!file.raw) throw new Error("\u627E\u4E0D\u5230\u539F\u59CB GPX\uFF0C\u7121\u6CD5\u53EF\u9760\u5EFA\u7ACB\u65B9\u6848\u3002");
+        const id2 = state.gps.navigation?.active?.provenance?.[0]?.routeId ?? file.id;
+        parsed.set(file, {
+          ...parseGpx(file.raw, file.fileName ?? "original.gpx"),
+          id: id2,
+          raw: file.raw,
+          kind: "route",
+          name: file.name
+        });
+      }
+      return parsed.get(file);
+    }
+    function context(preferred = null, requirePreferred = false) {
+      const gps = state.gps, fix = recordingFix(gps), now = Date.now(), file = recordingRoute2();
+      if (!trustedRerouteFix(gps, fix, now))
+        throw new Error("\u9700\u8981\u76EE\u524D\u53EF\u4FE1 GPS\uFF1A\u8ACB\u6062\u5FA9\u5B9A\u4F4D\uFF0C\u4E26\u53D6\u5F97 60 \u79D2\u5167\u3001\u7CBE\u5EA6 50m \u4EE5\u5167\u7684\u4F4D\u7F6E\u3002");
+      if (!gps.sourceRouteId && !gps.navigation?.active)
+        throw new Error("\u8ACB\u5148\u4F7F\u7528\u4E00\u4EFD GPX \u4F5C\u70BA\u53C3\u8003\u8DEF\u7DDA\uFF0C\u624D\u80FD\u81EA\u52D5\u6539\u9053\u3002");
+      const plan = planFor(file), source = sourceFor(file);
+      if (!plan || !source?.points?.length) throw new Error("\u76EE\u524D\u6C92\u6709\u53EF\u898F\u5283\u7684\u539F\u59CB GPX \u8207\u7AD9\u9EDE\u8CC7\u6599\u3002");
+      let cached = networks.get(source);
+      if (!cached) {
+        const network = routeNetwork(source, planFor);
+        cached = { network, planner: createSmartPlanner(network) };
+        networks.set(source, cached);
+      }
+      const locations = smartLocations(
+        file,
+        plan,
+        compatible() ? gps.itinerary : null,
+        fix,
+        compatible() ? acceptedPosition() : null
+      );
+      const picked = preferred && locations.find((p) => p.id === preferred);
+      if (requirePreferred && !picked) throw new Error("\u76EE\u524D\u8DEF\u6BB5\u5DF2\u6539\u8B8A\uFF0C\u8ACB\u91CD\u65B0\u9810\u89BD\u667A\u6167\u6539\u9053\u65B9\u6848\u3002");
+      const position2 = picked ?? (locations.length === 1 ? locations[0] : null);
+      const location = position2 && canonicalLocation(file, plan, position2, gps.navigation?.active?.provenance);
+      const origin = gps.navigation?.original ?? { file, plan };
+      const home = smartHome(
+        source,
+        planFor(source),
+        origin.file,
+        origin.plan ?? planFor(origin.file)
+      );
+      return {
+        ...cached,
+        gps,
+        file,
+        source,
+        fix,
+        now,
+        locations,
+        position: position2,
+        location,
+        home,
+        visited: visitedStations(gps, plan),
+        starts: location ? startsAtSmartLocation(cached.network, fix, location) : []
+      };
+    }
+    const factor = () => state.gps.itinerary?.factor ?? state.itinerary.factor;
+    function invalidated() {
+      generation++;
+      reviewed = null;
+      session = null;
+      delete state.itinerary.smart;
+    }
+    async function load(locationId = null) {
+      const token = ++generation;
+      reviewed = null;
+      session = null;
+      state.itinerary.smart = { busy: true, options: [], locations: [] };
+      render();
+      try {
+        await yieldTask();
+        if (disposed || token !== generation) return;
+        const env = context(locationId);
+        const guard = () => !disposed && generation === token && state.gps === env.gps && recordingRoute2().id === env.file.id;
+        session = {
+          recordingId: env.gps.id,
+          routeId: env.file.id,
+          referenceVersion,
+          locationId: env.position?.id ?? null
+        };
+        if (!env.position) {
+          state.itinerary.smart = {
+            busy: false,
+            options: [],
+            locations: env.locations,
+            error: env.locations.length ? "\u5B9A\u4F4D\u6709\u591A\u7A2E\u53EF\u80FD\uFF0C\u8ACB\u5148\u78BA\u8A8D\u4F60\u6240\u5728\u7684\u6B65\u9053\u3002" : "GPS \u504F\u96E2\u539F GPX \u6216\u6C92\u6709\u53EF\u4FE1\u8DEF\u6BB5\uFF1B\u7121\u6CD5\u81EA\u52D5\u6539\u9053\u3002"
+          };
+          render();
+          return;
+        }
+        const options = [];
+        for (const request of smartRequests(env.network, env.home)) {
+          await yieldTask();
+          if (!guard()) return;
+          let item;
+          try {
+            const variants = env.planner({
+              request,
+              starts: env.starts,
+              location: env.location,
+              home: env.home,
+              visited: env.visited,
+              now: env.now
+            });
+            item = {
+              ...request,
+              available: true,
+              paths: variants.length,
+              summary: variants.length === 1 ? smartSummary(variants[0], factor(), env.now) : null
+            };
+          } catch (error) {
+            item = { ...request, available: false, reason: error.message };
+          }
+          options.push(item);
+        }
+        if (!guard()) return;
+        if (!trustedRerouteFix(state.gps, recordingFix(state.gps)))
+          throw new Error("\u898F\u5283\u671F\u9593 GPS \u5DF2\u4E2D\u65B7\u6216\u904E\u671F\uFF0C\u8ACB\u6062\u5FA9\u5B9A\u4F4D\u5F8C\u91CD\u8A66\u3002");
+        state.itinerary.smart = { busy: false, options, locations: [], asOf: env.fix.time };
+        render();
+        return options;
+      } catch (error) {
+        if (!disposed && token === generation) {
+          state.itinerary.smart = { busy: false, options: [], locations: [], error: error.message };
+          render();
+        }
+      }
+    }
+    function prepare(requestId, selectedPath = null, requireLocation = false) {
+      if (!session || session.recordingId !== state.gps.id || session.routeId !== recordingRoute2().id || session.referenceVersion !== referenceVersion)
+        throw new Error("\u539F\u8A08\u756B\u5DF2\u6539\u8B8A\uFF0C\u8ACB\u91CD\u65B0\u53D6\u5F97\u667A\u6167\u6539\u9053\u9078\u9805\u3002");
+      const env = context(session.locationId, requireLocation);
+      if (!env.position) throw new Error("\u76EE\u524D\u4F4D\u7F6E\u6709\u6B67\u7FA9\uFF0C\u8ACB\u91CD\u65B0\u78BA\u8A8D\u6B65\u9053\u3002");
+      const request = smartRequests(env.network, env.home).find((r) => r.id === requestId);
+      if (!request) throw new Error("\u76EE\u7684\u5730\u5DF2\u4E0D\u53EF\u7528\uFF0C\u8ACB\u91CD\u65B0\u53D6\u5F97\u9078\u9805\u3002");
+      const variants = env.planner({
+        request,
+        starts: env.starts,
+        location: env.location,
+        home: env.home,
+        visited: env.visited,
+        now: env.now,
+        id: reviewed?.id
+      });
+      if (selectedPath && !variants.some((p) => p.routeKey === selectedPath))
+        throw new Error("\u539F\u5148\u9810\u89BD\u7684\u8DEF\u5F91\u5DF2\u4E0D\u53EF\u7528\uFF0C\u8ACB\u91CD\u65B0\u9810\u89BD\u3002");
+      return {
+        env,
+        request,
+        variants,
+        selected: selectedPath ? variants.find((p) => p.routeKey === selectedPath) : variants.length === 1 ? variants[0] : null
+      };
+    }
+    function preview(requestId, path = null) {
+      reviewed = null;
+      if (state.itinerary.smart) {
+        delete state.itinerary.smart.preview;
+        delete state.itinerary.smart.alternatives;
+        delete state.itinerary.smart.error;
+      }
+      const { env, request, variants, selected } = prepare(requestId, path);
+      if (!selected) {
+        state.itinerary.smart.alternatives = variants.map((p) => ({
+          requestId,
+          routeKey: p.routeKey,
+          file: p.file,
+          via: p.plan.rows.slice(1).map((r) => r.station.name),
+          summary: smartSummary(p, factor(), env.now)
+        }));
+        render();
+        return null;
+      }
+      session.locationId = env.position.id;
+      reviewed = {
+        requestId: request.id,
+        routeKey: selected.routeKey,
+        id: selected.file.id,
+        locationId: env.position.id
+      };
+      state.itinerary.smart.preview = {
+        ...selected,
+        summary: smartSummary(selected, factor(), env.now)
+      };
+      render();
+      return selected;
+    }
+    function apply() {
+      if (!reviewed) throw new Error("\u8ACB\u5148\u9078\u64C7\u4E26\u9810\u89BD\u667A\u6167\u6539\u9053\u65B9\u6848\u3002");
+      const selection = reviewed;
+      const { env, selected } = prepare(selection.requestId, selection.routeKey, true);
+      if (!selected?.plan.geometryComplete) throw new Error("\u8DEF\u6BB5\u7121\u6CD5\u53EF\u9760\u929C\u63A5\uFF0C\u4E0D\u80FD\u5957\u7528\u3002");
+      selected.file.id = selection.id;
+      activate(
+        {
+          ...selected,
+          smartRequest: { requestId: selection.requestId, routeKey: selection.routeKey },
+          sourceRoute: env.source
+        },
+        env.source
+      );
+      invalidated();
+      state.itinerary.smart = { applied: true, options: [], locations: [] };
+      render();
+      return true;
+    }
+    return {
+      canApply: () => Boolean(
+        reviewed && session?.recordingId === state.gps.id && session?.routeId === recordingRoute2().id && trustedRerouteFix(state.gps, recordingFix(state.gps))
+      ),
+      load,
+      preview,
+      apply,
+      invalidate: invalidated,
+      dispose() {
+        disposed = true;
+        invalidated();
+      }
+    };
   }
 
   // src/features/itinerary/live-checkpoint.js
@@ -8852,6 +9603,12 @@
       };
     }
     function begin(gps, route) {
+      smart.invalidate();
+      ui.reroute = void 0;
+      ui.rerouteForm = {};
+      preview = null;
+      rerouteNetwork = null;
+      rerouteCandidates = [];
       const plan = planFor(route);
       if (!plan?.rows.length) return;
       createLiveSession(gps, route, plan, true);
@@ -8875,8 +9632,15 @@
         return;
       journey.lastFixTime = point.time;
       const target = plan.rows[journey.nextIndex];
-      const positions = file && target ? rerouteProgressPositions(file, point, target) : [];
-      if (target && distanceM(point, target.station) <= 60 && (!file.rerouted || positions.some((p) => p.routeProgressM >= target.routeProgressM - 60))) {
+      const positions = file?.rerouted && target && trustedRerouteFix(gps, point) ? rerouteProgressPositions(file, point, target) : [];
+      if (file.rerouted && positions.length === 1)
+        journey.routePosition = {
+          ...positions[0],
+          time: point.time,
+          accuracy: gps.accuracy,
+          revisionId: file.id
+        };
+      if (target && distanceM(point, target.station) <= 60 && (!file.rerouted || positions.length === 1 && positions[0].routeProgressM >= target.routeProgressM - 60)) {
         journey.arrivals[journey.nextIndex] = point.time;
         journey.nextIndex++;
       }
@@ -8897,19 +9661,26 @@
       }
       journey.arrivals[data.next.index] = Date.now();
       journey.nextIndex = data.next.index + 1;
+      delete journey.routePosition;
       render();
     }
     function rerouteProgressPositions(file, fix, target) {
+      const journey = state.gps.itinerary;
+      const previous = planFor(file).rows[Math.max(0, journey.nextIndex - 1)];
+      const anchor = journey.routePosition?.revisionId === file.id ? journey.routePosition : null;
+      const elapsed = anchor ? fix.time - anchor.time : null;
+      const reach = anchor && elapsed >= 0 && elapsed <= 3e5 ? 12 * elapsed / 1e3 + Math.min(50, state.gps.accuracy + anchor.accuracy) : Infinity;
       return routeMatcherFor(file).match([{ ...fix, stationId: "occurrence", coordinateStatus: "located" }], {
         maxOffsetM: 50,
         mergeWithinM: 25
       }).matches[0]?.routePositions.filter(
-        (p) => p.segmentIndex === target.segmentIndex && p.routeProgressM <= target.routeProgressM + 25
+        (p) => p.segmentIndex === target.segmentIndex && p.routeProgressM >= previous.routeProgressM - 25 && (!anchor || anchor.segmentIndex !== p.segmentIndex || elapsed >= 0 && p.routeProgressM >= anchor.routeProgressM - 25 && p.routeProgressM <= anchor.routeProgressM + reach) && p.routeProgressM <= target.routeProgressM + 25
       ) ?? [];
     }
     let previewStart = null;
     let rerouteNetwork = null, rerouteCandidates = [], preview = null;
     function rerouteOptions(sourceId) {
+      smart.invalidate();
       preview = null;
       ui.reroute = {};
       const file = state.library.find((f) => f.id === sourceId && f.kind !== "recording");
@@ -8945,6 +9716,7 @@
       return ui.reroute;
     }
     function previewReroute({ startIndex, destination, returnTo }) {
+      smart.invalidate();
       preview = null;
       if (ui.reroute) delete ui.reroute.preview;
       const fix = recordingFix(state.gps), now = Date.now();
@@ -8986,6 +9758,12 @@
         id: preview.file.id,
         now
       });
+      return activateReroute(preview, rerouteNetwork.sourceFile);
+    }
+    function activateReroute(candidate, sourceRoute) {
+      const gps = state.gps, now = Date.now(), fix = recordingFix(gps);
+      if (!trustedRerouteFix(gps, fix, now)) throw new Error("GPS \u5DF2\u4E2D\u65B7\u6216\u904E\u671F\uFF0C\u8ACB\u91CD\u65B0\u5B9A\u4F4D\u3002");
+      smart.invalidate();
       const oldFile = recordingRoute2(), oldJourney = structuredClone(gps.itinerary ?? null);
       gps.navigation ??= {
         version: 1,
@@ -9004,10 +9782,10 @@
         live: structuredClone(liveFactors(now)),
         checkpoint: liveSessions.get(gps)?.engine.checkpoint() ?? null
       });
-      const { file, plan, ...metadata } = preview;
+      const { file, plan, ...metadata } = candidate;
       file.reroutePlan = plan;
       file.rerouteReferenceVersion = reference.version;
-      gps.navigation.active = { file, ...metadata };
+      gps.navigation.active = { file, ...metadata, sourceRoute: structuredClone(sourceRoute) };
       gps.itinerary = {
         routeId: file.id,
         signature: signature(plan),
@@ -9017,9 +9795,17 @@
         arrivals: { 0: now },
         lastFixTime: fix.time,
         deviationNotified: false,
-        offRoute: false
+        offRoute: false,
+        routePosition: {
+          revisionId: file.id,
+          segmentIndex: 0,
+          routeProgressM: 0,
+          time: fix.time,
+          accuracy: gps.accuracy,
+          offsetM: 0
+        }
       };
-      gps.sourceRouteId ??= ui.reroute.sourceId;
+      gps.sourceRouteId ??= sourceRoute.id;
       gps.remaining = null;
       delete gps.liveFactorCheckpoint;
       liveSessions.delete(gps);
@@ -9031,11 +9817,29 @@
       render();
       return true;
     }
+    const smart = createSmartRerouteController({
+      state,
+      recordingRoute: recordingRoute2,
+      planFor,
+      compatible: () => snapshot3()?.compatible === true,
+      acceptedPosition: () => {
+        const position2 = state.gps.itinerary?.routePosition, fix = recordingFix(state.gps);
+        return position2?.revisionId === recordingRoute2().id && position2.time === fix?.time ? { fix, position: position2 } : liveSessions.get(state.gps)?.engine.checkpoint().last ?? null;
+      },
+      referenceVersion: reference.version,
+      activate: activateReroute,
+      render
+    });
     return {
       invalidateReroute: () => {
+        smart.invalidate();
         preview = null;
         if (ui.reroute) delete ui.reroute.preview;
       },
+      loadSmartOptions: smart.load,
+      previewSmart: smart.preview,
+      applySmart: smart.apply,
+      canApplySmart: smart.canApply,
       rerouteOptions,
       previewReroute,
       applyReroute,
@@ -9062,6 +9866,7 @@
       interruptLiveFactor,
       historyReference,
       dispose() {
+        smart.dispose();
         disposed = true;
       }
     };
@@ -9330,10 +10135,10 @@
       async function referenceForSaved(saved) {
         const route = byId.get(saved.route?.id);
         if (!route) return null;
-        const key3 = JSON.stringify([route.id, saved.route.direction]);
-        if (!references.has(key3)) {
+        const key2 = JSON.stringify([route.id, saved.route.direction]);
+        if (!references.has(key2)) {
           references.set(
-            key3,
+            key2,
             (async () => {
               const prepared = await hydrateTimeOrigin({
                 ...route,
@@ -9343,7 +10148,7 @@
             })()
           );
         }
-        return references.get(key3);
+        return references.get(key2);
       }
       for (const file of files.filter((file2) => file2.personalHistory && localCapture(file2)).sort((a, b) => a.addedAt - b.addedAt || a.id.localeCompare(b.id))) {
         const saved = file.personalHistory, reasons2 = [];
@@ -9426,7 +10231,7 @@
       reasons2.add("missing-route-or-direction");
     const stats = row?.statistics;
     if (!stats || !["actualWallSeconds", "baselineSeconds", "effectiveDistanceM", "matchedDistanceM"].every(
-      (key3) => positive(stats[key3])
+      (key2) => positive(stats[key2])
     ) || !Number.isFinite(stats.observedFrom) || !Number.isFinite(stats.observedTo) || stats.observedTo <= stats.observedFrom || Math.abs((stats.observedTo - stats.observedFrom) / 1e3 - stats.actualWallSeconds) > 1e-3 || !positive(stats.actualWallSeconds / stats.baselineSeconds))
       reasons2.add("incomplete-history-statistics");
     return [...reasons2];
@@ -9490,9 +10295,9 @@
     }
     const grouped = /* @__PURE__ */ new Map();
     for (const sample of samples) {
-      const key3 = JSON.stringify([sample.route.id, sample.route.direction]);
-      if (!grouped.has(key3)) grouped.set(key3, []);
-      grouped.get(key3).push(sample);
+      const key2 = JSON.stringify([sample.route.id, sample.route.direction]);
+      if (!grouped.has(key2)) grouped.set(key2, []);
+      grouped.get(key2).push(sample);
     }
     return {
       version: PERSONAL_FACTOR_VERSION,
@@ -9564,7 +10369,7 @@
     "missing-reference": "\u7F3A\u5C11\u53EF\u7528\u7684\u4E0A\u6CB3\u53C3\u8003\u8DEF\u7DDA",
     "outside-requested-scope": "\u4E0D\u5728\u6307\u5B9A\u8DEF\u7DDA\u6216\u65B9\u5411\u7BC4\u570D"
   })[reason] ?? `\u6B77\u53F2\u8CC7\u6599\u672A\u901A\u904E\u54C1\u8CEA\u6216\u5B8C\u6574\u6027\u6838\u5C0D\uFF08${reason}\uFF09`;
-  var duration3 = (seconds) => seconds === null ? "\u2014" : elapsedLabel(seconds * 1e3);
+  var duration4 = (seconds) => seconds === null ? "\u2014" : elapsedLabel(seconds * 1e3);
   var range = (value2) => value2 ? `${value2.min.toFixed(2)}\u2013${value2.max.toFixed(2)} \u500D` : "\u2014";
   function createPersonalFactorView({ personalFactors, document: document2 }) {
     let revision = 0, disposed = false;
@@ -9584,7 +10389,7 @@
         for (const item of result.excludedSamples)
           for (const reason of item.reasons) names.set(reason, (names.get(reason) ?? 0) + 1);
         root.querySelector('[role="status"]').innerHTML = `<strong class="personal-factor-value" data-personal-factor>${result.factor === null ? "\u2014" : `${result.factor.toFixed(2)} \u500D`}</strong><p data-personal-factor-count>\u6709\u6548\u6A23\u672C ${result.sampleCount} \u7B46\u7368\u7ACB\u9304\u88FD</p><p>${result.factor === null ? result.reasons.map(personalFactorReason).map(esc).join(" ") : "\u5DF2\u9054\u5EFA\u8B70\u6A23\u672C\u9580\u6ABB\uFF1B\u50C5\u4F9B\u53C3\u8003\uFF0C\u5C1A\u672A\u5957\u7528 ETA\u3002"}</p>`;
-        root.querySelector("[data-personal-factor-details]").innerHTML = `<p class="small muted">${result.groups.length} \u7D44\u8DEF\u7DDA\uFF0F\u65B9\u5411\uFF1B\u5168\u57DF\u500D\u7387\u4E0D\u4EE3\u8868\u540C\u4E00\u8DEF\u7DDA\u7684\u5BE6\u7E3E\u3002\u624B\u52D5\u8A2D\u5B9A\u500D\u7387\u4FDD\u6301\u4E0D\u8B8A\u3002</p><div class="stack small"><p>\u7E3D\u5BE6\u969B\u8017\u6642 ${duration3(result.totalActualWallSeconds)} \uFF0F\u7E3D\u4E0A\u6CB3\u57FA\u6E96 ${duration3(result.totalBaselineSeconds)}<br>\u500B\u5225\u6A23\u672C\u500D\u7387\u7BC4\u570D ${range(result.factorRange)}</p><p>\u500D\u7387\uFF1D\u7E3D\u5BE6\u969B\u8017\u6642 \xF7 \u7E3D\u4E0A\u6CB3\u57FA\u6E96\u3002\u4E0A\u6CB3\u57FA\u6E96\u8F03\u9577\u7684\u6A23\u672C\u6B0A\u91CD\u8F03\u5927\uFF0C\u5305\u542B\u4F11\u606F\u8207\u53EF\u78BA\u8A8D\u7684\u66AB\u505C\uFF0C\u4E0D\u4EFB\u610F\u6392\u9664\u6975\u7AEF\u503C\u3002</p><p>\u50C5\u63A1\u660E\u78BA\u4FDD\u5B58\u7684 Ridgewise \u672C\u6A5F\u9304\u88FD\uFF0C\u4F86\u6E90\u672A\u7368\u7ACB\u9A57\u8B49\uFF1B\u53EA\u6DB5\u84CB\u5BE6\u969B GPS \u7AEF\u9EDE\u4E4B\u9593\uFF0C\u4E0D\u4EE3\u8868\u8D70\u5B8C\u8DEF\u7DDA\u5168\u7A0B\u3002</p>${result.groups.length ? `<ul>${result.groups.map((group) => `<li>\u8DEF\u7DDA ${esc(group.routeId)} \xB7 ${group.direction === "reverse" ? "\u53CD\u5411" : "\u539F\u5411"}\uFF1A${group.sampleCount} \u7B46\uFF0C\u57FA\u6E96 ${duration3(group.totalBaselineSeconds)}</li>`).join("")}</ul>` : ""}<p>\u6392\u9664 ${result.excludedSamples.length} \u7B46\u6B77\u53F2\u5019\u9078${names.size ? "\uFF08\u540C\u4E00\u7B46\u53EF\u80FD\u6709\u591A\u500B\u539F\u56E0\uFF09" : "\u3002"}</p>${names.size ? `<ul>${[...names].map(([reason, count]) => `<li>${esc(personalFactorReason(reason))}\uFF1A${count} \u7B46</li>`).join("")}</ul>` : ""}</div>`;
+        root.querySelector("[data-personal-factor-details]").innerHTML = `<p class="small muted">${result.groups.length} \u7D44\u8DEF\u7DDA\uFF0F\u65B9\u5411\uFF1B\u5168\u57DF\u500D\u7387\u4E0D\u4EE3\u8868\u540C\u4E00\u8DEF\u7DDA\u7684\u5BE6\u7E3E\u3002\u624B\u52D5\u8A2D\u5B9A\u500D\u7387\u4FDD\u6301\u4E0D\u8B8A\u3002</p><div class="stack small"><p>\u7E3D\u5BE6\u969B\u8017\u6642 ${duration4(result.totalActualWallSeconds)} \uFF0F\u7E3D\u4E0A\u6CB3\u57FA\u6E96 ${duration4(result.totalBaselineSeconds)}<br>\u500B\u5225\u6A23\u672C\u500D\u7387\u7BC4\u570D ${range(result.factorRange)}</p><p>\u500D\u7387\uFF1D\u7E3D\u5BE6\u969B\u8017\u6642 \xF7 \u7E3D\u4E0A\u6CB3\u57FA\u6E96\u3002\u4E0A\u6CB3\u57FA\u6E96\u8F03\u9577\u7684\u6A23\u672C\u6B0A\u91CD\u8F03\u5927\uFF0C\u5305\u542B\u4F11\u606F\u8207\u53EF\u78BA\u8A8D\u7684\u66AB\u505C\uFF0C\u4E0D\u4EFB\u610F\u6392\u9664\u6975\u7AEF\u503C\u3002</p><p>\u50C5\u63A1\u660E\u78BA\u4FDD\u5B58\u7684 Ridgewise \u672C\u6A5F\u9304\u88FD\uFF0C\u4F86\u6E90\u672A\u7368\u7ACB\u9A57\u8B49\uFF1B\u53EA\u6DB5\u84CB\u5BE6\u969B GPS \u7AEF\u9EDE\u4E4B\u9593\uFF0C\u4E0D\u4EE3\u8868\u8D70\u5B8C\u8DEF\u7DDA\u5168\u7A0B\u3002</p>${result.groups.length ? `<ul>${result.groups.map((group) => `<li>\u8DEF\u7DDA ${esc(group.routeId)} \xB7 ${group.direction === "reverse" ? "\u53CD\u5411" : "\u539F\u5411"}\uFF1A${group.sampleCount} \u7B46\uFF0C\u57FA\u6E96 ${duration4(group.totalBaselineSeconds)}</li>`).join("")}</ul>` : ""}<p>\u6392\u9664 ${result.excludedSamples.length} \u7B46\u6B77\u53F2\u5019\u9078${names.size ? "\uFF08\u540C\u4E00\u7B46\u53EF\u80FD\u6709\u591A\u500B\u539F\u56E0\uFF09" : "\u3002"}</p>${names.size ? `<ul>${[...names].map(([reason, count]) => `<li>${esc(personalFactorReason(reason))}\uFF1A${count} \u7B46</li>`).join("")}</ul>` : ""}</div>`;
       } catch {
         if (!disposed && ticket === revision && document2.getElementById(root.id) === root)
           root.querySelector('[role="status"]').innerHTML = '<strong class="personal-factor-value">\u2014</strong><p>\u7121\u6CD5\u8B80\u53D6\u6216\u9A57\u8B49\u6B77\u53F2\u8CC7\u6599\uFF0C\u66AB\u4E0D\u63D0\u4F9B\u500B\u4EBA\u500D\u7387\u3002</p>';

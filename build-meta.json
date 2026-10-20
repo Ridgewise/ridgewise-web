@@ -52,8 +52,12 @@
       "bytes": 1064,
       "imports": []
     },
+    "src/features/itinerary/smart-reroute.css": {
+      "bytes": 1388,
+      "imports": []
+    },
     "src/styles/index.css": {
-      "bytes": 545,
+      "bytes": 596,
       "imports": [
         {
           "path": "src/styles/base.css",
@@ -119,6 +123,11 @@
           "path": "src/features/personal-factor/personal-factor.css",
           "kind": "import-rule",
           "original": "../features/personal-factor/personal-factor.css"
+        },
+        {
+          "path": "src/features/itinerary/smart-reroute.css",
+          "kind": "import-rule",
+          "original": "../features/itinerary/smart-reroute.css"
         }
       ]
     },
@@ -864,9 +873,30 @@
       ],
       "format": "esm"
     },
-    "src/features/itinerary/reroute-view.js": {
-      "bytes": 4151,
+    "src/features/itinerary/smart-view.js": {
+      "bytes": 6399,
       "imports": [
+        {
+          "path": "src/ui/html.js",
+          "kind": "import-statement",
+          "original": "../../ui/html.js"
+        },
+        {
+          "path": "src/features/map/thumbnail.js",
+          "kind": "import-statement",
+          "original": "../map/thumbnail.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/features/itinerary/reroute-view.js": {
+      "bytes": 4358,
+      "imports": [
+        {
+          "path": "src/features/itinerary/smart-view.js",
+          "kind": "import-statement",
+          "original": "./smart-view.js"
+        },
         {
           "path": "src/ui/html.js",
           "kind": "import-statement",
@@ -1018,7 +1048,7 @@
       "format": "esm"
     },
     "src/features/itinerary/route-progress.js": {
-      "bytes": 1940,
+      "bytes": 2491,
       "imports": [
         {
           "path": "src/features/recording/analysis.js",
@@ -1045,7 +1075,7 @@
       "format": "esm"
     },
     "src/features/itinerary/remaining-route.js": {
-      "bytes": 2293,
+      "bytes": 2492,
       "imports": [
         {
           "path": "src/features/itinerary/route-progress.js",
@@ -1061,7 +1091,7 @@
       "format": "esm"
     },
     "src/features/itinerary/views.js": {
-      "bytes": 15982,
+      "bytes": 16410,
       "imports": [
         {
           "path": "src/features/itinerary/timing-issues.js",
@@ -1249,7 +1279,7 @@
       "format": "esm"
     },
     "src/features/itinerary/actions.js": {
-      "bytes": 1566,
+      "bytes": 2799,
       "imports": [],
       "format": "esm"
     },
@@ -1584,7 +1614,7 @@
       "format": "esm"
     },
     "src/features/itinerary/rerouting.js": {
-      "bytes": 15481,
+      "bytes": 16988,
       "imports": [
         {
           "path": "../packages/route-stations/index.js",
@@ -1610,7 +1640,7 @@
       "format": "esm"
     },
     "src/features/itinerary/reroute-eta.js": {
-      "bytes": 1606,
+      "bytes": 1950,
       "imports": [
         {
           "path": "src/features/itinerary/matching.js",
@@ -1626,6 +1656,116 @@
           "path": "src/features/itinerary/rerouting.js",
           "kind": "import-statement",
           "original": "./rerouting.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/features/itinerary/smart-location.js": {
+      "bytes": 4205,
+      "imports": [
+        {
+          "path": "src/features/itinerary/matching.js",
+          "kind": "import-statement",
+          "original": "./matching.js"
+        },
+        {
+          "path": "src/features/itinerary/rerouting.js",
+          "kind": "import-statement",
+          "original": "./rerouting.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/features/itinerary/connected-routing.js": {
+      "bytes": 4725,
+      "imports": [
+        {
+          "path": "src/features/itinerary/rerouting.js",
+          "kind": "import-statement",
+          "original": "./rerouting.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/features/itinerary/smart-routing.js": {
+      "bytes": 6379,
+      "imports": [
+        {
+          "path": "src/features/itinerary/rerouting.js",
+          "kind": "import-statement",
+          "original": "./rerouting.js"
+        },
+        {
+          "path": "src/features/itinerary/connected-routing.js",
+          "kind": "import-statement",
+          "original": "./connected-routing.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/features/itinerary/smart-summary.js": {
+      "bytes": 2333,
+      "imports": [
+        {
+          "path": "src/features/itinerary/model.js",
+          "kind": "import-statement",
+          "original": "./model.js"
+        },
+        {
+          "path": "src/features/daylight/model.js",
+          "kind": "import-statement",
+          "original": "../daylight/model.js"
+        },
+        {
+          "path": "src/features/daylight/location.js",
+          "kind": "import-statement",
+          "original": "../daylight/location.js"
+        },
+        {
+          "path": "src/data/daylight-reference.js",
+          "kind": "import-statement",
+          "original": "../../data/daylight-reference.js"
+        },
+        {
+          "path": "src/data/daylight-locations.js",
+          "kind": "import-statement",
+          "original": "../../data/daylight-locations.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/features/itinerary/smart-controller.js": {
+      "bytes": 9643,
+      "imports": [
+        {
+          "path": "src/features/gpx/parser.js",
+          "kind": "import-statement",
+          "original": "../gpx/parser.js"
+        },
+        {
+          "path": "src/features/recording/analysis.js",
+          "kind": "import-statement",
+          "original": "../recording/analysis.js"
+        },
+        {
+          "path": "src/features/itinerary/rerouting.js",
+          "kind": "import-statement",
+          "original": "./rerouting.js"
+        },
+        {
+          "path": "src/features/itinerary/smart-location.js",
+          "kind": "import-statement",
+          "original": "./smart-location.js"
+        },
+        {
+          "path": "src/features/itinerary/smart-routing.js",
+          "kind": "import-statement",
+          "original": "./smart-routing.js"
+        },
+        {
+          "path": "src/features/itinerary/smart-summary.js",
+          "kind": "import-statement",
+          "original": "./smart-summary.js"
         }
       ],
       "format": "esm"
@@ -1647,7 +1787,7 @@
       "format": "esm"
     },
     "src/features/itinerary/controller.js": {
-      "bytes": 17922,
+      "bytes": 20583,
       "imports": [
         {
           "path": "src/features/recording/analysis.js",
@@ -1693,6 +1833,11 @@
           "path": "src/features/itinerary/rerouting.js",
           "kind": "import-statement",
           "original": "./rerouting.js"
+        },
+        {
+          "path": "src/features/itinerary/smart-controller.js",
+          "kind": "import-statement",
+          "original": "./smart-controller.js"
         },
         {
           "path": "src/features/history/observations.js",
@@ -1999,7 +2144,7 @@
       "imports": [],
       "exports": [],
       "inputs": {},
-      "bytes": 4792508
+      "bytes": 4862636
     },
     "dist/app.bundle.js": {
       "imports": [],
@@ -2011,7 +2156,7 @@
           "bytesInOutput": 0
         },
         "src/domain/track-math.js": {
-          "bytesInOutput": 2640
+          "bytesInOutput": 2654
         },
         "src/domain/track-filter.js": {
           "bytesInOutput": 17355
@@ -2068,7 +2213,7 @@
           "bytesInOutput": 760
         },
         "src/features/elevation/view.js": {
-          "bytesInOutput": 6866
+          "bytesInOutput": 6868
         },
         "src/features/daylight/view.js": {
           "bytesInOutput": 4461
@@ -2181,8 +2326,11 @@
         "src/features/recording/estimates.js": {
           "bytesInOutput": 2432
         },
+        "src/features/itinerary/smart-view.js": {
+          "bytesInOutput": 7103
+        },
         "src/features/itinerary/reroute-view.js": {
-          "bytesInOutput": 4959
+          "bytesInOutput": 5155
         },
         "src/features/routes/direction-view.js": {
           "bytesInOutput": 1686
@@ -2212,19 +2360,19 @@
           "bytesInOutput": 13457
         },
         "src/features/itinerary/route-progress.js": {
-          "bytesInOutput": 1658
+          "bytesInOutput": 2201
         },
         "src/features/itinerary/remaining-elevation.js": {
           "bytesInOutput": 3318
         },
         "src/features/itinerary/remaining-route.js": {
-          "bytesInOutput": 2523
+          "bytesInOutput": 2699
         },
         "src/features/itinerary/views.js": {
-          "bytesInOutput": 19000
+          "bytesInOutput": 19519
         },
         "src/features/itinerary/markers.js": {
-          "bytesInOutput": 1114
+          "bytesInOutput": 1115
         },
         "src/features/map/controller.js": {
           "bytesInOutput": 14719
@@ -2251,7 +2399,7 @@
           "bytesInOutput": 4054
         },
         "src/features/itinerary/actions.js": {
-          "bytesInOutput": 1672
+          "bytesInOutput": 2957
         },
         "src/features/gpx/actions.js": {
           "bytesInOutput": 2483
@@ -2305,7 +2453,7 @@
           "bytesInOutput": 2146642
         },
         "src/features/itinerary/leg-resolution.js": {
-          "bytesInOutput": 3853
+          "bytesInOutput": 3856
         },
         "src/features/itinerary/model.js": {
           "bytesInOutput": 5307
@@ -2314,16 +2462,31 @@
           "bytesInOutput": 3739
         },
         "src/features/itinerary/rerouting.js": {
-          "bytesInOutput": 14686
+          "bytesInOutput": 16154
         },
         "src/features/itinerary/reroute-eta.js": {
-          "bytesInOutput": 1458
+          "bytesInOutput": 1784
+        },
+        "src/features/itinerary/smart-location.js": {
+          "bytesInOutput": 3864
+        },
+        "src/features/itinerary/connected-routing.js": {
+          "bytesInOutput": 4242
+        },
+        "src/features/itinerary/smart-routing.js": {
+          "bytesInOutput": 6491
+        },
+        "src/features/itinerary/smart-summary.js": {
+          "bytesInOutput": 2039
+        },
+        "src/features/itinerary/smart-controller.js": {
+          "bytesInOutput": 10332
         },
         "src/features/itinerary/live-checkpoint.js": {
           "bytesInOutput": 2201
         },
         "src/features/itinerary/controller.js": {
-          "bytesInOutput": 17733
+          "bytesInOutput": 20314
         },
         "src/features/history/model.js": {
           "bytesInOutput": 7810
@@ -2350,13 +2513,13 @@
           "bytesInOutput": 100
         }
       },
-      "bytes": 3131426
+      "bytes": 3172892
     },
     "dist/app.bundle.css.map": {
       "imports": [],
       "exports": [],
       "inputs": {},
-      "bytes": 111804
+      "bytes": 114190
     },
     "dist/app.bundle.css": {
       "imports": [],
@@ -2400,11 +2563,14 @@
         "src/features/personal-factor/personal-factor.css": {
           "bytesInOutput": 1064
         },
+        "src/features/itinerary/smart-reroute.css": {
+          "bytesInOutput": 1388
+        },
         "src/styles/index.css": {
           "bytesInOutput": 0
         }
       },
-      "bytes": 66746
+      "bytes": 68182
     }
   }
 }
