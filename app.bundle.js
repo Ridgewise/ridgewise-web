@@ -995,10 +995,10 @@
   // src/domain/track-time.js
   var TRACK_TIME_VERSION = 1;
   var TRACK_TIME_DEFAULTS = Object.freeze({
-    maxGapMs: 3e5,
+    maxGapMs: 9e5,
     maxSpeedMps: TRACK_FILTER_DEFAULTS.maxSpeedMps,
     stationaryRadiusM: TRACK_FILTER_DEFAULTS.stationaryRadiusM,
-    stationaryDurationMs: TRACK_FILTER_DEFAULTS.stationaryDurationS * 1e3,
+    stationaryDurationMs: 3e5,
     stationarySpeedMps: 0.3
   });
   var nonrecorded = /* @__PURE__ */ new Set(["synthetic", "interpolated", "estimated"]);
@@ -1028,8 +1028,9 @@
       const flushDwell = () => {
         const duration5 = dwell.reduce((sum, item) => sum + item.elapsedMs, 0);
         for (const item of dwell) {
-          item.status = duration5 >= config2.stationaryDurationMs ? "stationary" : "uncertain-stationary";
-          item.movingMs = item.status === "stationary" ? 0 : null;
+          item.status = duration5 >= config2.stationaryDurationMs ? "stationary" : "moving";
+          item.movingMs = item.status === "stationary" ? 0 : item.elapsedMs;
+          if (item.status === "moving") item.uncertainties.push("short-stop-or-slow-movement");
         }
         dwell = [];
         anchor = null;
@@ -1089,6 +1090,7 @@
             speedMps,
             status: issues[0] ?? "moving",
             issues,
+            uncertainties: elapsedMs > 6e4 && !issues.length ? ["sparse-gps-time"] : [],
             movingMs: issues.length ? null : elapsedMs
           };
           intervals.push(item);
@@ -1110,9 +1112,7 @@
     });
     for (const item of intervals) {
       if (item.status === "moving" && item.toKm <= item.fromKm) {
-        item.status = "unresolved-distance";
-        item.issues.push("unresolved-distance");
-        item.movingMs = null;
+        item.uncertainties.push("corrected-zero-distance");
       }
     }
     const moving = intervals.filter((item) => item.status === "moving");
@@ -1123,7 +1123,7 @@
       cumulativeMovingMs += item.movingMs ?? 0;
       item.cumulativeMovingMs = cumulativeMovingMs;
       item.weight = item.status === "moving" ? item.movingMs / candidateMovingMs : null;
-      item.msPerKm = item.status === "moving" ? item.movingMs / (item.toKm - item.fromKm) : null;
+      item.msPerKm = item.status === "moving" && item.toKm > item.fromKm ? item.movingMs / (item.toKm - item.fromKm) : null;
     }
     const limitations = ["unverified-time-source"];
     if (missingPoints) limitations.push("missing-or-invalid-time");
@@ -1325,9 +1325,13 @@
   function timeOriginFor(file) {
     const binding = file && bindings.get(file);
     if (!binding || binding.raw !== file.raw || binding.id !== file.id || binding.weights !== file.timeWeights || binding.points !== file.points)
-      return unknown();
+      return referenceOrigin(file, unknown());
     const origin = { ...binding.origin, limitations: [...binding.origin.limitations] };
-    if (origin.assurance === "unconfirmed") return origin;
+    return referenceOrigin(file, origin);
+  }
+  function referenceOrigin(file, origin) {
+    if (!file) return origin;
+    if (origin.assurance === "unconfirmed" && origin.reason !== "unconfirmed-gpx-time") return origin;
     if (!forward(file)) return { ...origin, eligible: false, reason: "gpx-time-direction-mismatch" };
     if (!file.timeWeights) return { ...origin, eligible: false, reason: "missing-gpx-time" };
     if (file.timeWeights.source?.kind !== "track" || file.timeWeights.source.limitations?.some(
@@ -1343,10 +1347,10 @@
     }
     return { ...origin, eligible: true, reason: null };
   }
-  var timeOriginLabel = (origin) => origin.assurance === "ridgewise-local" ? "Ridgewise \u672C\u6A5F\u9304\u88FD\u53EF\u8FFD\u6EAF\uFF08\u975E\u7368\u7ACB\u9A57\u8B49\uFF09" : origin.assurance === "user-confirmed" ? "\u4F7F\u7528\u8005\u5DF2\u78BA\u8A8D\uFF0C\u4F86\u6E90\u672A\u9A57\u8B49" : "\u6642\u9593\u4F86\u6E90\u672A\u78BA\u8A8D";
+  var timeOriginLabel = (origin) => origin.assurance === "ridgewise-local" ? "Ridgewise \u672C\u6A5F\u9304\u88FD\u53EF\u8FFD\u6EAF\uFF08\u975E\u7368\u7ACB\u9A57\u8B49\uFF09" : origin.assurance === "user-confirmed" ? "\u4F7F\u7528\u8005\u5DF2\u78BA\u8A8D\uFF0C\u4F86\u6E90\u672A\u9A57\u8B49" : "GPX \u53C3\u8003\u6642\u9593\uFF08\u4F86\u6E90\u672A\u78BA\u8A8D\uFF0C\u53EF\u4FE1\u7A0B\u5EA6\u8F03\u4F4E\uFF09";
   function timeDistributionLabel(leg) {
     if (leg?.source?.baseline === "gpx-moving-time")
-      return leg.method === "unavailable" ? "GPX \u5BE6\u6E2C\u6642\u9593\u7F3A\u5931\u6216\u672A\u78BA\u8A8D\uFF0C\u4E0D\u88DC\u4F30" : "GPX \u5BE6\u6E2C\u79FB\u52D5\u6642\u9593 \xB7 " + timeOriginLabel(leg.source.timingOrigin);
+      return leg.method === "unavailable" ? "GPX \u6642\u9593\u8CC7\u6599\u4E0D\u8DB3\uFF0C\u4E0D\u88DC\u4F30" : "GPX \u53C3\u8003\u6642\u9593 \xB7 " + timeOriginLabel(leg.source.timingOrigin);
     if (!leg || leg.method === "unavailable") return "\u4E0D\u5206\u914D\uFF1A\u4E0A\u6CB3\u8DEF\u5F91\u6216 GPX \u9023\u7E8C\u6027\u672A\u78BA\u8A8D";
     if (leg.method === "gpx-moving-time")
       return "GPX \u79FB\u52D5\u6642\u9593\u6BD4\u4F8B \xB7 " + timeOriginLabel(leg.source.timingOrigin);
@@ -2616,7 +2620,7 @@
         (day) => `<div><strong>${esc(day.date)}</strong><span>\u65E5\u51FA ${day.sun ? hhmm(day.sun.sunrise) : "\u5F85\u88DC"}</span><span>\u65E5\u843D ${day.sun ? hhmm(day.sun.sunset) : "\u5F85\u88DC"}</span></div>`
       ).join("")}${profile.days.length > 3 ? `<details class="solar-extra" id="solar-extra"><summary>\u66F4\u591A\u65E5\u671F</summary>${profile.days.slice(3).map(
         (day) => `<div><strong>${esc(day.date)}</strong><span>\u65E5\u51FA ${day.sun ? hhmm(day.sun.sunrise) : "\u5F85\u88DC"}</span><span>\u65E5\u843D ${day.sun ? hhmm(day.sun.sunset) : "\u5F85\u88DC"}</span></div>`
-      ).join("")}</details>` : ""}</div>` : ""}<p class="daylight-method">${profile.mode === "recorded" ? "\u8ECC\u8DE1\u9EDE\u9593\u4F9D\u5BE6\u969B\u6642\u9593\u5167\u63D2\u3002" : data?.timeBasis === "gpx-moving-time" ? "\u6642\u9593\u57FA\u6E96\uFF1AGPX \u901F\u5EA6\u3002\u50C5\u5728\u76F8\u9130\u3001\u5B8C\u6574\u5408\u683C\u7684\u5BE6\u6E2C\u9EDE\u9593\u5167\u63D2\u79FB\u52D5\u6642\u9593\uFF0C\u7F3A\u5931\u8207\u4E2D\u65B7\u4FDD\u7559\u7070\u8272\u3002" : "\u7AD9\u9593\u6642\u523B\u6CBF\u5DF2\u6709 GPX \u7247\u6BB5\u6309\u8DDD\u96E2\u6BD4\u4F8B\u5167\u63D2\uFF0C\u4E2D\u65B7\u8655\u4E0D\u9023\u7DDA\u3002"}\u7E23\u5E02\u6642\u523B\u672A\u542B\u5C71\u5F62\u906E\u853D\u8207\u5929\u5019\u5F71\u97FF\u3002</p><a class="daylight-source" href="${profile.reference.sourcePage}" target="_blank" rel="noopener noreferrer">\u8CC7\u6599\u4F86\u6E90\uFF1A\u4EA4\u901A\u90E8\u4E2D\u592E\u6C23\u8C61\u7F72</a>`;
+      ).join("")}</details>` : ""}</div>` : ""}<p class="daylight-method">${profile.mode === "recorded" ? "\u8ECC\u8DE1\u9EDE\u9593\u4F9D\u5BE6\u969B\u6642\u9593\u5167\u63D2\u3002" : data?.timeBasis === "gpx-moving-time" ? "\u6642\u9593\u57FA\u6E96\uFF1AGPX \u53C3\u8003\u6642\u9593\u3002\u65E5\u591C\u4F9D\u53C3\u8003 ETA \u63A8\u7B97\uFF0C\u4FDD\u7559\u77ED\u66AB\u4F4E\u901F\u8207\u505C\u7559\u7684\u5BE6\u969B\u79D2\u6578\uFF1B\u771F\u6B63\u7F3A\u6642\u9593\u8207\u7121\u6CD5\u9023\u63A5\u7684\u5340\u9593\u4FDD\u7559\u7070\u8272\u3002" : "\u7AD9\u9593\u6642\u523B\u6CBF\u5DF2\u6709 GPX \u7247\u6BB5\u6309\u8DDD\u96E2\u6BD4\u4F8B\u5167\u63D2\uFF0C\u4E2D\u65B7\u8655\u4E0D\u9023\u7DDA\u3002"}\u7E23\u5E02\u6642\u523B\u672A\u542B\u5C71\u5F62\u906E\u853D\u8207\u5929\u5019\u5F71\u97FF\u3002</p><a class="daylight-source" href="${profile.reference.sourcePage}" target="_blank" rel="noopener noreferrer">\u8CC7\u6599\u4F86\u6E90\uFF1A\u4EA4\u901A\u90E8\u4E2D\u592E\u6C23\u8C61\u7F72</a>`;
     }
     function panel(file) {
       if (file !== displayedFile) {
@@ -4019,10 +4023,15 @@
   }
   function movingPieces(items, fromM, toM) {
     const result = [];
-    let cursor = fromM;
+    let cursor = fromM, pendingMs = 0;
     for (const item of items) {
       const left = item.fromKm * 1e3, right = item.toKm * 1e3;
       if (right === left && item.status === "stationary" && item.movingMs === 0) continue;
+      if (right === left && item.status === "moving" && !item.issues.length && item.movingMs > 0) {
+        if (result.length) result.at(-1).cost += item.movingMs;
+        else pendingMs += item.movingMs;
+        continue;
+      }
       const from = Math.max(fromM, left), to = Math.min(toM, right);
       if (to <= from) {
         if (right === left && item.status !== "stationary") return null;
@@ -4030,7 +4039,12 @@
       }
       if (Math.abs(cursor - from) > EPSILON_M || !Array.isArray(item.issues) || item.issues.length || !["moving", "stationary"].includes(item.status) || !Number.isFinite(item.movingMs) || !Number.isFinite(item.elapsedMs) || item.elapsedMs <= 0 || item.status === "moving" && (item.movingMs <= 0 || item.movingMs !== item.elapsedMs) || item.status === "stationary" && item.movingMs !== 0)
         return null;
-      result.push({ fromM: from, toM: to, cost: item.movingMs * (to - from) / (right - left) });
+      result.push({
+        fromM: from,
+        toM: to,
+        cost: pendingMs + item.movingMs * (to - from) / (right - left)
+      });
+      pendingMs = 0;
       cursor = to;
     }
     return result.length && Math.abs(cursor - toM) <= EPSILON_M && result.some((p) => p.cost > 0) ? result : null;
@@ -4130,8 +4144,10 @@
       let pieces = !rejectedTiming && movingPieces(intervals, fromM, toM);
       if (pieces) {
         leg.method = "gpx-moving-time";
+        leg.reference = source.timingOrigin.assurance === "unconfirmed" || intervals.some((item) => item.uncertainties?.length);
         source.limitations.push(...source.timingOrigin.limitations);
       } else {
+        leg.reference = true;
         source.limitations.push(rejectedTiming || "incomplete-gpx-moving-time");
         const heights = geometry2.every((piece) => Number.isFinite(piece.elevation));
         leg.method = heights ? "slope-weighted" : "distance-linear";
@@ -4159,7 +4175,8 @@
       version: SHANGHE_TIME_VERSION,
       originM: rows[0]?.routeProgressM ?? null,
       totalSeconds: legs.length ? cumulative : null,
-      legs
+      legs,
+      reference: legs.some((leg) => leg.reference)
     };
   }
   function shangheTimeAt(model, distanceM2, { segmentIndex } = {}) {
@@ -4202,7 +4219,7 @@
 
   // src/features/itinerary/gpx-time-model.js
   var GPX_TIME_BASIS = "gpx-moving-time";
-  var GPX_TIME_VERSION = 1;
+  var GPX_TIME_VERSION = 2;
   var EPS = 1e-6;
   var missing = (reason, source = null) => ({
     elapsedSeconds: null,
@@ -4251,7 +4268,7 @@
       let reason = rejection;
       if (!reason && (a.segment !== b.segment || as !== bs || bi !== ai + 1))
         reason = "gpx-segment-break";
-      if (!reason && (!item || item.issues?.length || !["moving", "stationary"].includes(item.status) || !Number.isFinite(item.elapsedMs) || item.elapsedMs <= 0 || !Number.isFinite(item.movingMs) || item.movingMs < 0 || item.status === "moving" && (item.movingMs !== item.elapsedMs || toM <= fromM) || item.status === "stationary" && item.movingMs !== 0))
+      if (!reason && (!item || item.issues?.length || !["moving", "stationary"].includes(item.status) || !Number.isFinite(item.elapsedMs) || item.elapsedMs <= 0 || !Number.isFinite(item.movingMs) || item.movingMs < 0 || item.status === "moving" && (item.movingMs !== item.elapsedMs || toM < fromM) || item.status === "stationary" && item.movingMs !== 0))
         reason = item?.status ?? "missing-gpx-time";
       const seconds = reason ? null : item.movingMs / 1e3;
       const pieces = reason || toM <= fromM ? [] : [{ fromM, toM, startSeconds: 0, endSeconds: seconds, seconds }];
@@ -4264,17 +4281,48 @@
         cumulativeStartSeconds: cumulative,
         method: reason ? "unavailable" : GPX_TIME_BASIS,
         reason,
+        reference: origin.assurance === "unconfirmed" || !!item?.uncertainties?.length,
         source,
         pieces
       });
       cumulative = cumulative !== null && seconds !== null ? cumulative + seconds : null;
+    }
+    for (let i = 0; i < legs.length; i++) {
+      const leg = legs[i];
+      if (leg.method === "unavailable" || leg.toM !== leg.fromM || !leg.baselineSeconds) continue;
+      let target = null;
+      for (const step of [-1, 1]) {
+        for (let j = i + step; j >= 0 && j < legs.length; j += step) {
+          const candidate = legs[j];
+          if (candidate.segmentIndex !== leg.segmentIndex || candidate.method === "unavailable")
+            break;
+          if (candidate.toM > candidate.fromM) {
+            target = candidate;
+            break;
+          }
+        }
+        if (target) break;
+      }
+      if (target) {
+        target.baselineSeconds += leg.baselineSeconds;
+        target.pieces[0].endSeconds = target.pieces[0].seconds = target.baselineSeconds;
+        target.reference = true;
+        leg.baselineSeconds = 0;
+      }
+    }
+    cumulative = 0;
+    for (const leg of legs) {
+      leg.cumulativeStartSeconds = cumulative;
+      cumulative = cumulative !== null && leg.baselineSeconds !== null ? cumulative + leg.baselineSeconds : null;
     }
     return {
       version: GPX_TIME_VERSION,
       timeBasis: GPX_TIME_BASIS,
       originM: 0,
       totalSeconds: legs.length ? cumulative : null,
-      legs
+      legs,
+      reference: legs.some((leg) => leg.reference),
+      knownSeconds: legs.reduce((sum, leg) => sum + (leg.baselineSeconds ?? 0), 0)
     };
   }
   function gpxTimeAt(model, distanceM2, { segmentIndex } = {}) {
@@ -4341,14 +4389,14 @@
     maxOffsetM: 50,
     mergeWithinM: 25,
     maxSpeedMps: 12,
-    maxObservationGapMs: 3e5,
+    maxObservationGapMs: 9e5,
     startDelayMs: 6e4,
     startToleranceM: 50,
     confirmedStartToleranceM: 75,
     confirmationAgeMs: 12e4,
     progressToleranceM: 25,
-    minBaselineSeconds: 60,
-    minProgressM: 25,
+    minBaselineSeconds: 30,
+    minProgressM: 10,
     maxLimitedAccuracyM: 80,
     routeErrorAllowanceM: 10,
     maxAdaptiveOffsetM: 80,
@@ -4388,6 +4436,12 @@
     let restorationCount = 0;
     let clock = startedAt, transientFailure = false, needsStability = false, stability = null, retained = {};
     const query = (position2) => routeTimeAt(timeModel, position2.routeProgressM, { segmentIndex: position2.segmentIndex });
+    const baselineBetween = (from, to) => timeModel.timeBasis === "gpx-moving-time" ? gpxTimeRange(
+      timeModel,
+      from.position.routeProgressM,
+      to.position.routeProgressM,
+      to.position.segmentIndex
+    ) : to.baseline.elapsedSeconds - from.baseline.elapsedSeconds;
     function reject(reason, transient = false) {
       failure2 = reason;
       current = null;
@@ -4473,7 +4527,7 @@
         origin,
         current,
         (current.fix.time - (confirmation ? startedAt : Math.max(startedAt, origin.fix.time))) / 1e3,
-        current.baseline.elapsedSeconds - origin.baseline.elapsedSeconds
+        baselineBetween(origin, current)
       );
       if (total.source) {
         total.source.departureTime = startedAt;
@@ -4508,7 +4562,7 @@
         endpoint,
         current,
         (current.fix.time - endpoint.fix.time) / 1e3,
-        current.baseline.elapsedSeconds - endpoint.baseline.elapsedSeconds
+        baselineBetween(endpoint, current)
       ) : missing2("window-start-missing");
       if (recent.source) {
         recent.source.requestedWindowMs = config2.windowMs;
@@ -4569,14 +4623,25 @@
         );
         if (!candidates.length) return reject("unreachable-route-position");
         if (distanceM(last.fix, fix) > reach) return reject("abnormal-gps-speed");
+        const forwardCandidates = candidates.filter(
+          (p) => p.routeProgressM >= peakM - Math.max(config2.progressToleranceM, Math.min(50, fix.accuracy + last.fix.accuracy))
+        );
+        if (origin && forwardCandidates.length) candidates = forwardCandidates;
       }
       if (wasFirst && candidates.length > 1 && Math.abs(fix.time - startedAt) <= config2.startAlignmentMs && now - startedAt <= config2.startAlignmentMs) {
         const starts = candidates.filter(
           (position3) => departureDistance({ fix, position: position3 }) <= Math.min(config2.startToleranceM, Math.max(5, fix.accuracy))
         );
-        if (starts.length === 1) candidates = starts;
+        if (starts.length && Math.max(...starts.map((p) => p.routeProgressM)) - Math.min(...starts.map((p) => p.routeProgressM)) <= config2.mergeWithinM)
+          candidates = [
+            starts.reduce(
+              (a, b) => departureDistance({ fix, position: a }) <= departureDistance({ fix, position: b }) ? a : b
+            )
+          ];
       }
-      if (candidates.length !== 1) return reject("ambiguous-route-position");
+      if (last && candidates.length > 1 && Math.max(...candidates.map((p) => p.routeProgressM)) - Math.min(...candidates.map((p) => p.routeProgressM)) <= config2.mergeWithinM)
+        candidates = [candidates.reduce((a, b) => a.offsetM <= b.offsetM ? a : b)];
+      if (candidates.length !== 1) return reject("ambiguous-route-position", true);
       const position2 = candidates[0], baseline = query(position2);
       const sample = {
         fix,
@@ -4585,7 +4650,7 @@
         observedAt: now,
         quality: limited ? "limited" : "normal"
       };
-      if (!Number.isFinite(baseline.elapsedSeconds))
+      if (!Number.isFinite(baseline.elapsedSeconds) && !(timeModel.timeBasis === "gpx-moving-time" && Number.isFinite(baseline.legSeconds)))
         return reject(baseline.reason ?? "unknown-shanghe-time");
       const tolerance = Math.max(
         config2.progressToleranceM,
@@ -4650,7 +4715,7 @@
     function departureDistance(sample) {
       return Math.max(
         Math.hypot(sample.position.routeProgressM - timeModel.originM, sample.position.offsetM),
-        Number.isFinite(startStation?.lat) && Number.isFinite(startStation?.lon) ? distanceM(sample.fix, startStation) : 0
+        timeModel.timeBasis !== "gpx-moving-time" && Number.isFinite(startStation?.lat) && Number.isFinite(startStation?.lon) ? distanceM(sample.fix, startStation) : 0
       );
     }
     function departureStatus(now = Date.now()) {
@@ -5095,7 +5160,7 @@
     };
   }
 
-  // ../../gpx-speed-work/app/node_modules/@capacitor/core/dist/index.js
+  // node_modules/@capacitor/core/dist/index.js
   var ExceptionCode;
   (function(ExceptionCode2) {
     ExceptionCode2["Unimplemented"] = "UNIMPLEMENTED";
@@ -6923,10 +6988,10 @@
   function createLiveFactorView({ state, itinerary, document: document2 }) {
     let recording, lastFixTime;
     const gpx = () => itinerary.snapshot?.()?.timeBasis === "gpx-moving-time";
-    const basis = () => gpx() ? "GPX \u901F\u5EA6" : "\u4E0A\u6CB3";
+    const basis = () => gpx() ? "GPX \u53C3\u8003\u6642\u9593" : "\u4E0A\u6CB3";
     const reasonText = (reason) => {
       const text = reasons[reason] ?? unavailable;
-      return gpx() ? text.replaceAll("\u4E0A\u6CB3", "GPX \u901F\u5EA6") : text;
+      return gpx() ? text.replaceAll("\u4E0A\u6CB3", "GPX \u53C3\u8003\u6642\u9593") : text;
     };
     function fields() {
       if (recording !== state.gps) {
@@ -6960,7 +7025,7 @@
       );
       values["live-factor-distribution"] = labels.length ? [...new Set(labels)].join("\uFF1B") : gpx() ? "\u5C1A\u7121\u53EF\u7528 GPX \u5BE6\u6E2C\u6642\u9593\uFF1B\u7B49\u5F85\u5408\u683C\u4F86\u6E90\u53CA\u6709\u6548\u5B9A\u4F4D\u3002" : "\u5C1A\u7121\u53EF\u7528\u5206\u914D\u8CC7\u6599\uFF1B\u7B49\u5F85\u6709\u6548\u5B9A\u4F4D\u8207\u5DF2\u77E5\u4E0A\u6CB3\u8DEF\u6BB5\u3002";
       values["live-factor-provenance"] = [
-        gpx() ? "\u6642\u9593\u57FA\u6E96\uFF1AGPX \u901F\u5EA6\u30021.0 \u500D\u70BA\u539F GPX \u5DF2\u78BA\u8A8D\u4E14\u5408\u683C\u7684\u5BE6\u6E2C\u79FB\u52D5\u6642\u9593\uFF0C\u6392\u9664\u5DF2\u78BA\u8A8D\u505C\u7559\uFF1B\u672C\u6B21\u8017\u6642\u5305\u542B\u4F11\u606F\u8207\u66AB\u505C\u3002\u4F86\u6E90\u8072\u660E\u672A\u7D93\u7368\u7ACB\u9A57\u8B49\uFF0C\u8207\u4E0A\u6CB3\u500D\u7387\u3001\u6B77\u53F2\u5206\u958B\u4FDD\u5B58\u3002" : "GPS \u8207 GPX \u6642\u9593\u4F86\u6E90\u5747\u672A\u7368\u7ACB\u9A57\u8B49\uFF1B\u5916\u90E8 GPX \u7684\u6642\u9593\u6A19\u8A18\u4E0D\u4EE3\u8868\u53EF\u4FE1\u3002\u4E0A\u6CB3\u6709\u5411\u6642\u9593\u662F\u57FA\u6E96\uFF0C\u5206\u914D\u65B9\u6CD5\u4E0D\u662F\u5BE6\u6E2C\u901F\u5EA6\u3002",
+        gpx() ? "\u6642\u9593\u57FA\u6E96\uFF1AGPX \u53C3\u8003\u6642\u9593\u30021.0 \u500D\u70BA\u539F GPX \u6709\u6548\u6642\u9593\uFF0C\u4FDD\u7559\u77ED\u66AB\u4F4E\u901F\u8207\u505C\u7559\uFF0C\u6263\u9664\u660E\u78BA\u9577\u505C\u7559\uFF1B\u672C\u6B21\u8017\u6642\u5305\u542B\u4F11\u606F\u8207\u66AB\u505C\u3002\u4F86\u6E90\u8072\u660E\u672A\u7D93\u7368\u7ACB\u9A57\u8B49\uFF0C\u8207\u4E0A\u6CB3\u500D\u7387\u3001\u6B77\u53F2\u5206\u958B\u4FDD\u5B58\u3002" : "GPS \u8207 GPX \u6642\u9593\u4F86\u6E90\u5747\u672A\u7368\u7ACB\u9A57\u8B49\uFF1B\u5916\u90E8 GPX \u7684\u6642\u9593\u6A19\u8A18\u4E0D\u4EE3\u8868\u53EF\u4FE1\u3002\u4E0A\u6CB3\u6709\u5411\u6642\u9593\u662F\u57FA\u6E96\uFF0C\u5206\u914D\u65B9\u6CD5\u4E0D\u662F\u5BE6\u6E2C\u901F\u5EA6\u3002",
         sources.some((source) => source.departureConfirmation) ? "\u51FA\u767C\u9328\u9EDE\u7531\u4F7F\u7528\u8005\u8072\u660E\u78BA\u8A8D\uFF0C\u7AD9\u9EDE\u5EA7\u6A19\u8AA4\u5DEE\u672A\u77E5\u3002" : "",
         sources.some((source) => !source.departureConfirmation && source.startTimeOffsetMs > 0) ? "\u500D\u7387\u5F9E\u9996\u500B\u6709\u6548\u5B9A\u4F4D\u8D77\u7B97\uFF0C\u672A\u5C07\u5B9A\u4F4D\u524D\u7A7A\u767D\u7576\u6210\u5DF2\u89C0\u6E2C\u8DEF\u7A0B\u3002" : "",
         sources.some((source) => source.restoration) ? "\u5DF2\u4EE5\u65B0\u5B9A\u4F4D\u6838\u5C0D\u91CD\u8F09\u524D\u4F4D\u7F6E\uFF1B\u95DC\u9589\u671F\u9593\u672A\u89C0\u6E2C\uFF0C\u4E26\u975E\u9023\u7E8C GPS \u7D00\u9304\u3002" : ""
@@ -7171,7 +7236,7 @@
     document: document2 = globalThis.document
   }) {
     const gpxBasis = () => itinerary.snapshot()?.timeBasis === "gpx-moving-time";
-    const basis = () => gpxBasis() ? "GPX \u901F\u5EA6" : "\u4E0A\u6CB3";
+    const basis = () => gpxBasis() ? "GPX \u53C3\u8003\u6642\u9593" : "\u4E0A\u6CB3";
     const liveFactors = createLiveFactorView({ state, itinerary, document: document2 });
     function departureNotice() {
       return itinerary.departureStatus?.().canConfirm ? `<p class="soft-notice">\u51FA\u767C\u4F4D\u7F6E\u8207\u9996\u500B\u5B9A\u4F4D\u524D\u7684\u8DEF\u7A0B\u5C1A\u5F85\u6838\u5C0D\u3002${button("\u6838\u5C0D\u51FA\u767C\u4F4D\u7F6E", "live-departure-show", "ghost")}</p>` : "";
@@ -7183,20 +7248,20 @@
     }
     function resourcesPanel() {
       const data = state.itinerary, locked = gpsPending2();
-      return `<section class="panel panel-body stack itinerary-resources"><span class="eyebrow">YOUR PACE</span><h2>\u8A2D\u5B9A\u500D\u7387</h2><p class="small muted">${gpxBasis() ? "\u6642\u9593\u57FA\u6E96\uFF1AGPX \u901F\u5EA6\u30021.0 \u500D\uFF1D\u539F GPX \u54C1\u8CEA\u5408\u683C\u7684\u5BE6\u969B\u79FB\u52D5\u6642\u9593\uFF1B\u7F3A\u5931\u5340\u6BB5\u4E0D\u88DC\u4F30\uFF0C\u53CD\u5411\u9700\u53E6\u6709\u5BE6\u6E2C\u3002" : "\u5F71\u97FF ETA\uFF1B\u4EE5\u4E0A\u6CB3 1.0 \u6709\u5411\u6642\u9593\u70BA\u57FA\u6E96\uFF0C\u4F9D GPX \u6BD4\u5C0D\u6709\u4F86\u6E90\u5EA7\u6A19\u7684\u7AD9\u9EDE\u3002"}</p><label for="itinerary-factor">${basis()}\u6642\u9593\u500D\u7387</label><input id="itinerary-factor" type="number" min="0.01" max="10" step="0.05" value="${gpxBasis() ? itinerary.snapshot()?.factor ?? 1 : data.factor}" ${locked ? "disabled" : ""}><p class="small muted">1.2 \u500D\uFF1D\u57FA\u6E96\u6642\u9593\u589E\u52A0 20%\uFF1B\u4E0D\u53E6\u5916\u52A0\u4F11\u606F\u6642\u9593\u3002</p>${locked ? '<p class="small muted">\u6B64\u8D9F\u4F7F\u7528\u51FA\u767C\u6642\u8A2D\u5B9A\u7684\u500D\u7387\u3002</p>' : ""}${data.error ? `<p class="error-message" role="status">${esc(data.error)}</p>` : ""}</section>`;
+      return `<section class="panel panel-body stack itinerary-resources"><span class="eyebrow">YOUR PACE</span><h2>\u8A2D\u5B9A\u500D\u7387</h2><p class="small muted">${gpxBasis() ? "\u6642\u9593\u57FA\u6E96\uFF1AGPX \u53C3\u8003\u6642\u9593\u30021.0 \u500D\uFF1D\u539F GPX \u6709\u6548\u6642\u9593\u6233\u7684\u7D93\u904E\u6642\u9593\uFF0C\u6263\u9664\u660E\u78BA\u9577\u505C\u7559\uFF1B\u77ED\u66AB\u4F4E\u901F\u53CA\u505C\u7559\u4FDD\u7559\uFF0C\u7F3A\u5931\u5340\u6BB5\u4E0D\u88DC\u79D2\u6578\uFF0C\u53CD\u5411\u9700\u53E6\u6709\u5BE6\u6E2C\u3002" : "\u5F71\u97FF ETA\uFF1B\u4EE5\u4E0A\u6CB3 1.0 \u6709\u5411\u6642\u9593\u70BA\u57FA\u6E96\uFF0C\u4F9D GPX \u6BD4\u5C0D\u6709\u4F86\u6E90\u5EA7\u6A19\u7684\u7AD9\u9EDE\u3002"}</p><label for="itinerary-factor">${basis()}\u6642\u9593\u500D\u7387</label><input id="itinerary-factor" type="number" min="0.01" max="10" step="0.05" value="${gpxBasis() ? itinerary.snapshot()?.factor ?? 1 : data.factor}" ${locked ? "disabled" : ""}><p class="small muted">1.2 \u500D\uFF1D\u57FA\u6E96\u6642\u9593\u589E\u52A0 20%\uFF1B\u4E0D\u53E6\u5916\u52A0\u4F11\u606F\u6642\u9593\u3002</p>${locked ? '<p class="small muted">\u6B64\u8D9F\u4F7F\u7528\u51FA\u767C\u6642\u8A2D\u5B9A\u7684\u500D\u7387\u3002</p>' : ""}${data.error ? `<p class="error-message" role="status">${esc(data.error)}</p>` : ""}</section>`;
     }
     function stationRow(row, data, number) {
       const passed = data.active && row.index < data.nextIndex;
       const unavailable2 = (data.active ? row.arrivalUtcMs : row.cumulativeSeconds) === null;
       const status = passed ? "\u5DF2\u901A\u904E" : data.active ? row.index === data.nextIndex ? "\u4E0B\u4E00\u7AD9 \xB7 \u672A\u5230\u9054" : "\u672A\u5230\u9054" : "\u5C1A\u672A\u51FA\u767C";
-      return `<li class="${passed ? "station-passed" : ""}"><div class="station-number">${number}</div><div><strong>${esc(row.station.name)}</strong><span class="small station-status">${status}${unavailable2 ? " \xB7 \u6642\u9593\u8CC7\u6599\u4E0D\u8DB3" : ""}</span><span class="small muted">${typeLabels[row.station.type] ?? "\u7AD9\u9EDE"} \xB7 ${row.gap ? "GPX \u5206\u6BB5\u9593\u8DDD\u96E2\u672A\u77E5" : "GPX \u7D2F\u8A08 " + (row.routeProgressM / 1e3).toFixed(2) + " km"}</span>${stationControls(row, stationEditor?.canEdit() === true)}${gpxBasis() && row.station.coordinateSource?.url ? `<a class="small muted" href="${esc(row.station.coordinateSource.url)}" target="_blank" rel="noopener noreferrer">\u5730\u6A19\u5EA7\u6A19\u4F86\u6E90</a>` : ""}${row.reason ? `<span class="small error-message">${esc(row.reason)}</span>` : ""}<details class="small muted station-timing" id="station-time-${row.index}"><summary>\u6642\u9593\u4F9D\u64DA${row.timeNodeNames?.length > 2 ? ` \xB7 \u542B ${row.timeNodeNames.length - 2} \u500B\u6642\u9593\u4E2D\u9593\u7BC0\u9EDE` : ""}</summary><p>${row.index === 0 ? gpxBasis() ? "GPX \u8D77\u59CB\u4F4D\u7F6E" : "\u4E0A\u6CB3\u8D77\u59CB\u7AD9" : `\u524D\u6BB5\u57FA\u6E96\uFF1A${duration3(row.baselineSeconds)}`}</p>${row.index && data.timeModel ? `<p data-time-distribution="${data.timeModel.legs[row.index - 1]?.method ?? "unavailable"}">\u7AD9\u9593\u5206\u914D\uFF1A${esc(timeDistributionLabel(data.timeModel.legs[row.index - 1]))}</p>` : ""}${row.timeNodeNames?.length > 2 ? `<p>${row.timeNodeNames.map(esc).join(" \u2192 ")}</p><p>\u4E2D\u9593\u7BC0\u9EDE\u672A\u5FC5\u5DF2\u6709\u5EA7\u6A19\uFF0C\u4ECD\u9700\u6838\u5C0D\u8207 GPX \u540C\u4E00\u8DEF\u5F91\u3002</p>` : ""}</details></div><div class="station-eta"><small>${data.active ? "\u9810\u4F30\u62B5\u9054" : "\u7D2F\u8A08\u8017\u6642"}</small><strong>${data.active ? arrival2(row.arrivalUtcMs) : duration3(row.cumulativeSeconds)}</strong></div></li>`;
+      return `<li class="${passed ? "station-passed" : ""}"><div class="station-number">${number}</div><div><strong>${esc(row.station.name)}</strong><span class="small station-status">${status}${unavailable2 ? " \xB7 \u6642\u9593\u8CC7\u6599\u4E0D\u8DB3" : ""}</span><span class="small muted">${typeLabels[row.station.type] ?? "\u7AD9\u9EDE"} \xB7 ${row.gap ? "GPX \u5206\u6BB5\u9593\u8DDD\u96E2\u672A\u77E5" : "GPX \u7D2F\u8A08 " + (row.routeProgressM / 1e3).toFixed(2) + " km"}</span>${stationControls(row, stationEditor?.canEdit() === true)}${gpxBasis() && row.station.coordinateSource?.url ? `<a class="small muted" href="${esc(row.station.coordinateSource.url)}" target="_blank" rel="noopener noreferrer">\u5730\u6A19\u5EA7\u6A19\u4F86\u6E90</a>` : ""}${row.reason ? `<span class="small error-message">${esc(row.reason)}</span>` : ""}<details class="small muted station-timing" id="station-time-${row.index}"><summary>\u6642\u9593\u4F9D\u64DA${row.timeNodeNames?.length > 2 ? ` \xB7 \u542B ${row.timeNodeNames.length - 2} \u500B\u6642\u9593\u4E2D\u9593\u7BC0\u9EDE` : ""}</summary><p>${row.index === 0 ? gpxBasis() ? "GPX \u8D77\u59CB\u4F4D\u7F6E" : "\u4E0A\u6CB3\u8D77\u59CB\u7AD9" : `\u524D\u6BB5\u57FA\u6E96\uFF1A${duration3(row.baselineSeconds)}`}</p>${row.index && data.timeModel ? `<p data-time-distribution="${data.timeModel.legs[row.index - 1]?.method ?? "unavailable"}">\u7AD9\u9593\u5206\u914D\uFF1A${esc(timeDistributionLabel(data.timeModel.legs[row.index - 1]))}</p>` : ""}${row.timeNodeNames?.length > 2 ? `<p>${row.timeNodeNames.map(esc).join(" \u2192 ")}</p><p>\u4E2D\u9593\u7BC0\u9EDE\u672A\u5FC5\u5DF2\u6709\u5EA7\u6A19\uFF0C\u4ECD\u9700\u6838\u5C0D\u8207 GPX \u540C\u4E00\u8DEF\u5F91\u3002</p>` : ""}</details></div><div class="station-eta"><small>${data.timeModel?.reference ? "\u53C3\u8003 ETA" : data.active ? "\u9810\u4F30\u62B5\u9054" : "\u7D2F\u8A08\u8017\u6642"}</small><strong>${data.active ? arrival2(row.arrivalUtcMs) : duration3(row.cumulativeSeconds)}</strong></div></li>`;
     }
     function stationsPanel() {
       const data = itinerary.snapshot();
       if (!data)
         return `<section class="panel panel-body stack"><h2>\u6CBF\u9014\u7AD9\u9EDE</h2><p class="small muted">\u5167\u5EFA\u8CC7\u6599\u5C1A\u672A\u627E\u5230\u9019\u689D GPX \u7684\u5C0D\u61C9\u7AD9\u9EDE\u3002</p></section>`;
       const rows = data.rows.filter((row) => row.visible);
-      return `<section class="panel panel-body stack itinerary-panel"><div><span class="eyebrow">YOUR STOPS</span><h2>\u6CBF\u9014\u7AD9\u9EDE\u8207 ETA</h2>${gpxBasis() ? '<p data-time-basis="gpx-moving-time">\u6642\u9593\u57FA\u6E96\uFF1AGPX \u901F\u5EA6</p>' : ""}<p class="small muted">${data.active ? "\u62B5\u9054\u5F8C\u6703\u91CD\u65B0\u63A8\u7B97\u5F8C\u7E8C\u6642\u9593\uFF1B\u5F80\u8FD4\u7AD9\u9EDE\u5206\u6B21\u986F\u793A\u3002" : "\u6309\u300C\u958B\u59CB\u767B\u5C71\u7D00\u9304\u300D\u5F8C\uFF0C\u4EE5\u5BE6\u969B\u51FA\u767C\u6642\u9593\u986F\u793A\u62B5\u9054\u6642\u523B\u3002"}</p></div>${!data.compatible ? '<p class="error-message">\u7AD9\u9EDE\u8CC7\u6599\u5DF2\u66F4\u65B0\uFF1B\u7D50\u675F\u76EE\u524D\u7D00\u9304\u5F8C\uFF0C\u91CD\u65B0\u958B\u59CB\u624D\u80FD\u5957\u7528\u65B0\u7684 ETA\u3002</p>' : ""}<div class="itinerary-summary"><span>\u5168\u7A0B\u9810\u4F30</span><strong>${duration3(data.totalSeconds)}</strong><small>\u8A2D\u5B9A\u500D\u7387 ${data.factor.toFixed(2)} \xB7 \u5F71\u97FF ETA</small></div>${!data.startCovered || !data.endCovered ? '<p class="soft-notice">GPX \u8D77\u9EDE\u6216\u7D42\u9EDE\u6C92\u6709\u5C0D\u61C9\u6642\u9593\u7AD9\u9EDE\uFF1B\u53EA\u986F\u793A\u6709\u57FA\u6E96\u7684\u7AD9\u9593\u6642\u9593\u3002</p>' : ""}${rows.length ? `<ol class="station-list">${rows.map((row, index) => stationRow(row, data, index + 1)).join("")}</ol>` : '<p class="small muted">\u76EE\u524D GPX \u9644\u8FD1\u672A\u627E\u5230\u9019\u516D\u985E\u7AD9\u9EDE\uFF0C\u8ACB\u88DC\u9F4A\u7AD9\u9EDE\u5EA7\u6A19\u3002</p>'}${timingIssuesPanel(data)}<p class="small muted">\u4F4D\u7F6E\u63A5\u8FD1\u4E0D\u4EE3\u8868\u5DF2\u9032\u5165\u5C71\u5C4B\uFF1B\u6C34\u6E90\u53EF\u7528\u6027\u8ACB\u53E6\u884C\u78BA\u8A8D\u3002</p><details id="station-source-details" class="small muted"><summary>\u7AD9\u9EDE\u4F86\u6E90\u8207 ETA \u8A08\u7B97\u9650\u5236</summary><p class="small muted">${gpxBasis() ? "\u4F9D\u4F86\u6E90\u5DF2\u78BA\u8A8D\u3001\u54C1\u8CEA\u5408\u683C\u4E14\u9023\u7E8C\u7684\u539F GPX \u5BE6\u6E2C\u79FB\u52D5\u6642\u9593\u8A08\u7B97\u3002\u8D77\u7D42\u9EDE\u53CA\u8CBC\u5408\u8DEF\u5F91\u7684 GPX \u822A\u9EDE\u4F5C\u70BA\u9032\u5EA6\uFF1B\u7F3A\u6642\u9593\u3001\u8DF3\u9EDE\u3001\u4E2D\u65B7\u53CA\u672A\u78BA\u8A8D\u5340\u9593\u4FDD\u7559\u7F3A\u5931\uFF0C\u4E0D\u4EE5\u8DDD\u96E2\u3001\u5761\u5EA6\u6216\u5E73\u5747\u901F\u5EA6\u88DC\u503C\u3002\u500D\u7387\u8207\u4E0A\u6CB3\u5206\u958B\u4FDD\u5B58\u3002" : "\u4F9D\u4E0A\u6CB3\u6709\u5411\u6642\u9593\u8A08\u7B97\uFF0C\u4E0D\u4EE5 GPX \u6B77\u53F2\u6642\u9593\u6216\u8DDD\u96E2\u88DC\u6642\u9593\u3002\u7F3A\u503C\u6216\u591A\u689D\u53EF\u80FD\u8DEF\u5F91\u6703\u4FDD\u7559\u5F85\u88DC\u3002"}</p><p class="small muted">${gpxBasis() ? "\u7AD9\u9EDE\u53D6\u81EA GPX \u822A\u9EDE\u3001\u96E2\u7DDA\u5730\u6A19\uFF08OpenStreetMap contributors\uFF0CODbL\uFF09\u8207\u4F7F\u7528\u8005\u53E6\u5B58\u4F4D\u7F6E\uFF1B\u4F4D\u7F6E\u63A5\u8FD1\u4E0D\u4EE3\u8868\u5FC5\u7D93\u6216\u5DF2\u5230\u7AD9\u3002\u5404\u96E2\u7DDA\u5730\u6A19\u4FDD\u7559\u4F86\u6E90\u9023\u7D50\uFF0C\u672A\u4F5C\u7368\u7ACB\u6E2C\u91CF\u9A57\u8B49\u3002" : "\u7AD9\u9EDE\u5EA7\u6A19\u53C3\u8003\uFF1A\u653F\u5E9C\u516C\u958B\u8CC7\u6599\u53CA "}${gpxBasis() ? "" : `<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors\uFF08ODbL\uFF09</a>\uFF0C\u4EE5\u53CA <a href="https://joyhike.com/path/31" target="_blank" rel="noopener noreferrer">Joyhike \u5730\u9EDE\u6BD4\u5C0D\u8CC7\u6599</a>\u3002\u6EAA\u6E90\u5EA7\u6A19\u7531\u4F7F\u7528\u8005\u65BC OSM \u67E5\u627E\u63D0\u4F9B\u3002`}</p></details></section>`;
+      return `<section class="panel panel-body stack itinerary-panel"><div><span class="eyebrow">YOUR STOPS</span><h2>\u6CBF\u9014\u7AD9\u9EDE\u8207 ETA</h2>${gpxBasis() ? '<p data-time-basis="gpx-moving-time">\u6642\u9593\u57FA\u6E96\uFF1AGPX \u53C3\u8003\u6642\u9593</p>' : ""}<p class="small muted">${data.active ? "\u62B5\u9054\u5F8C\u6703\u91CD\u65B0\u63A8\u7B97\u5F8C\u7E8C\u6642\u9593\uFF1B\u5F80\u8FD4\u7AD9\u9EDE\u5206\u6B21\u986F\u793A\u3002" : "\u6309\u300C\u958B\u59CB\u767B\u5C71\u7D00\u9304\u300D\u5F8C\uFF0C\u4EE5\u5BE6\u969B\u51FA\u767C\u6642\u9593\u986F\u793A\u62B5\u9054\u6642\u523B\u3002"}</p></div>${!data.compatible ? '<p class="error-message">\u7AD9\u9EDE\u8CC7\u6599\u5DF2\u66F4\u65B0\uFF1B\u7D50\u675F\u76EE\u524D\u7D00\u9304\u5F8C\uFF0C\u91CD\u65B0\u958B\u59CB\u624D\u80FD\u5957\u7528\u65B0\u7684 ETA\u3002</p>' : ""}<div class="itinerary-summary"><span>${data.timeModel?.reference ? "\u5168\u7A0B\u53C3\u8003 ETA" : "\u5168\u7A0B\u9810\u4F30 ETA\uFF08\u53EF\u4FE1\u7A0B\u5EA6\u8F03\u9AD8\uFF09"}</span><strong>${duration3(data.totalSeconds)}</strong><small>\u8A2D\u5B9A\u500D\u7387 ${data.factor.toFixed(2)} \xB7 \u5F71\u97FF ETA</small></div>${!data.startCovered || !data.endCovered ? '<p class="soft-notice">GPX \u8D77\u9EDE\u6216\u7D42\u9EDE\u6C92\u6709\u5C0D\u61C9\u6642\u9593\u7AD9\u9EDE\uFF1B\u53EA\u986F\u793A\u6709\u57FA\u6E96\u7684\u7AD9\u9593\u6642\u9593\u3002</p>' : ""}${rows.length ? `<ol class="station-list">${rows.map((row, index) => stationRow(row, data, index + 1)).join("")}</ol>` : '<p class="small muted">\u76EE\u524D GPX \u9644\u8FD1\u672A\u627E\u5230\u9019\u516D\u985E\u7AD9\u9EDE\uFF0C\u8ACB\u88DC\u9F4A\u7AD9\u9EDE\u5EA7\u6A19\u3002</p>'}${timingIssuesPanel(data)}<p class="small muted">\u4F4D\u7F6E\u63A5\u8FD1\u4E0D\u4EE3\u8868\u5DF2\u9032\u5165\u5C71\u5C4B\uFF1B\u6C34\u6E90\u53EF\u7528\u6027\u8ACB\u53E6\u884C\u78BA\u8A8D\u3002</p><details id="station-source-details" class="small muted"><summary>\u7AD9\u9EDE\u4F86\u6E90\u8207 ETA \u8A08\u7B97\u9650\u5236</summary><p class="small muted">${gpxBasis() ? "\u4F9D\u539F GPX \u6709\u6548\u905E\u589E\u6642\u9593\u6233\u8A08\u7B97\u53C3\u8003 ETA\uFF1B\u4F86\u6E90\u672A\u78BA\u8A8D\u8005\u53EF\u4FE1\u7A0B\u5EA6\u8F03\u4F4E\uFF0C\u4F86\u6E90\u53EF\u8FFD\u6EAF\u4E14\u54C1\u8CEA\u9023\u7E8C\u8005\u53EF\u4FE1\u7A0B\u5EA6\u8F03\u9AD8\u3002\u77ED\u66AB\u4F4E\u901F\u3001\u505C\u7559\u3001\u5FAE\u5C0F\u6F02\u79FB\u53CA\u6821\u6B63\u5F8C\u96F6\u8DDD\u96E2\u4FDD\u7559\u5BE6\u969B\u79D2\u6578\uFF1B\u660E\u78BA\u9577\u505C\u7559\u6263\u9664\u3002\u771F\u6B63\u7F3A\u6642\u9593\u3001\u5012\u9000\u3001\u56B4\u91CD\u8DF3\u9EDE\u6216\u7121\u6CD5\u9023\u63A5\u624D\u4FDD\u7559\u7F3A\u5931\uFF0C\u4E0D\u4EE5\u8DDD\u96E2\u6216\u5E73\u5747\u901F\u5EA6\u88DC\u79D2\u6578\u3002\u500D\u7387\u8207\u4E0A\u6CB3\u5206\u958B\u4FDD\u5B58\u3002" : "\u4F9D\u4E0A\u6CB3\u6709\u5411\u6642\u9593\u8A08\u7B97\uFF0C\u4E0D\u4EE5 GPX \u6B77\u53F2\u6642\u9593\u6216\u8DDD\u96E2\u88DC\u6642\u9593\u3002\u7F3A\u503C\u6216\u591A\u689D\u53EF\u80FD\u8DEF\u5F91\u6703\u4FDD\u7559\u5F85\u88DC\u3002"}</p><p class="small muted">${gpxBasis() ? "\u7AD9\u9EDE\u53D6\u81EA GPX \u822A\u9EDE\u3001\u96E2\u7DDA\u5730\u6A19\uFF08OpenStreetMap contributors\uFF0CODbL\uFF09\u8207\u4F7F\u7528\u8005\u53E6\u5B58\u4F4D\u7F6E\uFF1B\u4F4D\u7F6E\u63A5\u8FD1\u4E0D\u4EE3\u8868\u5FC5\u7D93\u6216\u5DF2\u5230\u7AD9\u3002\u5404\u96E2\u7DDA\u5730\u6A19\u4FDD\u7559\u4F86\u6E90\u9023\u7D50\uFF0C\u672A\u4F5C\u7368\u7ACB\u6E2C\u91CF\u9A57\u8B49\u3002" : "\u7AD9\u9EDE\u5EA7\u6A19\u53C3\u8003\uFF1A\u653F\u5E9C\u516C\u958B\u8CC7\u6599\u53CA "}${gpxBasis() ? "" : `<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors\uFF08ODbL\uFF09</a>\uFF0C\u4EE5\u53CA <a href="https://joyhike.com/path/31" target="_blank" rel="noopener noreferrer">Joyhike \u5730\u9EDE\u6BD4\u5C0D\u8CC7\u6599</a>\u3002\u6EAA\u6E90\u5EA7\u6A19\u7531\u4F7F\u7528\u8005\u65BC OSM \u67E5\u627E\u63D0\u4F9B\u3002`}</p></details></section>`;
     }
     const heightLabel = (value2) => value2 === null ? "\u2014" : `${meters(value2)} m`;
     const etaReasons = {
@@ -7216,7 +7281,7 @@
             [`itinerary-${key2}-arrival`, usable ? arrival2(metric3.arrivalUtcMs) : "\u2014"],
             [
               `itinerary-${key2}-remaining`,
-              usable ? `${metric3.factorBasis === "configured-fallback" ? "\u56DE\u9000\u8A2D\u5B9A\u500D\u7387 \xB7 " : ""}\u5269\u9918 ${duration3(metric3.remainingSeconds)}` : "\u4E0D\u53EF\u7528"
+              usable ? `${metric3.reference ? "\u53C3\u8003 ETA \xB7 " : ""}${metric3.factorBasis === "configured-fallback" ? "\u56DE\u9000\u8A2D\u5B9A\u500D\u7387 \xB7 " : ""}\u5269\u9918 ${duration3(metric3.remainingSeconds)}` : "\u4E0D\u53EF\u7528"
             ],
             [
               `itinerary-${key2}-eta-reason`,
@@ -7244,7 +7309,7 @@
       const data = itinerary.snapshot(), next = data?.next, file = recordingRoute2?.() ?? state.library.find((entry) => entry.id === state.gps.sourceRouteId), metrics = remainingRouteMetrics(file, data, state.gps), remaining = metrics.distanceM;
       const journeyMetrics = file?.rerouted ? remainingJourneyMetrics(file, data, state.gps) : null;
       const revisedSummary = file?.rerouted ? `<p id="reroute-remaining" class="small muted">\u6539\u9053\u5F8C\u81F3\u7D42\u9EDE\uFF1A${journeyMetrics?.distanceM != null ? (journeyMetrics.distanceM / 1e3).toFixed(2) + " km" : "\u8DDD\u96E2\u4E0D\u53EF\u7528"} \xB7 \u722C\u5347 ${heightLabel(journeyMetrics?.ascentM ?? null)} \uFF0F\u4E0B\u964D ${heightLabel(journeyMetrics?.descentM ?? null)}</p>` : "";
-      return `<section class="panel next-card itinerary-next"><span class="eyebrow">NEXT STOP</span><h2>${next ? esc(next.station.name) : data?.active ? "\u6CBF\u9014\u7AD9\u9EDE\u5DF2\u5B8C\u6210" : "\u4E0B\u4E00\u7AD9\u5F85\u63D0\u4F9B"}</h2><p class="small station-status">${data?.active ? next ? "\u672A\u5230\u9054" : "\u5DF2\u901A\u904E\u5168\u90E8\u7AD9\u9EDE" : "\u5C1A\u672A\u51FA\u767C"}</p><p class="small">${next ? typeLabels[next.station.type] ?? "\u6CBF\u9014\u7AD9\u9EDE" : "\u9078\u7528 GPX \u5F8C\u81EA\u52D5\u986F\u793A\u3002"}</p><div class="next-metrics"><div><strong id="itinerary-distance">${remaining !== null ? (remaining / 1e3).toFixed(2) + " km" : next ? (next.routeProgressM / 1e3).toFixed(2) + " km" : "\u2014"}</strong><small id="itinerary-distance-label">${remaining !== null ? "\u6CBF GPX \u5269\u9918\u8DDD\u96E2" : "GPX \u7D2F\u8A08\u4F4D\u7F6E"}</small></div><div><strong id="itinerary-next-arrival">${data?.active && next ? arrival2(next.arrivalUtcMs) : "\u958B\u59CB\u5F8C\u986F\u793A"}</strong><small>\u8A2D\u5B9A\u500D\u7387 ETA\uFF08\u53F0\u5317\u6642\u9593\uFF0C\u6BD4\u8F03\u57FA\u6E96\uFF09</small></div></div>${nextEtaPanel()}${revisedSummary}<div class="next-elevation" role="group" aria-label="\u5230\u4E0B\u4E00\u7AD9\u7684\u5269\u9918\u9AD8\u5EA6"><div><span>\u5269\u9918\u722C\u5347</span><strong id="itinerary-remaining-ascent" title="${esc(metrics.message)}">${heightLabel(metrics.ascentM)}</strong></div><div><span>\u5269\u9918\u4E0B\u964D</span><strong id="itinerary-remaining-descent" title="${esc(metrics.message)}">${heightLabel(metrics.descentM)}</strong></div></div><p id="itinerary-countdown" class="small"></p>${data?.offRoute ? '<p class="error-message">\u76EE\u524D\u4F4D\u7F6E\u504F\u96E2\u9810\u5B9A GPX\uFF0C\u8ACB\u78BA\u8A8D\u8DEF\u7DDA\u3002</p>' : ""}${data?.active && next && next.arrivalUtcMs === null ? '<p class="small error-message">\u8A2D\u5B9A\u500D\u7387 ETA \u5C1A\u7121\u6709\u6548\u6642\u9593\u8CC7\u6599\u3002</p>' : ""}${next?.reason ? `<p class="small error-message">${esc(next.reason)}</p>` : ""}<p id="itinerary-elevation-status" class="small muted">${esc(metrics.message)}</p><details class="next-details" id="next-details"><summary>\u5230\u7AD9\u78BA\u8A8D\u8207\u5BE6\u6E2C\u500D\u7387</summary>${data?.active && !data.finished && next ? button("\u5DF2\u62B5\u9054\uFF0C\u5207\u63DB\u4E0B\u4E00\u7AD9", "itinerary-arrived", "", "") : ""}<p class="small muted">\u5230\u7AD9\u5BE6\u6E2C\u500D\u7387\uFF1A<strong>${data?.observedFactor === null || !data?.observedFactor ? "\u5C1A\u5F85\u6709\u6548\u5230\u7AD9\u7D00\u9304" : data.observedFactor.toFixed(2) + " \u500D"}</strong></p><p class="small muted">\u5230\u7AD9\u5BE6\u6E2C\u500D\u7387\u4F7F\u7528\u5DF2\u78BA\u8A8D\u5230\u7AD9\u4E4B\u9593\u7684\u8017\u6642\uFF0C\u5305\u542B\u4F11\u606F\u8207\u66AB\u505C\uFF0C\u8207 GPS \u5373\u6642\u500D\u7387\u5206\u958B\u3002\u8A2D\u5B9A\u500D\u7387 ETA \u4FDD\u7559\u4F5C\u6BD4\u8F03\uFF1B\u5373\u6642\u500D\u7387\u4E0D\u6703\u8986\u5BEB\u8A2D\u5B9A\u3002</p></details></section>`;
+      return `<section class="panel next-card itinerary-next"><span class="eyebrow">NEXT STOP</span><h2>${next ? esc(next.station.name) : data?.active ? "\u6CBF\u9014\u7AD9\u9EDE\u5DF2\u5B8C\u6210" : "\u4E0B\u4E00\u7AD9\u5F85\u63D0\u4F9B"}</h2><p class="small station-status">${data?.active ? next ? "\u672A\u5230\u9054" : "\u5DF2\u901A\u904E\u5168\u90E8\u7AD9\u9EDE" : "\u5C1A\u672A\u51FA\u767C"}</p><p class="small">${next ? typeLabels[next.station.type] ?? "\u6CBF\u9014\u7AD9\u9EDE" : "\u9078\u7528 GPX \u5F8C\u81EA\u52D5\u986F\u793A\u3002"}</p><div class="next-metrics"><div><strong id="itinerary-distance">${remaining !== null ? (remaining / 1e3).toFixed(2) + " km" : next ? (next.routeProgressM / 1e3).toFixed(2) + " km" : "\u2014"}</strong><small id="itinerary-distance-label">${remaining !== null ? "\u6CBF GPX \u5269\u9918\u8DDD\u96E2" : "GPX \u7D2F\u8A08\u4F4D\u7F6E"}</small></div><div><strong id="itinerary-next-arrival">${data?.active && next ? arrival2(next.arrivalUtcMs) : "\u958B\u59CB\u5F8C\u986F\u793A"}</strong><small>${data?.timeModel?.reference ? "\u8A2D\u5B9A\u500D\u7387\u53C3\u8003 ETA" : "\u8A2D\u5B9A\u500D\u7387 ETA"}\uFF08\u53F0\u5317\u6642\u9593\uFF0C\u6BD4\u8F03\u57FA\u6E96\uFF09</small></div></div>${nextEtaPanel()}${revisedSummary}<div class="next-elevation" role="group" aria-label="\u5230\u4E0B\u4E00\u7AD9\u7684\u5269\u9918\u9AD8\u5EA6"><div><span>\u5269\u9918\u722C\u5347</span><strong id="itinerary-remaining-ascent" title="${esc(metrics.message)}">${heightLabel(metrics.ascentM)}</strong></div><div><span>\u5269\u9918\u4E0B\u964D</span><strong id="itinerary-remaining-descent" title="${esc(metrics.message)}">${heightLabel(metrics.descentM)}</strong></div></div><p id="itinerary-countdown" class="small"></p>${data?.offRoute ? '<p class="error-message">\u76EE\u524D\u4F4D\u7F6E\u504F\u96E2\u9810\u5B9A GPX\uFF0C\u8ACB\u78BA\u8A8D\u8DEF\u7DDA\u3002</p>' : ""}${data?.active && next && next.arrivalUtcMs === null ? '<p class="small error-message">\u8A2D\u5B9A\u500D\u7387 ETA \u5C1A\u7121\u6709\u6548\u6642\u9593\u8CC7\u6599\u3002</p>' : ""}${next?.reason ? `<p class="small error-message">${esc(next.reason)}</p>` : ""}<p id="itinerary-elevation-status" class="small muted">${esc(metrics.message)}</p><details class="next-details" id="next-details"><summary>\u5230\u7AD9\u78BA\u8A8D\u8207\u5BE6\u6E2C\u500D\u7387</summary>${data?.active && !data.finished && next ? button("\u5DF2\u62B5\u9054\uFF0C\u5207\u63DB\u4E0B\u4E00\u7AD9", "itinerary-arrived", "", "") : ""}<p class="small muted">\u5230\u7AD9\u5BE6\u6E2C\u500D\u7387\uFF1A<strong>${data?.observedFactor === null || !data?.observedFactor ? "\u5C1A\u5F85\u6709\u6548\u5230\u7AD9\u7D00\u9304" : data.observedFactor.toFixed(2) + " \u500D"}</strong></p><p class="small muted">\u5230\u7AD9\u5BE6\u6E2C\u500D\u7387\u4F7F\u7528\u5DF2\u78BA\u8A8D\u5230\u7AD9\u4E4B\u9593\u7684\u8017\u6642\uFF0C\u5305\u542B\u4F11\u606F\u8207\u66AB\u505C\uFF0C\u8207 GPS \u5373\u6642\u500D\u7387\u5206\u958B\u3002\u8A2D\u5B9A\u500D\u7387 ETA \u4FDD\u7559\u4F5C\u6BD4\u8F03\uFF1B\u5373\u6642\u500D\u7387\u4E0D\u6703\u8986\u5BEB\u8A2D\u5B9A\u3002</p></details></section>`;
     }
     function updateNumbers() {
       const smartConfirm = document2.getElementById("smart-reroute-confirm");
@@ -7308,7 +7373,7 @@
       updateNumbers,
       timeBasisLabel: basis,
       referenceDuration,
-      estimatedDuration: () => duration3(itinerary.snapshot()?.totalSeconds)
+      estimatedDuration: () => `${itinerary.snapshot()?.timeModel?.reference && Number.isFinite(itinerary.snapshot()?.totalSeconds) ? "\u53C3\u8003 ETA \xB7 " : ""}${duration3(itinerary.snapshot()?.totalSeconds)}`
     };
   }
 
@@ -7943,7 +8008,7 @@
     <h2>GPX \u6642\u9593\u4F86\u6E90</h2><p class="small" data-time-assurance="${origin.assurance}">${esc(timeOriginLabel(origin))}</p>
     <details id="gpx-time-source-details"><summary>\u6642\u9593\u54C1\u8CEA\u8207\u5206\u914D\u65B9\u5F0F</summary><div class="stack">
     <p class="small muted">${local ? `\u4F86\u6E90\uFF1A\u672C\u6A5F\u9304\u88FD\u7D00\u9304 ${esc(origin.recordingId)}\u3002\u53EF\u8FFD\u6EAF\u5230\u9304\u88FD\u65B9\u5F0F\u8207\u539F\u59CB\u5167\u5BB9\uFF0C\u4E0D\u4EE3\u8868\u885B\u661F\u5B9A\u4F4D\u6216\u88DD\u7F6E\u672A\u88AB\u6A21\u64EC\u3002` : "\u4F7F\u7528\u8005\u78BA\u8A8D\u53EA\u662F\u4F60\u7684\u8072\u660E\uFF0C\u4E0D\u7B49\u65BC\u4F86\u6E90\u5DF2\u9A57\u8B49\uFF1B\u672C\u7A0B\u5F0F\u4E0D\u9A57\u8B49\u5916\u90E8 GPX \u7684\u771F\u5BE6\u6027\u3002"}</p>
-    <p class="small muted">\u6642\u9593\u54C1\u8CEA\u53EF\u7528\u5340\u9593 ${good} / ${edges.length}\u3002${gpx ? "GPX \u901F\u5EA6\u6A21\u5F0F\u50C5\u4F7F\u7528\u5DF2\u78BA\u8A8D\u3001\u540C\u65B9\u5411\u4E14\u9023\u7E8C\u7684\u539F\u59CB\u5BE6\u6E2C\u79FB\u52D5\u6642\u9593\uFF1B\u7570\u5E38\u3001\u7F3A\u6F0F\u6216\u505C\u7559\u7121\u6CD5\u78BA\u8A8D\u6642\u4FDD\u7559\u7F3A\u5931\uFF0C\u4E0D\u7528\u5761\u5EA6\u3001\u8DDD\u96E2\u6216\u5E73\u5747\u901F\u5EA6\u88DC\u6642\u9593\u3002" : "\u53EA\u5728\u540C\u65B9\u5411\u3001\u5B8C\u6574\u4E14\u54C1\u8CEA\u901A\u904E\u7684\u7AD9\u9593\u4F7F\u7528\u79FB\u52D5\u6BD4\u4F8B\uFF1B\u7570\u5E38\u3001\u7F3A\u6F0F\u6642\u6539\u7528\u5761\u5EA6\u52A0\u6B0A\uFF0C\u7121\u5B8C\u6574\u9AD8\u5EA6\u5247\u7528\u8DDD\u96E2\u3002\u672A\u77E5\u4E0A\u6CB3\u8DEF\u6BB5\u8207 GPX \u4E2D\u65B7\u4E0D\u88DC\u6642\u9593\u3002"}</p></div></details>
+    <p class="small muted">\u6642\u9593\u54C1\u8CEA\u53EF\u7528\u5340\u9593 ${good} / ${edges.length}\u3002${gpx ? "GPX \u53C3\u8003\u6642\u9593\u9810\u8A2D\u4F7F\u7528\u539F\u5411\u6709\u6548\u6642\u9593\u6233\uFF1B\u77ED\u66AB\u4F4E\u901F\u3001\u505C\u7559\u53CA\u6821\u6B63\u5F8C\u96F6\u8DDD\u96E2\u4FDD\u7559\u5BE6\u969B\u79D2\u6578\uFF0C\u9023\u7E8C\u505C\u7559\u9054 5 \u5206\u9418\u624D\u6263\u9664\u3002\u7F3A\u6642\u9593\u3001\u5012\u9000\u3001\u56B4\u91CD\u8DF3\u9EDE\u53CA\u7121\u6CD5\u9023\u63A5\u5340\u9593\u4E0D\u88DC\u79D2\u6578\u3002" : "\u540C\u65B9\u5411\u6709\u6548\u6642\u9593\u53EF\u4F5C\u70BA\u4E0A\u6CB3\u7AD9\u9593\u7684\u6642\u9593\u5206\u914D\u6BD4\u4F8B\uFF1B\u7570\u5E38\u3001\u7F3A\u6F0F\u6642\u6539\u7528\u5761\u5EA6\u52A0\u6B0A\uFF0C\u7121\u5B8C\u6574\u9AD8\u5EA6\u5247\u7528\u8DDD\u96E2\u3002\u672A\u77E5\u4E0A\u6CB3\u8DEF\u6BB5\u8207 GPX \u4E2D\u65B7\u4E0D\u88DC\u6642\u9593\u3002"}</p></div></details>
     ${file.direction === "reverse" ? `<p class="soft-notice">${gpx ? "\u53CD\u5411\u7F3A\u5C11\u7368\u7ACB\u5BE6\u6E2C\u6642\u9593\uFF0CETA \u4E0D\u53EF\u7528\u3002\u8ACB\u53E6\u532F\u5165\u53CD\u5411\u5BE6\u969B\u9304\u88FD\u4E14\u54C1\u8CEA\u5408\u683C\u7684 GPX\uFF0C\u4F9D\u8A72\u6A94\u539F\u5411\u4F7F\u7528\u3002" : "\u4F86\u6E90\u8A2D\u5B9A\u53EA\u9069\u7528 GPX \u539F\u5411\u3002\u53CD\u5411\u4E0D\u501F\u7528\u6B63\u5411\u79FB\u52D5\u6BD4\u4F8B\uFF0C\u4ECD\u4F7F\u7528\u53CD\u5411\u5761\u5EA6\uFF0F\u8DDD\u96E2\u6A21\u578B\u3002"}</p>` : ""}
     ${origin.reason === "nonrecorded-gpx-time" ? `<p class="soft-notice">\u6B64\u6A94\u542B\u898F\u5283\u3001\u5408\u6210\u6216\u88DC\u5BEB\u6642\u9593\u6A19\u8A18\uFF0C\u78BA\u8A8D\u4E0D\u6703\u89E3\u9664\u9019\u9805\u9650\u5236\uFF1B${gpx ? "GPX \u901F\u5EA6\u6642\u9593\u7DAD\u6301\u4E0D\u53EF\u7528\u3002" : "\u4ECD\u4F7F\u7528\u5761\u5EA6\uFF0F\u8DDD\u96E2\u6A21\u578B\u3002"}</p>` : ""}
     ${origin.reason === "time-source-content-mismatch" ? '<p class="soft-notice">\u5167\u5BB9\u8207\u539F\u6709\u4F86\u6E90\u8A2D\u5B9A\u4E0D\u4E00\u81F4\uFF0C\u5DF2\u505C\u7528\u6642\u9593\u6BD4\u4F8B\uFF1B\u8ACB\u91CD\u65B0\u6838\u5C0D\u5F8C\u518D\u78BA\u8A8D\u3002</p>' : ""}
@@ -7956,9 +8021,9 @@
     ) : "" : `
       <label class="small"><input type="checkbox" id="gpx-actual-gps" ${disabled ? "disabled" : ""}> \u6211\u78BA\u8A8D\u9019\u4EFD GPX \u662F\u5BE6\u969B GPS \u8ECC\u8DE1\u7D00\u9304</label>
       <label class="small"><input type="checkbox" id="gpx-original-time" ${disabled ? "disabled" : ""}> \u6211\u78BA\u8A8D\u6642\u9593\u6233\u4E0D\u662F\u4EBA\u5DE5\u7522\u751F\u6216\u88DC\u5BEB</label>
-      ${button("\u78BA\u8A8D\u4E26\u4F7F\u7528\u6709\u6548\u6642\u9593\u6BD4\u4F8B", "time-source-confirm", "", "", `data-id="${esc(file.id)}" ${disabled ? "disabled" : ""}`)}`}
+      ${button("\u88DC\u5145\u78BA\u8A8D\u6642\u9593\u4F86\u6E90", "time-source-confirm", "", "", `data-id="${esc(file.id)}" ${disabled ? "disabled" : ""}`)}`}
     ${error ? `<p class="error-message" role="status">${esc(error)}</p>` : ""}
-    <p class="small muted">\u4E0D\u4FEE\u6539\u539F\u59CB GPX \u6216\u4E0A\u6CB3\u57FA\u6E96\uFF1B\u8A2D\u5B9A\u50C5\u4FDD\u5B58\u5728\u6B64\u88DD\u7F6E\uFF0C\u4E0B\u8F09\u5F8C\u91CD\u65B0\u532F\u5165\u7684\u6A94\u6848\u9700\u91CD\u65B0\u78BA\u8A8D\u3002${locked ? "\u9304\u88FD\u6216\u4FDD\u5B58\u8A2D\u5B9A\u671F\u9593\u4E0D\u80FD\u8B8A\u66F4\u4F86\u6E90\u3002" : ""}</p>
+    <p class="small muted">\u4E0D\u4FEE\u6539\u539F\u59CB GPX \u6216\u4E0A\u6CB3\u57FA\u6E96\uFF1B\u8A2D\u5B9A\u50C5\u4FDD\u5B58\u5728\u6B64\u88DD\u7F6E\uFF0C\u4E00\u822C\u542B\u6642\u9593\u6233\u7684 trkpt \u53EF\u76F4\u63A5\u4F7F\u7528\u53C3\u8003 ETA\uFF1B\u78BA\u8A8D\u53EF\u88DC\u5145\u4F86\u6E90\u53EF\u4FE1\u7A0B\u5EA6\u3002${locked ? "\u9304\u88FD\u6216\u4FDD\u5B58\u8A2D\u5B9A\u671F\u9593\u4E0D\u80FD\u8B8A\u66F4\u4F86\u6E90\u3002" : ""}</p>
     </section>`;
   }
 
@@ -7972,12 +8037,12 @@
       const file = current();
       if (!file) return emptyView();
       return `<div class="content-grid route-plan ${itineraryViews ? "itinerary-layout" : ""}"><section class="panel route-summary"><div class="route-heading"><span class="eyebrow">YOUR GPX \xB7 ${file.stats.points.toLocaleString()} POINTS</span><h2>${esc(file.name)}</h2><p>${esc(file.fileName)} \xB7 ${file.direction === "reverse" ? "\u53CD\u5411\u8D70\uFF08GPX \u7D42\u9EDE\u51FA\u767C\uFF09" : "\u539F\u5411\u8D70\uFF08GPX \u8D77\u9EDE\u51FA\u767C\uFF09"}</p></div>${routeStats(file)}${file.warnings.length ? `<div class="panel-body stack">${file.warnings.map((warning) => `<p class="soft-notice">${esc(warning)}</p>`).join("")}</div>` : ""}</section><div class="route-departure">${departurePanel(file)}</div><div class="main-column">${mapPanel(file)}${file.kind === "recording" ? "" : itineraryViews?.nextCard() ?? nextCard(file)}${itineraryViews?.stationsPanel() ?? ""}
-    ${timeSourcePanel(file, { locked: gpsPending2() || state?.starting || state?.timeSourceBusy, error: state?.timeSourceError, timeBasis: itineraryViews?.timeBasisLabel?.() === "GPX \u901F\u5EA6" ? "gpx-moving-time" : "shanghe" })}${correctionPanel(file)}<section class="panel panel-body"><details id="route-data-details"><summary>\u8CC7\u6599\u5B8C\u6574\u5EA6\u8207\u8A08\u7B97\u9650\u5236</summary><div class="stack"><div class="data-checks">
-      <div><strong>\u6642\u9593\u4F9D\u64DA</strong><span>${itineraryViews?.timeBasisLabel?.() === "GPX \u901F\u5EA6" ? "\u6642\u9593\u57FA\u6E96\uFF1AGPX \u901F\u5EA6\uFF1B\u50C5\u63A1\u5408\u683C\u3001\u5DF2\u78BA\u8A8D\u7684\u5BE6\u6E2C\u79FB\u52D5\u6642\u9593" : "\u4E0A\u6CB3 1.0 \u6709\u5411\u6642\u9593\uFF1B\u7F3A\u6F0F\u8207\u591A\u8DEF\u5F91\u539F\u56E0\u5217\u5728\u7AD9\u9EDE\u6E05\u55AE"}</span></div>
+    ${timeSourcePanel(file, { locked: gpsPending2() || state?.starting || state?.timeSourceBusy, error: state?.timeSourceError, timeBasis: itineraryViews?.timeBasisLabel?.() === "GPX \u53C3\u8003\u6642\u9593" ? "gpx-moving-time" : "shanghe" })}${correctionPanel(file)}<section class="panel panel-body"><details id="route-data-details"><summary>\u8CC7\u6599\u5B8C\u6574\u5EA6\u8207\u8A08\u7B97\u9650\u5236</summary><div class="stack"><div class="data-checks">
+      <div><strong>\u6642\u9593\u4F9D\u64DA</strong><span>${itineraryViews?.timeBasisLabel?.() === "GPX \u53C3\u8003\u6642\u9593" ? "\u6642\u9593\u57FA\u6E96\uFF1AGPX \u53C3\u8003\u6642\u9593\uFF1B\u6709\u6548\u905E\u589E\u6642\u9593\u6233\u9810\u8A2D\u53EF\u4F5C\u70BA\u53C3\u8003\uFF0C\u660E\u78BA\u5408\u6210\u6642\u9593\u6392\u9664" : "\u4E0A\u6CB3 1.0 \u6709\u5411\u6642\u9593\uFF1B\u7F3A\u6F0F\u8207\u591A\u8DEF\u5F91\u539F\u56E0\u5217\u5728\u7AD9\u9EDE\u6E05\u55AE"}</span></div>
       <div><strong>\u6D77\u62D4\u8CC7\u6599</strong><span>${file.stats.withElevation.toLocaleString()} / ${file.stats.points.toLocaleString()} \u9EDE</span></div>
       <div><strong>\u8ECC\u8DE1\u5206\u6BB5</strong><span>${file.segments.length} \u6BB5 \xB7 \u4E2D\u65B7\u8655\u4E0D\u9023\u7DDA</span></div>
-    </div><p class="small muted">${itineraryViews?.timeBasisLabel?.() === "GPX \u901F\u5EA6" ? "GPX \u5BE6\u6E2C\u79FB\u52D5\u6642\u9593" : "\u4E0A\u6CB3 1.0 \u6642\u9593"}\uFF1A${itineraryViews?.referenceDuration() ?? "\u5C1A\u672A\u63D0\u4F9B"}\uFF1B\u5168\u7A0B\u9810\u4F30\u6642\u9593\u4F9D\u8A2D\u5B9A\u500D\u7387\uFF0C\u4E0D\u542B\u984D\u5916\u4F11\u606F\u3002</p>
-    <p class="small muted">${file.processing ? "\u8DEF\u7DDA\u8DDD\u96E2\u8207\u6D77\u62D4\u5DF2\u6821\u6B63 GPS \u6296\u52D5\uFF0C\u722C\u5347\uFF0F\u4E0B\u964D\u8207\u9AD8\u5EA6\u5256\u9762\u4F7F\u7528\u76F8\u540C\u8CC7\u6599\uFF1B\u539F\u59CB GPX \u4FDD\u6301\u4E0D\u8B8A\u3002" : "\u9AD8\u5EA6\u76F4\u63A5\u53D6\u81EA GPX\uFF0C\u722C\u5347\u8207\u4E0B\u964D\u70BA\u76F8\u9130\u9EDE\u52A0\u7E3D\uFF0C\u672A\u7D93\u53BB\u566A\u3002"}${itineraryViews?.timeBasisLabel?.() === "GPX \u901F\u5EA6" ? "GPX \u8D77\u7D42\u9EDE\u8207\u822A\u9EDE\u63D0\u4F9B\u9032\u5EA6\uFF1B\u5BE6\u6E2C\u6642\u9593\u7F3A\u5931\u3001\u4F86\u6E90\u672A\u78BA\u8A8D\u6216\u54C1\u8CEA\u4E0D\u8DB3\u6642\u4FDD\u7559\u5F85\u88DC\u3002" : "\u7AD9\u9EDE\u8207\u4E0A\u6CB3\u6642\u9593\u5DF2\u5167\u5EFA\uFF1B\u6709\u57FA\u6E96\u7684\u76F8\u9130\u8DEF\u6BB5\u6703\u986F\u793A ETA\uFF0C\u7121\u6CD5\u78BA\u8A8D\u7684\u8DEF\u6BB5\u4FDD\u7559\u5F85\u88DC\u3002"}\u65E5\u591C\u5857\u8272\u4F9D\u53C3\u8003\u7E23\u5E02\u5B98\u65B9\u65E5\u51FA\uFF0F\u65E5\u843D\u8207\u8DEF\u6BB5 ETA \u986F\u793A\uFF1B\u8CC7\u6599\u4E0D\u8DB3\u4FDD\u7559\u7070\u8272\u3002</p></div></details></section></div>
+    </div><p class="small muted">${itineraryViews?.timeBasisLabel?.() === "GPX \u53C3\u8003\u6642\u9593" ? "GPX \u53C3\u8003\u6642\u9593" : "\u4E0A\u6CB3 1.0 \u6642\u9593"}\uFF1A${itineraryViews?.referenceDuration() ?? "\u5C1A\u672A\u63D0\u4F9B"}\uFF1B\u5168\u7A0B\u9810\u4F30\u6642\u9593\u4F9D\u8A2D\u5B9A\u500D\u7387\uFF0C\u4E0D\u542B\u984D\u5916\u4F11\u606F\u3002</p>
+    <p class="small muted">${file.processing ? "\u8DEF\u7DDA\u8DDD\u96E2\u8207\u6D77\u62D4\u5DF2\u6821\u6B63 GPS \u6296\u52D5\uFF0C\u722C\u5347\uFF0F\u4E0B\u964D\u8207\u9AD8\u5EA6\u5256\u9762\u4F7F\u7528\u76F8\u540C\u8CC7\u6599\uFF1B\u539F\u59CB GPX \u4FDD\u6301\u4E0D\u8B8A\u3002" : "\u9AD8\u5EA6\u76F4\u63A5\u53D6\u81EA GPX\uFF0C\u722C\u5347\u8207\u4E0B\u964D\u70BA\u76F8\u9130\u9EDE\u52A0\u7E3D\uFF0C\u672A\u7D93\u53BB\u566A\u3002"}${itineraryViews?.timeBasisLabel?.() === "GPX \u53C3\u8003\u6642\u9593" ? "GPX \u8D77\u7D42\u9EDE\u8207\u822A\u9EDE\u63D0\u4F9B\u9032\u5EA6\uFF1B\u77ED\u66AB\u4F4E\u901F\u6216\u505C\u7559\u4FDD\u7559\u5BE6\u969B\u79D2\u6578\uFF0C\u771F\u6B63\u7F3A\u6642\u9593\u6216\u7121\u6CD5\u9023\u63A5\u624D\u4FDD\u7559\u5F85\u88DC\u3002" : "\u7AD9\u9EDE\u8207\u4E0A\u6CB3\u6642\u9593\u5DF2\u5167\u5EFA\uFF1B\u6709\u57FA\u6E96\u7684\u76F8\u9130\u8DEF\u6BB5\u6703\u986F\u793A ETA\uFF0C\u7121\u6CD5\u78BA\u8A8D\u7684\u8DEF\u6BB5\u4FDD\u7559\u5F85\u88DC\u3002"}\u65E5\u591C\u5857\u8272\u4F9D\u53C3\u8003\u7E23\u5E02\u5B98\u65B9\u65E5\u51FA\uFF0F\u65E5\u843D\u8207\u8DEF\u6BB5 ETA \u986F\u793A\uFF1B\u8CC7\u6599\u4E0D\u8DB3\u4FDD\u7559\u7070\u8272\u3002</p></div></details></section></div>
     <aside class="side-column">${button("\u66F4\u63DB\u8DEF\u7DDA", "choose-route", "", "compass", gpsPending2() ? "disabled" : "")}</aside></div>`;
     }
     function departurePanel(file) {
@@ -9114,7 +9179,7 @@
       const sourceLegs = gpxLegsInRange(model, fromM, toM).filter(
         (l) => l.toM > fromM && l.fromM < toM
       );
-      const reason = seconds === null ? "GPX \u5BE6\u6E2C\u6642\u9593\u7F3A\u5931\u3001\u672A\u78BA\u8A8D\u6216\u4E2D\u65B7\uFF1B\u4E0D\u88DC\u4F30\u6642\u9593\u3002" : null;
+      const reason = seconds === null ? "GPX \u6642\u9593\u7F3A\u5931\u3001\u7570\u5E38\u6216\u7121\u6CD5\u9023\u63A5\uFF1B\u4FDD\u7559\u5176\u4ED6\u6709\u6548\u5340\u6BB5\uFF0C\u4E0D\u88DC\u4F30\u79D2\u6578\u3002" : null;
       row.baselineSeconds = seconds;
       row.reason = reason;
       row.gap = previous.segmentIndex !== row.segmentIndex;
@@ -9148,6 +9213,7 @@
         cumulativeStartSeconds: cumulative,
         method: seconds === null ? "unavailable" : GPX_TIME_BASIS,
         reason,
+        reference: sourceLegs.some((leg) => leg.reference),
         source: {
           baseline: GPX_TIME_BASIS,
           direction: file.direction ?? "forward",
@@ -9302,10 +9368,10 @@
       if (Math.abs(cursor - toM) > 1e-6) return missing3("eta-unknown-remaining");
       const options = { segmentIndex: position2.segmentIndex };
       const from = routeTimeAt(model, fromM, options), to = routeTimeAt(model, toM, options);
-      if (![from.elapsedSeconds, to.elapsedSeconds].every(Number.isFinite))
+      if (model.timeBasis !== "gpx-moving-time" && ![from.elapsedSeconds, to.elapsedSeconds].every(Number.isFinite))
         return missing3(from.reason ?? to.reason ?? "eta-unknown-remaining");
-      const baselineSeconds = to.elapsedSeconds - from.elapsedSeconds, remainingSeconds = baselineSeconds * metric3.factor, arrivalUtcMs = now + remainingSeconds * 1e3;
-      if (baselineSeconds < 0 || !Number.isFinite(remainingSeconds) || !Number.isFinite(arrivalUtcMs) || Math.abs(arrivalUtcMs) > 864e13)
+      const baselineSeconds = model.timeBasis === "gpx-moving-time" ? gpxTimeRange(model, fromM, toM, position2.segmentIndex) : to.elapsedSeconds - from.elapsedSeconds, remainingSeconds = baselineSeconds * metric3.factor, arrivalUtcMs = now + remainingSeconds * 1e3;
+      if (!Number.isFinite(baselineSeconds) || baselineSeconds < 0 || !Number.isFinite(remainingSeconds) || !Number.isFinite(arrivalUtcMs) || Math.abs(arrivalUtcMs) > 864e13)
         return missing3("eta-unknown-remaining");
       return {
         factor: metric3.factor,
@@ -9313,6 +9379,7 @@
         remainingSeconds,
         arrivalUtcMs,
         reason: null,
+        reference: !!model.reference || metric3.quality === "limited",
         source: {
           direction,
           segmentIndex: position2.segmentIndex,
