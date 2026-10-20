@@ -36,7 +36,7 @@
     };
   }
   function elevationPrefixes(points) {
-    const up = [], down = [], missing2 = [];
+    const up = [], down = [], missing3 = [];
     points.forEach((point, i) => {
       const previous = points[i - 1];
       const edge = previous && previous.segment === point.segment;
@@ -44,9 +44,9 @@
       const delta = valid2 ? point.elevation - previous.elevation : 0;
       up.push((up[i - 1] ?? 0) + Math.max(0, delta));
       down.push((down[i - 1] ?? 0) + Math.max(0, -delta));
-      missing2.push((missing2[i - 1] ?? 0) + (edge && !valid2 ? 1 : 0));
+      missing3.push((missing3[i - 1] ?? 0) + (edge && !valid2 ? 1 : 0));
     });
-    return { up, down, missing: missing2 };
+    return { up, down, missing: missing3 };
   }
   function indexTrack(segments) {
     const points = [];
@@ -58,12 +58,12 @@
         points.push({ ...point, segment: segmentIndex, sourceIndex, km });
       });
     });
-    const { up, down, missing: missing2 } = elevationPrefixes(points);
+    const { up, down, missing: missing3 } = elevationPrefixes(points);
     return points.map((point, i) => ({
       ...point,
       up: up[i],
       down: down[i],
-      elevationGapCount: missing2[i]
+      elevationGapCount: missing3[i]
     }));
   }
 
@@ -2943,6 +2943,13 @@
       const isCurrent = () => generation === gpsGeneration && getRecording() === gps;
       const fail = (error) => {
         if (!isCurrent()) return;
+        if (["timeout", "position-unavailable"].includes(error?.code)) {
+          gps.status = "requesting";
+          gps.error = "\u5B9A\u4F4D\u8A0A\u865F\u66AB\u6642\u4E2D\u65B7\uFF0C\u6B63\u5728\u7B49\u5F85\u4E0B\u4E00\u500B\u6709\u6548\u5B9A\u4F4D\u3002";
+          onInterruption("gps-signal-unavailable");
+          onChange();
+          return;
+        }
         stop();
         gps.status = "error";
         gps.pauseAt = Date.now();
@@ -2962,8 +2969,10 @@
         const subscription = locationProvider.watch((fix) => {
           if (!isCurrent()) return;
           const point = normalizeLocationFix(fix);
-          if (!point || point.time < Math.max(requestedAt - 5e3, Date.now() - 6e4) || point.time > Date.now() + 6e4 || point.time <= latestTimestamp) {
-            onInterruption("rejected-gps-fix");
+          if (!point || point.time < Math.max(requestedAt - 5e3, Date.now() - 6e4) || point.time > Date.now() + 5e3 || point.time <= latestTimestamp) {
+            onInterruption(
+              point && (point.time < Math.max(requestedAt - 5e3, Date.now() - 6e4) || point.time > Date.now() + 5e3) ? "gps-time-quality-exclusion" : "rejected-gps-fix"
+            );
             return;
           }
           latestTimestamp = point.time;
@@ -2982,7 +2991,14 @@
           const reliable = positionReliable(point) && !latest?.excluded;
           gps.status = reliable ? "tracking" : "requesting";
           gps.error = !positionReliable(point) ? "\u76EE\u524D\u5B9A\u4F4D\u7CBE\u5EA6\u4E0D\u8DB3\uFF0C\u539F\u59CB\u4F4D\u7F6E\u5DF2\u4FDD\u7559\uFF0C\u8A72\u6BB5\u66AB\u4E0D\u8A08\u5165\u8DDD\u96E2\u3002" : latest?.excluded ? "\u4F4D\u7F6E\u8DF3\u52D5\u5F85\u78BA\u8A8D\uFF0C\u539F\u59CB\u4F4D\u7F6E\u5DF2\u4FDD\u7559\uFF0C\u66AB\u4E0D\u8A08\u5165\u8DDD\u96E2\u3002" : !elevationReliable(point) ? "\u6D77\u62D4\u7CBE\u5EA6\u4E0D\u8DB3\uFF0C\u539F\u59CB\u9AD8\u5EA6\u5DF2\u4FDD\u7559\uFF0C\u722C\u5347\u8CC7\u6599\u66AB\u4E0D\u5B8C\u6574\u3002" : "";
-          onFix({ ...point, excluded: !reliable }, Date.now());
+          onFix(
+            {
+              ...point,
+              excluded: !reliable,
+              qualityReason: !positionReliable(point) ? "horizontal-accuracy" : !reliable ? "position-jump" : null
+            },
+            Date.now()
+          );
           onChange();
         }, fail);
         const attach = (cancel) => {
@@ -3071,7 +3087,7 @@
     });
     return { match: (stations, options) => matchTrackEdges(stations, edges, progress, options) };
   }
-  function matchTrackEdges(stations, edges, progress, { maxOffsetM = 100, mergeWithinM = 25 } = {}) {
+  function matchTrackEdges(stations, edges, progress, { maxOffsetM = 100, mergeWithinM = 25, preserveReversals = false } = {}) {
     if (!Number.isFinite(maxOffsetM) || maxOffsetM <= 0 || !Number.isFinite(mergeWithinM) || mergeWithinM < 0) throw new Error("Invalid matching distances");
     const matches = [];
     for (const station of usableStations(stations)) {
@@ -3088,10 +3104,12 @@
         if (offsetM > maxOffsetM) continue;
         const position2 = { segmentIndex, routeProgressM: startM + length * fraction, offsetM };
         const group = groups.at(-1), last = group?.at(-1);
-        if (last && last.segmentIndex === segmentIndex && position2.routeProgressM - last.routeProgressM <= mergeWithinM) group.push(position2);
-        else groups.push([position2]);
+        const reversal = preserveReversals && last && position2.routeProgressM - last.position.routeProgressM > 1e-6 && bx * last.dx + by * last.dy < 0;
+        const candidate = { position: position2, dx: length2 ? bx : last?.dx ?? 0, dy: length2 ? by : last?.dy ?? 0 };
+        if (last && !reversal && last.position.segmentIndex === segmentIndex && position2.routeProgressM - last.position.routeProgressM <= mergeWithinM) group.push(candidate);
+        else groups.push([candidate]);
       }
-      const routePositions = groups.map((group) => group.reduce((a, b) => a.offsetM <= b.offsetM ? a : b));
+      const routePositions = groups.map((group) => group.reduce((a, b) => a.position.offsetM <= b.position.offsetM ? a : b).position);
       if (!routePositions.length) continue;
       matches.push({
         station,
@@ -3172,9 +3190,47 @@
     return found.matches[0]?.nearestTrackDistanceM ?? Infinity;
   }
 
+  // src/domain/slope-time.js
+  var SLOPE_TIME_MODEL = "tobler-relative-v1";
+  var SHANGHE_SLOPE_DEFAULTS = Object.freeze({
+    uphillRate: 3.5,
+    downhillRate: 3.5,
+    downhillOptimumGrade: 0.05,
+    maxAbsGrade: 1
+  });
+  function slopeParameters(options = {}) {
+    const config2 = { ...SHANGHE_SLOPE_DEFAULTS, ...options };
+    for (const [name, value2] of Object.entries(config2)) {
+      if (!Object.hasOwn(SHANGHE_SLOPE_DEFAULTS, name))
+        throw new TypeError("Unknown slope option: " + name);
+      if (!Number.isFinite(value2) || value2 < 0)
+        throw new RangeError(name + " must be finite and non-negative");
+    }
+    if (config2.maxAbsGrade <= 0 || config2.maxAbsGrade > 2)
+      throw new RangeError("maxAbsGrade must be in (0, 2]");
+    if (config2.downhillOptimumGrade > Math.min(0.25, config2.maxAbsGrade))
+      throw new RangeError("downhillOptimumGrade must not exceed 0.25 or maxAbsGrade");
+    if (Math.max(config2.uphillRate, config2.downhillRate) * config2.maxAbsGrade > 20)
+      throw new RangeError("slope rate times maxAbsGrade must not exceed 20");
+    return config2;
+  }
+  function slopeTimePieces(geometry, config2) {
+    return geometry.map((piece) => {
+      const distanceM2 = piece.toM - piece.fromM;
+      const grade = piece.elevation / distanceM2;
+      const effectiveGrade = Math.max(-config2.maxAbsGrade, Math.min(config2.maxAbsGrade, grade));
+      const logFactor = effectiveGrade >= 0 ? config2.uphillRate * effectiveGrade : config2.downhillRate * (Math.abs(effectiveGrade + config2.downhillOptimumGrade) - config2.downhillOptimumGrade);
+      return {
+        ...piece,
+        grade,
+        effectiveGrade,
+        cost: distanceM2 * Math.exp(logFactor)
+      };
+    });
+  }
+
   // src/features/itinerary/time-interpolation.js
-  var SHANGHE_TIME_VERSION = 1;
-  var SHANGHE_SLOPE_DEFAULTS = Object.freeze({ ascentFactor: 10, descentFactor: 2 });
+  var SHANGHE_TIME_VERSION = 2;
   var EPSILON_M = 1e-6;
   var metres = (point) => point.km * 1e3;
   var directionOf = (file) => file.direction === "reverse" ? "reverse" : "forward";
@@ -3277,17 +3333,13 @@
         startSeconds,
         endSeconds,
         seconds: endSeconds - startSeconds,
-        weight: piece.cost / total
+        weight: piece.cost / total,
+        ...Number.isFinite(piece.grade) ? { grade: piece.grade, effectiveGrade: piece.effectiveGrade } : {}
       };
     });
   }
   function buildShangheTimeModel(file, rows, slopeOptions = {}) {
-    const slope = { ...SHANGHE_SLOPE_DEFAULTS, ...slopeOptions };
-    for (const [name, value2] of Object.entries(slope)) {
-      if (!Object.hasOwn(SHANGHE_SLOPE_DEFAULTS, name))
-        throw new TypeError("Unknown slope option: " + name);
-      if (!Number.isFinite(value2) || value2 < 0) throw new RangeError(name + " must be non-negative");
-    }
+    const slope = slopeParameters(slopeOptions);
     const groups = /* @__PURE__ */ new Map();
     let validGeometry = true;
     let previousKm = 0;
@@ -3367,11 +3419,19 @@
         const heights = geometry.every((piece) => Number.isFinite(piece.elevation));
         leg.method = heights ? "slope-weighted" : "distance-linear";
         if (!heights) source.limitations.push("missing-elevation");
-        if (heights) source.slopeFactors = { ...slope };
-        pieces = geometry.map((piece) => ({
-          ...piece,
-          cost: piece.toM - piece.fromM + (heights ? slope.ascentFactor * Math.max(0, piece.elevation) + slope.descentFactor * Math.max(0, -piece.elevation) : 0)
-        }));
+        if (heights) {
+          source.slopeModel = {
+            id: SLOPE_TIME_MODEL,
+            parameters: { ...slope },
+            validation: "not-established"
+          };
+          source.limitations.push("unvalidated-slope-model");
+          pieces = slopeTimePieces(geometry, slope);
+          if (pieces.some((piece) => piece.grade !== piece.effectiveGrade))
+            source.limitations.push("slope-grade-capped");
+        } else {
+          pieces = geometry.map((piece) => ({ ...piece, cost: piece.toM - piece.fromM }));
+        }
       }
       leg.pieces = normalize(pieces, row.baselineSeconds);
       if (!leg.pieces) return unavailable2("invalid-distribution");
@@ -3424,7 +3484,7 @@
   }
 
   // src/features/itinerary/live-factor.js
-  var LIVE_FACTOR_VERSION = 3;
+  var LIVE_FACTOR_VERSION = 4;
   var LIVE_FACTOR_DEFAULTS = Object.freeze({
     windowMs: 30 * 60 * 1e3,
     endpointToleranceMs: 3e4,
@@ -3441,7 +3501,14 @@
     confirmationAgeMs: 12e4,
     progressToleranceM: 25,
     minBaselineSeconds: 60,
-    minProgressM: 25
+    minProgressM: 25,
+    maxLimitedAccuracyM: 80,
+    routeErrorAllowanceM: 10,
+    maxAdaptiveOffsetM: 80,
+    stabilityMs: 5e3,
+    stabilityWindowMs: 3e4,
+    retainLastValidMs: 12e4,
+    startAlignmentMs: 5e3
   });
   var missing = (reason) => ({
     factor: null,
@@ -3464,18 +3531,47 @@
         throw new TypeError("Unknown live factor option: " + name);
       if (!Number.isFinite(value2) || value2 <= 0) throw new RangeError(name + " must be positive");
     }
+    if (config2.maxLimitedAccuracyM < config2.maxAccuracyM || config2.maxAdaptiveOffsetM < config2.maxOffsetM || config2.stabilityWindowMs < config2.stabilityMs)
+      throw new RangeError("Inconsistent live GPS quality limits");
     const matcher = file?.segments?.length ? routeMatcherFor(file) : null;
     let first = departureAvailable, origin = null, originReason = departureAvailable ? "missing-start-fix" : "session-history-unavailable", continuityReason = null;
     let last = null, lastTime = -Infinity, peakM = -Infinity, history = [], current = null;
     let failure2 = "missing-gps-fix";
     let departureCandidate = null, peakSample = null, confirmation = null, restoredBoundary = null, restoration = null;
     let restorationCount = 0;
+    let clock = startedAt, transientFailure = false, needsStability = false, stability = null, retained = {};
     const query = (position2) => shangheTimeAt(timeModel, position2.routeProgressM, { segmentIndex: position2.segmentIndex });
-    function reject(reason) {
+    function reject(reason, transient = false) {
       failure2 = reason;
       current = null;
-      history = [];
-      return snapshot3();
+      transientFailure = transient;
+      needsStability = transient;
+      stability = null;
+      if (!transient) {
+        history = [];
+        retained = {};
+      }
+      return snapshot3({ now: clock });
+    }
+    function interrupt(reason, now = Date.now()) {
+      clock = now;
+      return reject(
+        reason === "gps-signal-unavailable" ? reason : reason === "gps-time-quality-exclusion" ? "stale-gps-fix" : "gps-quality",
+        ["gps-signal-unavailable", "rejected-gps-fix", "gps-time-quality-exclusion"].includes(reason)
+      );
+    }
+    function retainedMetric(key2, reason, now, allow) {
+      const metric3 = { ...missing(reason), state: "unavailable", asOf: null };
+      const saved = retained[key2];
+      if (allow && saved && Number.isFinite(now) && now >= saved.asOf && now - saved.asOf <= config2.retainLastValidMs) {
+        metric3.lastValid = {
+          ...structuredClone(saved),
+          state: "stale",
+          ageMs: now - saved.asOf,
+          expiresAt: saved.asOf + config2.retainLastValidMs
+        };
+      }
+      return metric3;
     }
     function distributionSource(fromM, toM) {
       return timeModel.legs.filter((leg) => Math.min(toM, leg.toM) - Math.max(fromM, leg.fromM) > 1e-6).map((leg) => ({
@@ -3511,31 +3607,37 @@
       };
     }
     function snapshot3({ now = Date.now(), status = "tracking" } = {}) {
-      const unavailable2 = (reason) => ({
+      const unavailable2 = (reason, allow = false) => ({
         version: LIVE_FACTOR_VERSION,
         asOf: current?.fix.time ?? null,
-        total: missing(reason),
-        recent: missing(reason)
+        total: retainedMetric("total", reason, now, allow),
+        recent: retainedMetric("recent", reason, now, allow)
       });
-      if (status !== "tracking")
-        return unavailable2(status === "paused" ? "paused-awaiting-fix" : "gps-not-tracking");
-      if (!current) return unavailable2(failure2);
+      if (status !== "tracking" && !(status === "requesting" && current?.quality === "limited"))
+        return unavailable2(
+          status === "paused" ? "paused-awaiting-fix" : status === "requesting" && transientFailure ? failure2 : "gps-not-tracking",
+          status === "requesting" && transientFailure
+        );
+      if (!current) return unavailable2(failure2, transientFailure);
       if (!Number.isFinite(now) || now - current.fix.time > config2.maxAgeMs || current.fix.time > now + config2.futureToleranceMs)
-        return unavailable2("stale-gps-fix");
+        return unavailable2("stale-gps-fix", true);
       const total = continuityReason ? missing(continuityReason) : !origin ? missing(originReason) : ratio(
         origin,
         current,
-        (current.fix.time - startedAt) / 1e3,
+        (current.fix.time - (confirmation ? startedAt : Math.max(startedAt, origin.fix.time))) / 1e3,
         current.baseline.elapsedSeconds - origin.baseline.elapsedSeconds
       );
       if (total.source) {
         total.source.departureTime = startedAt;
-        total.source.startAlignment = confirmation ? "user-confirmed-known-route-departure" : "gps-accuracy-compatible-departure";
+        total.source.startAlignment = confirmation ? "user-confirmed-known-route-departure" : "gps-time-and-accuracy-compatible-departure";
+        total.source.startTimeOffsetMs = origin.fix.time - startedAt;
+        total.source.observationStartTime = confirmation ? startedAt : Math.max(startedAt, origin.fix.time);
+        total.source.startAlignmentToleranceMs = config2.startAlignmentMs;
         total.source.departureConfirmation = confirmation;
         total.source.unobservedDepartureInterval = origin.fix.time > startedAt ? {
           fromTime: startedAt,
           toTime: origin.fix.time,
-          basis: "user-declaration-no-earlier-travel"
+          basis: confirmation ? "user-declaration-no-earlier-travel" : "excluded-before-first-fix"
         } : null;
         total.source.startStation = startStation;
         total.source.restoration = restoration;
@@ -3565,27 +3667,47 @@
         recent.source.requestedStartTime = target;
         recent.source.endpointToleranceMs = config2.endpointToleranceMs;
       }
+      for (const [key2, metric3] of Object.entries({ total, recent })) {
+        if (Number.isFinite(metric3.factor)) {
+          metric3.state = "live";
+          metric3.asOf = current.fix.time;
+          metric3.quality = current.quality;
+          retained[key2] = structuredClone(metric3);
+        } else metric3.state = "unavailable";
+      }
       return { version: LIVE_FACTOR_VERSION, asOf: current.fix.time, total, recent };
     }
     function update(input, { now = Date.now(), status = "tracking" } = {}) {
-      if (status !== "tracking") {
-        if (status === "requesting" && input) reject("gps-quality");
+      clock = now;
+      if (!["tracking", "requesting"].includes(status)) {
         return snapshot3({ now, status });
       }
       if (!Number.isFinite(startedAt) || !timeModel?.legs?.length || !matcher)
         return reject("missing-reference");
       const fix = normalizeLocationFix(input);
-      if (!fix || input.excluded || fix.accuracy > config2.maxAccuracyM) return reject("gps-quality");
-      if (!Number.isFinite(now) || now - fix.time > config2.maxAgeMs || fix.time > now + config2.futureToleranceMs || fix.time < startedAt)
-        return reject("stale-gps-fix");
-      if (fix.time <= lastTime) return reject("nonmonotonic-gps-time");
+      if (!fix) return reject("gps-quality", true);
+      if (input.excluded && input.qualityReason !== "horizontal-accuracy")
+        return reject("gps-quality");
+      if (fix.accuracy > config2.maxLimitedAccuracyM) return reject("gps-quality", true);
+      const limited = fix.accuracy > config2.maxAccuracyM;
+      if (limited && !last) return reject("gps-quality", true);
+      if (!Number.isFinite(now) || now - fix.time > config2.maxAgeMs || fix.time > now + config2.futureToleranceMs || fix.time < startedAt - config2.startAlignmentMs)
+        return reject("stale-gps-fix", true);
+      if (fix.time <= lastTime) return reject("nonmonotonic-gps-time", true);
       lastTime = fix.time;
       const wasFirst = first;
       first = false;
       if (wasFirst) originReason = "start-not-aligned";
       const found = matcher.match(
         [{ ...fix, stationId: "live-factor", coordinateStatus: "located" }],
-        { maxOffsetM: config2.maxOffsetM, mergeWithinM: config2.mergeWithinM }
+        {
+          maxOffsetM: Math.min(
+            config2.maxAdaptiveOffsetM,
+            Math.max(config2.maxOffsetM, fix.accuracy + config2.routeErrorAllowanceM)
+          ),
+          mergeWithinM: config2.mergeWithinM,
+          preserveReversals: true
+        }
       );
       let candidates = found.matches[0]?.routePositions ?? [];
       if (!candidates.length) return reject("off-route");
@@ -3600,11 +3722,48 @@
         if (!candidates.length) return reject("unreachable-route-position");
         if (distanceM(last.fix, fix) > reach) return reject("abnormal-gps-speed");
       }
+      if (wasFirst && candidates.length > 1 && Math.abs(fix.time - startedAt) <= config2.startAlignmentMs && now - startedAt <= config2.startAlignmentMs) {
+        const starts = candidates.filter(
+          (position3) => departureDistance({ fix, position: position3 }) <= Math.min(config2.startToleranceM, Math.max(5, fix.accuracy))
+        );
+        if (starts.length === 1) candidates = starts;
+      }
       if (candidates.length !== 1) return reject("ambiguous-route-position");
       const position2 = candidates[0], baseline = query(position2);
-      const sample = { fix, position: position2, baseline, observedAt: now };
+      const sample = {
+        fix,
+        position: position2,
+        baseline,
+        observedAt: now,
+        quality: limited ? "limited" : "normal"
+      };
+      if (!Number.isFinite(baseline.elapsedSeconds))
+        return reject(baseline.reason ?? "unknown-shanghe-time");
+      const tolerance = Math.max(
+        config2.progressToleranceM,
+        Math.min(50, fix.accuracy + (last?.fix.accuracy ?? 0))
+      );
+      if (position2.routeProgressM < peakM - tolerance) return reject("backtracking");
+      if (last && (needsStability || limited && last.quality !== "limited")) {
+        const previous = stability?.last;
+        const dt = previous && fix.time - previous.fix.time;
+        const compatible = previous && dt > 0 && dt <= config2.stabilityWindowMs && previous.position.segmentIndex === position2.segmentIndex && Math.abs(previous.position.routeProgressM - position2.routeProgressM) <= config2.maxSpeedMps * dt / 1e3 + Math.min(50, previous.fix.accuracy + fix.accuracy);
+        stability = compatible ? { ...stability, last: sample } : { first: sample, last: sample };
+        if (fix.time - stability.first.fix.time < config2.stabilityMs) {
+          failure2 = "gps-stabilizing";
+          current = null;
+          transientFailure = true;
+          needsStability = true;
+          return snapshot3({ now, status });
+        }
+        needsStability = false;
+        stability = null;
+      }
       if (restoredBoundary) {
-        const bound3 = Math.max(5, fix.accuracy + restoredBoundary.fix.accuracy);
+        const bound3 = Math.max(
+          5,
+          Math.min(config2.maxAdaptiveOffsetM, fix.accuracy + restoredBoundary.fix.accuracy)
+        );
         if (position2.segmentIndex !== restoredBoundary.position.segmentIndex || Math.abs(position2.routeProgressM - restoredBoundary.position.routeProgressM) > bound3 || distanceM(fix, restoredBoundary.fix) > bound3)
           continuityReason = "restored-continuity-unconfirmed";
         restoration = {
@@ -3617,24 +3776,23 @@
         };
         restoredBoundary = null;
       }
-      if (last && fix.time - last.fix.time > config2.maxObservationGapMs && Math.abs(position2.routeProgressM - last.position.routeProgressM) > Math.max(config2.progressToleranceM, fix.accuracy + last.fix.accuracy)) {
+      if (last && fix.time - last.fix.time > config2.maxObservationGapMs && Math.abs(position2.routeProgressM - last.position.routeProgressM) > Math.max(config2.progressToleranceM, Math.min(50, fix.accuracy + last.fix.accuracy))) {
         continuityReason = "gps-observation-gap";
         history = [];
+        retained = {};
       }
-      const tolerance = Math.max(config2.progressToleranceM, fix.accuracy + (last?.fix.accuracy ?? 0));
       last = sample;
-      if (position2.routeProgressM < peakM - tolerance) return reject("backtracking");
       if (position2.routeProgressM > peakM) peakSample = sample;
       peakM = Math.max(peakM, position2.routeProgressM);
-      if (!Number.isFinite(baseline.elapsedSeconds))
-        return reject(baseline.reason ?? "unknown-shanghe-time");
       if (wasFirst) departureCandidate = sample;
-      if (wasFirst && fix.time === startedAt && now - startedAt <= config2.startDelayMs && fix.time - startedAt <= config2.startDelayMs && departureDistance(sample) <= Math.min(config2.startToleranceM, fix.accuracy)) {
+      if (wasFirst && Math.abs(fix.time - startedAt) <= config2.startAlignmentMs && now - startedAt <= config2.startAlignmentMs && departureDistance(sample) <= Math.min(config2.startToleranceM, fix.accuracy)) {
         origin = sample;
         originReason = null;
       }
       current = sample;
       failure2 = null;
+      transientFailure = false;
+      needsStability = false;
       history.push(sample);
       const cutoff = fix.time - config2.windowMs - config2.endpointToleranceMs;
       const firstKept = history.findIndex((item) => item.fix.time >= cutoff);
@@ -3675,7 +3833,12 @@
       originReason = null;
       return true;
     }
-    const pack = (sample) => sample ? { fix: sample.fix, position: sample.position, observedAt: sample.observedAt } : null;
+    const pack = (sample) => sample ? {
+      fix: sample.fix,
+      position: sample.position,
+      observedAt: sample.observedAt,
+      quality: sample.quality
+    } : null;
     function checkpoint() {
       return structuredClone({
         version: LIVE_FACTOR_VERSION,
@@ -3698,17 +3861,30 @@
         const unpack = (data) => {
           if (!data) return null;
           const fix = normalizeLocationFix(data.fix);
-          if (!fix || fix.accuracy > config2.maxAccuracyM || fix.time < startedAt || fix.time > state.lastTime || !Number.isFinite(data.observedAt) || data.observedAt > savedAt || data.observedAt < startedAt || fix.time > data.observedAt + config2.futureToleranceMs || data.observedAt - fix.time > config2.maxAgeMs)
+          if (!fix || fix.accuracy > config2.maxLimitedAccuracyM || data.quality !== (fix.accuracy > config2.maxAccuracyM ? "limited" : "normal") || fix.time < startedAt - config2.startAlignmentMs || fix.time > state.lastTime || !Number.isFinite(data.observedAt) || data.observedAt > savedAt || data.observedAt < startedAt || fix.time > data.observedAt + config2.futureToleranceMs || data.observedAt - fix.time > config2.maxAgeMs)
             throw new Error("invalid saved observation");
           const found = matcher.match(
             [{ ...fix, stationId: "checkpoint", coordinateStatus: "located" }],
-            { maxOffsetM: config2.maxOffsetM, mergeWithinM: config2.mergeWithinM }
+            {
+              maxOffsetM: Math.min(
+                config2.maxAdaptiveOffsetM,
+                Math.max(config2.maxOffsetM, fix.accuracy + config2.routeErrorAllowanceM)
+              ),
+              mergeWithinM: config2.mergeWithinM,
+              preserveReversals: true
+            }
           );
           const position2 = found.matches[0]?.routePositions.find(
             (p) => p.segmentIndex === data.position?.segmentIndex && Math.abs(p.routeProgressM - data.position.routeProgressM) < 1e-6 && Math.abs(p.offsetM - data.position.offsetM) < 1e-6
           );
           if (!position2) throw new Error("changed route position");
-          return { fix, position: position2, baseline: query(position2), observedAt: data.observedAt };
+          return {
+            fix,
+            position: position2,
+            baseline: query(position2),
+            observedAt: data.observedAt,
+            quality: fix.accuracy > config2.maxAccuracyM ? "limited" : "normal"
+          };
         };
         if (!Number.isInteger(state.restorationCount) || state.restorationCount < 0 || state.restorationCount >= 500)
           return false;
@@ -3719,7 +3895,7 @@
         if (savedConfirmation && (!savedOrigin || !candidate || savedConfirmation.departedHere !== true || savedConfirmation.noEarlierTravel !== true || !Number.isFinite(savedConfirmation.confirmedAt) || savedConfirmation.confirmedAt < candidate.observedAt || savedConfirmation.confirmedAt > Math.min(savedAt, candidate.observedAt + config2.confirmationAgeMs)))
           return false;
         if (savedOrigin) {
-          if (!candidate || JSON.stringify(pack(savedOrigin)) !== JSON.stringify(pack(candidate)) || !Number.isFinite(savedOrigin.baseline.elapsedSeconds) || !savedConfirmation && savedOrigin.fix.time !== startedAt || savedOrigin.fix.time - startedAt > config2.startDelayMs || savedOrigin.observedAt - startedAt > config2.startDelayMs || departureDistance(savedOrigin) > (savedConfirmation ? config2.confirmedStartToleranceM : Math.min(config2.startToleranceM, savedOrigin.fix.accuracy)))
+          if (!candidate || JSON.stringify(pack(savedOrigin)) !== JSON.stringify(pack(candidate)) || !Number.isFinite(savedOrigin.baseline.elapsedSeconds) || !savedConfirmation && (Math.abs(savedOrigin.fix.time - startedAt) > config2.startAlignmentMs || savedOrigin.observedAt - startedAt > config2.startAlignmentMs || savedOrigin.fix.accuracy > config2.maxAccuracyM) || savedOrigin.fix.time - startedAt > config2.startDelayMs || savedOrigin.observedAt - startedAt > config2.startDelayMs || departureDistance(savedOrigin) > (savedConfirmation ? config2.confirmedStartToleranceM : Math.min(config2.startToleranceM, savedOrigin.fix.accuracy)))
             return false;
         }
         if (![null, "gps-observation-gap", "restored-continuity-unconfirmed"].includes(
@@ -3747,13 +3923,25 @@
         history = [];
         current = null;
         failure2 = "restored-awaiting-fix";
+        retained = {};
+        transientFailure = false;
+        needsStability = false;
+        stability = null;
         restoredBoundary = savedLast;
         return true;
       } catch {
         return false;
       }
     }
-    return { update, snapshot: snapshot3, departureStatus, confirmDeparture, checkpoint, restoreCheckpoint };
+    return {
+      update,
+      snapshot: snapshot3,
+      interrupt,
+      departureStatus,
+      confirmDeparture,
+      checkpoint,
+      restoreCheckpoint
+    };
   }
 
   // src/features/history/observations.js
@@ -3813,6 +4001,8 @@
     },
     onJourneyFix = () => {
     },
+    onJourneyInterruption = () => {
+    },
     onJourneyRestore = async () => {
     },
     prepareHistory,
@@ -3836,7 +4026,13 @@
         const live = onJourneyFix(fix, now);
         historyFix(state.gps, fix, now, live);
       },
-      onInterruption: (reason) => historyInterruption(state.gps, reason),
+      onInterruption: (reason) => {
+        historyInterruption(
+          state.gps,
+          reason === "gps-signal-unavailable" ? "gps-interrupted" : reason
+        );
+        onJourneyInterruption(reason);
+      },
       locationProvider,
       onLimit: (message) => {
         pauseGps();
@@ -4661,7 +4857,9 @@
             listener = await plugin.addListener("location", (event) => {
               if (!active || event?.watchId !== watchId) return;
               if (event.error) {
-                fail(event.error);
+                const error = nativeError(event.error);
+                if (["timeout", "position-unavailable"].includes(error.code)) onError(error);
+                else fail(event.error);
                 return;
               }
               const fix = normalizeCoreLocation(event.location);
@@ -5709,6 +5907,8 @@
     "missing-gps-fix": "\u7B49\u5F85\u7B2C\u4E00\u500B\u6709\u6548 GPS \u5B9A\u4F4D\u3002",
     "stale-gps-fix": "\u5B9A\u4F4D\u5DF2\u8D85\u904E 60 \u79D2\u6216\u6642\u9593\u7570\u5E38\uFF1B\u7B49\u5F85\u65B0\u6709\u6548\u5B9A\u4F4D\u3002",
     "gps-quality": "\u5B9A\u4F4D\u7CBE\u5EA6\u4E0D\u8DB3\u6216\u4F4D\u7F6E\u8DF3\u52D5\uFF1B\u7B49\u5F85\u53EF\u9760\u5B9A\u4F4D\u3002",
+    "gps-stabilizing": "\u6B63\u5728\u6838\u5C0D\u9023\u7E8C\u5B9A\u4F4D\u7684\u7A69\u5B9A\u6027\uFF1B\u5C1A\u672A\u6062\u5FA9\u5373\u6642\u503C\u3002",
+    "gps-signal-unavailable": "\u5B9A\u4F4D\u8A0A\u865F\u66AB\u6642\u4E2D\u65B7\uFF0C\u6B63\u5728\u7B49\u5F85\u65B0\u5B9A\u4F4D\u3002",
     "missing-reference": "\u6C92\u6709\u53EF\u914D\u5C0D\u7684\u4E0A\u6CB3\u57FA\u6E96\u8DEF\u7DDA\uFF0C\u7121\u6CD5\u8A08\u7B97\u500D\u7387\u3002",
     "reference-or-session-changed": "\u8DEF\u7DDA\u6216\u4E0A\u6CB3\u8CC7\u6599\u5DF2\u6539\u8B8A\uFF1B\u9700\u91CD\u65B0\u958B\u59CB\u7D00\u9304\u624D\u80FD\u8A08\u7B97\u3002",
     "missing-start-fix": "\u7F3A\u5C11\u51FA\u767C\u6642\u7684\u6709\u6548\u5B9A\u4F4D\uFF0C\u7121\u6CD5\u8A08\u7B97\u5168\u7A0B\u500D\u7387\u3002",
@@ -5734,6 +5934,7 @@
     "gpx-quality-break": "\u9019\u6BB5 GPX \u54C1\u8CEA\u4E0D\u8DB3\uFF0C\u7121\u6CD5\u78BA\u8A8D\u9023\u7E8C\u8DEF\u7A0B\u3002"
   };
   var unavailable = "\u4E0A\u6CB3\u57FA\u6E96\u6216\u8DEF\u7DDA\u9023\u7E8C\u6027\u8CC7\u6599\u4E0D\u8DB3\uFF0C\u66AB\u6642\u7121\u6CD5\u8A08\u7B97\u3002";
+  var liveFactorReason = (reason) => reasons[reason] ?? unavailable;
   var valid = (metric3) => Number.isFinite(metric3?.factor) && metric3.factor > 0;
   var span = (seconds) => {
     if (!Number.isFinite(seconds)) return "\u2014";
@@ -5757,18 +5958,27 @@
         lastFixTime = null;
       }
       const data = itinerary.liveFactors();
-      if (Number.isFinite(data.asOf)) lastFixTime = data.asOf;
+      const times = [data.asOf, data.total?.lastValid?.asOf, data.recent?.lastValid?.asOf].filter(
+        Number.isFinite
+      );
+      if (times.length) lastFixTime = Math.max(...times);
       const values = { "live-factor-last-fix": fixTime(lastFixTime) };
       for (const key2 of ["total", "recent"]) {
-        const metric3 = data[key2];
+        const live = data[key2];
+        const held = !valid(live) && live?.lastValid?.state === "stale" && valid(live.lastValid);
+        const metric3 = held ? live.lastValid : live;
         const usable = valid(metric3);
+        values[`live-factor-${key2}-freshness`] = held ? "\u4E0A\u6B21\u6709\u6548\u503C\u30FB\u8CC7\u6599\u5DF2\u904E\u671F" : usable ? metric3.quality === "limited" ? "\u5373\u6642\u503C\u30FBGPS \u7CBE\u5EA6\u53D7\u9650" : "\u5373\u6642\u503C" : "";
         const delta = usable ? (metric3.factor - 1) * 100 : null;
         values[`live-factor-${key2}-value`] = usable ? metric3.factor.toFixed(2) + " \u500D" : "\u2014";
-        values[`live-factor-${key2}-comparison`] = !usable ? "" : Math.abs(delta) < 0.05 ? "\u8207\u4E0A\u6CB3\u57FA\u6E96\u8017\u6642\u76F8\u540C\uFF080.0%\uFF09" : `\u8017\u6642\u8F03\u4E0A\u6CB3${delta > 0 ? "\u591A" : "\u5C11"} ${Math.abs(delta).toFixed(1)}%\uFF08${delta > 0 ? "\u8F03\u6162" : "\u8F03\u5FEB"}\uFF09`;
-        values[`live-factor-${key2}-reason`] = usable ? "" : !state.gps.sourceRouteId ? reasons["missing-reference"] : metric3?.reason === "gps-not-tracking" ? state.gps.status === "error" ? "\u5B9A\u4F4D\u5DF2\u4E2D\u65B7\uFF1B\u8ACB\u7E7C\u7E8C\u7D00\u9304\u4E26\u53D6\u5F97\u65B0\u6709\u6548\u5B9A\u4F4D\u3002" : state.gps.accuracy > 50 || state.gps.error ? reasons["gps-quality"] : "\u7B49\u5F85\u65B0\u6709\u6548\u5B9A\u4F4D\uFF1B\u6062\u5FA9\u7D00\u9304\u5F8C\u9808\u5148\u78BA\u8A8D\u4F4D\u7F6E\u3002" : reasons[metric3?.reason] ?? unavailable;
-        values[`live-factor-${key2}-duration`] = usable ? `\u5BE6\u969B ${span(metric3.actualSeconds)} \uFF0F\u4E0A\u6CB3\u57FA\u6E96 ${span(metric3.baselineSeconds)}` : "\u76EE\u524D\u7121\u6709\u6548\u500D\u7387";
+        values[`live-factor-${key2}-comparison`] = !usable ? "" : Math.abs(delta) < 0.05 ? "\u8207\u4E0A\u6CB3\u57FA\u6E96\u8017\u6642\u76F8\u540C\uFF080.0%\uFF09" : `${held ? "\u4E0A\u6B21\uFF1A" : ""}\u8017\u6642\u8F03\u4E0A\u6CB3${delta > 0 ? "\u591A" : "\u5C11"} ${Math.abs(delta).toFixed(1)}%\uFF08${delta > 0 ? "\u8F03\u6162" : "\u8F03\u5FEB"}\uFF09`;
+        values[`live-factor-${key2}-reason`] = held ? `\u4E0A\u6B21\u6709\u6548\u5B9A\u4F4D\uFF1A${fixTime(metric3.asOf)}\uFF08\u53F0\u5317\u6642\u9593\uFF09\u3002\u8CC7\u6599\u5DF2\u904E\u671F\uFF0C\u975E\u5373\u6642\u503C\uFF1B${reasons[live.reason] ?? "\u7B49\u5F85\u65B0\u6709\u6548\u5B9A\u4F4D\u3002"}` : usable ? "" : !state.gps.sourceRouteId ? reasons["missing-reference"] : metric3?.reason === "gps-not-tracking" ? state.gps.status === "error" ? "\u5B9A\u4F4D\u5DF2\u4E2D\u65B7\uFF1B\u8ACB\u7E7C\u7E8C\u7D00\u9304\u4E26\u53D6\u5F97\u65B0\u6709\u6548\u5B9A\u4F4D\u3002" : state.gps.accuracy > 50 || state.gps.error ? reasons["gps-quality"] : "\u7B49\u5F85\u65B0\u6709\u6548\u5B9A\u4F4D\uFF1B\u6062\u5FA9\u7D00\u9304\u5F8C\u9808\u5148\u78BA\u8A8D\u4F4D\u7F6E\u3002" : reasons[metric3?.reason] ?? unavailable;
+        values[`live-factor-${key2}-duration`] = usable ? `${held ? "\u4E0A\u6B21\u6709\u6548\u503C\uFF1A" : ""}\u5BE6\u969B ${span(metric3.actualSeconds)} \uFF0F\u4E0A\u6CB3\u57FA\u6E96 ${span(metric3.baselineSeconds)}` : "\u76EE\u524D\u7121\u6709\u6548\u500D\u7387";
       }
-      const sources = [data.total?.source, data.recent?.source].filter(Boolean);
+      const sources = [
+        data.total?.source ?? data.total?.lastValid?.source,
+        data.recent?.source ?? data.recent?.lastValid?.source
+      ].filter(Boolean);
       const labels = sources.flatMap(
         (source) => (source.distributions ?? []).map(timeDistributionLabel)
       );
@@ -5776,6 +5986,7 @@
       values["live-factor-provenance"] = [
         "GPS \u8207 GPX \u6642\u9593\u4F86\u6E90\u5747\u672A\u7368\u7ACB\u9A57\u8B49\uFF1B\u5916\u90E8 GPX \u7684\u6642\u9593\u6A19\u8A18\u4E0D\u4EE3\u8868\u53EF\u4FE1\u3002\u4E0A\u6CB3\u6709\u5411\u6642\u9593\u662F\u57FA\u6E96\uFF0C\u5206\u914D\u65B9\u6CD5\u4E0D\u662F\u5BE6\u6E2C\u901F\u5EA6\u3002",
         sources.some((source) => source.departureConfirmation) ? "\u51FA\u767C\u9328\u9EDE\u7531\u4F7F\u7528\u8005\u8072\u660E\u78BA\u8A8D\uFF0C\u7AD9\u9EDE\u5EA7\u6A19\u8AA4\u5DEE\u672A\u77E5\u3002" : "",
+        sources.some((source) => !source.departureConfirmation && source.startTimeOffsetMs > 0) ? "\u500D\u7387\u5F9E\u9996\u500B\u6709\u6548\u5B9A\u4F4D\u8D77\u7B97\uFF0C\u672A\u5C07\u5B9A\u4F4D\u524D\u7A7A\u767D\u7576\u6210\u5DF2\u89C0\u6E2C\u8DEF\u7A0B\u3002" : "",
         sources.some((source) => source.restoration) ? "\u5DF2\u4EE5\u65B0\u5B9A\u4F4D\u6838\u5C0D\u91CD\u8F09\u524D\u4F4D\u7F6E\uFF1B\u95DC\u9589\u671F\u9593\u672A\u89C0\u6E2C\uFF0C\u4E26\u975E\u9023\u7E8C GPS \u7D00\u9304\u3002" : ""
       ].filter(Boolean).join(" ");
       return values;
@@ -5787,16 +5998,20 @@
         ["total", "\u672C\u6B21\u5168\u7A0B\u5373\u6642\u500D\u7387"],
         ["recent", "\u6700\u8FD1 30 \u5206\u9418\u500D\u7387"]
       ].map(
-        ([key2, title]) => `<section class="live-factor-card" aria-labelledby="live-factor-${key2}-title"><h3 id="live-factor-${key2}-title">${title}</h3><p class="live-factor-value" id="live-factor-${key2}-value">${text(`live-factor-${key2}-value`)}</p><p class="live-factor-comparison" id="live-factor-${key2}-comparison">${text(`live-factor-${key2}-comparison`)}</p><p class="live-factor-reason" id="live-factor-${key2}-reason" role="status" aria-atomic="true">${text(`live-factor-${key2}-reason`)}</p></section>`
+        ([key2, title]) => `<section class="live-factor-card" aria-labelledby="live-factor-${key2}-title"><h3 id="live-factor-${key2}-title">${title}</h3><p class="live-factor-freshness" id="live-factor-${key2}-freshness" data-state="${values[`live-factor-${key2}-freshness`].startsWith("\u4E0A\u6B21") ? "stale" : "live"}">${text(`live-factor-${key2}-freshness`)}</p><p class="live-factor-value" id="live-factor-${key2}-value">${text(`live-factor-${key2}-value`)}</p><p class="live-factor-comparison" id="live-factor-${key2}-comparison">${text(`live-factor-${key2}-comparison`)}</p><p class="live-factor-reason" id="live-factor-${key2}-reason" role="status" aria-atomic="true">${text(`live-factor-${key2}-reason`)}</p></section>`
       ).join(
         ""
-      )}</div><p class="small">\u672C\u6B21\u89C0\u6E2C\u50C5\u4F9B\u53C3\u8003\uFF0C\u4E0D\u5F71\u97FF ETA\uFF1BETA \u4F7F\u7528\u51FA\u767C\u6642\u7684\u8A2D\u5B9A\u500D\u7387\u3002</p><details id="live-factor-details" class="live-factor-details"><summary id="live-factor-summary">\u500D\u7387\u8A08\u7B97\u8207\u5B9A\u4F4D\u4F86\u6E90</summary><p>\u6700\u5F8C\u6709\u6548\u5B9A\u4F4D\uFF08\u53F0\u5317\u6642\u9593\uFF09\uFF1A<span id="live-factor-last-fix">${text("live-factor-last-fix")}</span></p><p>\u5168\u7A0B\uFF1A<span id="live-factor-total-duration">${text("live-factor-total-duration")}</span><br>\u6700\u8FD1\uFF1A<span id="live-factor-recent-duration">${text("live-factor-recent-duration")}</span></p><p>\u500D\u7387\uFF1D\u5BE6\u969B\u7D93\u904E\u6642\u9593 \xF7 \u5DF2\u8D70\u8DEF\u6BB5\u7684\u4E0A\u6CB3\u57FA\u6E96\u3002\u5FEB\u6162\u767E\u5206\u6BD4\u6BD4\u8F03\u8017\u6642\uFF0C1.20 \u500D\u4EE3\u8868\u591A\u7528\u6642 20%\u3002\u5168\u7A0B\u5305\u542B\u4F11\u606F\u8207\u66AB\u505C\uFF0C\u53EA\u5728\u6709\u6548\u5B9A\u4F4D\u6642\u66F4\u65B0\u3002</p><p>\u6700\u8FD1\u7A97\u63A1\u771F\u5BE6\u5B9A\u4F4D\u7AEF\u9EDE\uFF0C\u5BE6\u969B\u9577\u5EA6\u70BA 30 \u5206\u81F3 30 \u5206 30 \u79D2\uFF1B\u4E2D\u65B7\u6216\u91CD\u8F09\u5F8C\u91CD\u65B0\u7D2F\u7A4D\uFF0C\u4E0D\u88DC\u9020\u5B9A\u4F4D\u3002</p><p>\u4E0A\u6CB3\u5206\u914D\uFF1A<span id="live-factor-distribution">${text("live-factor-distribution")}</span></p><p id="live-factor-provenance">${text("live-factor-provenance")}</p><p>\u8A2D\u5B9A\u500D\u7387\u50C5\u7528\u65BC ETA\uFF1B\u5373\u6642\u500D\u7387\u4E0D\u6703\u81EA\u52D5\u8986\u5BEB\u8A2D\u5B9A\u3002</p></details></section>`;
+      )}</div><p class="small">\u672C\u6B21\u89C0\u6E2C\u50C5\u4F9B\u53C3\u8003\uFF1B\u4E0B\u4E00\u7AD9\u5206\u5225\u986F\u793A\u5169\u7A2E\u5373\u6642\u500D\u7387 ETA\uFF0C\u4E26\u4FDD\u7559\u8A2D\u5B9A\u500D\u7387 ETA \u4F5C\u6BD4\u8F03\u3002</p><details id="live-factor-details" class="live-factor-details"><summary id="live-factor-summary">\u500D\u7387\u8A08\u7B97\u8207\u5B9A\u4F4D\u4F86\u6E90</summary><p>\u6700\u5F8C\u6709\u6548\u5B9A\u4F4D\uFF08\u53F0\u5317\u6642\u9593\uFF09\uFF1A<span id="live-factor-last-fix">${text("live-factor-last-fix")}</span></p><p>\u5168\u7A0B\uFF1A<span id="live-factor-total-duration">${text("live-factor-total-duration")}</span><br>\u6700\u8FD1\uFF1A<span id="live-factor-recent-duration">${text("live-factor-recent-duration")}</span></p><p>\u500D\u7387\uFF1D\u5BE6\u969B\u7D93\u904E\u6642\u9593 \xF7 \u5DF2\u8D70\u8DEF\u6BB5\u7684\u4E0A\u6CB3\u57FA\u6E96\u3002\u5FEB\u6162\u767E\u5206\u6BD4\u6BD4\u8F03\u8017\u6642\uFF0C1.20 \u500D\u4EE3\u8868\u591A\u7528\u6642 20%\u3002\u5168\u7A0B\u5305\u542B\u4F11\u606F\u8207\u66AB\u505C\uFF0C\u53EA\u5728\u6709\u6548\u5B9A\u4F4D\u6642\u66F4\u65B0\u3002</p><p>\u6700\u8FD1\u7A97\u63A1\u771F\u5BE6\u5B9A\u4F4D\u7AEF\u9EDE\uFF0C\u5BE6\u969B\u9577\u5EA6\u70BA 30 \u5206\u81F3 30 \u5206 30 \u79D2\uFF1B\u4E2D\u65B7\u6216\u91CD\u8F09\u5F8C\u91CD\u65B0\u7D2F\u7A4D\uFF0C\u4E0D\u88DC\u9020\u5B9A\u4F4D\u3002</p><p>\u4E0A\u6CB3\u5206\u914D\uFF1A<span id="live-factor-distribution">${text("live-factor-distribution")}</span></p><p id="live-factor-provenance">${text("live-factor-provenance")}</p><p>\u8A2D\u5B9A\u500D\u7387 ETA \u4FDD\u7559\u4F5C\u6BD4\u8F03\uFF1B\u5373\u6642\u500D\u7387\u4E0D\u6703\u81EA\u52D5\u8986\u5BEB\u8A2D\u5B9A\u3002</p></details></section>`;
     }
     function updateNumbers() {
       if (!document2.getElementById("live-factor-total-value")) return;
       for (const [id2, value2] of Object.entries(fields())) {
         const element = document2.getElementById(id2);
         if (element && element.textContent !== value2) element.textContent = value2;
+        if (element && id2.endsWith("-freshness")) {
+          if (element.getAttribute("data-state") !== (value2.startsWith("\u4E0A\u6B21") ? "stale" : "live"))
+            element.setAttribute("data-state", value2.startsWith("\u4E0A\u6B21") ? "stale" : "live");
+        }
       }
     }
     return { panel, updateNumbers };
@@ -5878,7 +6093,7 @@
     if (!file?.points?.length) return null;
     const indexed = indexFor(file).get(segmentIndex);
     if (!indexed || ![fromM, toM].every(Number.isFinite) || fromM > toM) return null;
-    const { points, up, down, missing: missing2 } = indexed;
+    const { points, up, down, missing: missing3 } = indexed;
     if (!points.length || fromM < points[0].distance - EPSILON || toM > points.at(-1).distance + EPSILON)
       return null;
     const start = Math.max(points[0].distance, fromM), end = Math.min(points.at(-1).distance, toM);
@@ -5887,7 +6102,7 @@
     if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
     if (end - start <= EPSILON) return { ascentM: 0, descentM: 0 };
     const deltas = first > last ? [b - a] : [points[first].height - a, b - points[last].height];
-    if (deltas.some((delta) => !Number.isFinite(delta)) || first <= last && missing2[last] - missing2[first] > 0)
+    if (deltas.some((delta) => !Number.isFinite(delta)) || first <= last && missing3[last] - missing3[first] > 0)
       return null;
     const result = {
       ascentM: (first <= last ? up[last] - up[first] : 0) + deltas.reduce((sum, d) => sum + Math.max(0, d), 0),
@@ -5964,12 +6179,54 @@
       return `<section class="panel panel-body stack itinerary-panel"><div><span class="eyebrow">YOUR STOPS</span><h2>\u6CBF\u9014\u7AD9\u9EDE\u8207 ETA</h2><p class="small muted">${data.active ? "\u62B5\u9054\u5F8C\u6703\u91CD\u65B0\u63A8\u7B97\u5F8C\u7E8C\u6642\u9593\uFF1B\u5F80\u8FD4\u7AD9\u9EDE\u5206\u6B21\u986F\u793A\u3002" : "\u6309\u300C\u958B\u59CB\u767B\u5C71\u7D00\u9304\u300D\u5F8C\uFF0C\u4EE5\u5BE6\u969B\u51FA\u767C\u6642\u9593\u986F\u793A\u62B5\u9054\u6642\u523B\u3002"}</p></div>${!data.compatible ? '<p class="error-message">\u7AD9\u9EDE\u8CC7\u6599\u5DF2\u66F4\u65B0\uFF1B\u7D50\u675F\u76EE\u524D\u7D00\u9304\u5F8C\uFF0C\u91CD\u65B0\u958B\u59CB\u624D\u80FD\u5957\u7528\u65B0\u7684 ETA\u3002</p>' : ""}<div class="itinerary-summary"><span>\u5168\u7A0B\u9810\u4F30</span><strong>${duration(data.totalSeconds)}</strong><small>\u8A2D\u5B9A\u500D\u7387 ${data.factor.toFixed(2)} \xB7 \u5F71\u97FF ETA</small></div>${!data.startCovered || !data.endCovered ? '<p class="soft-notice">GPX \u8D77\u9EDE\u6216\u7D42\u9EDE\u6C92\u6709\u5C0D\u61C9\u6642\u9593\u7AD9\u9EDE\uFF1B\u53EA\u986F\u793A\u6709\u57FA\u6E96\u7684\u7AD9\u9593\u6642\u9593\u3002</p>' : ""}${rows.length ? `<ol class="station-list">${rows.map((row, index) => stationRow(row, data, index + 1)).join("")}</ol>` : '<p class="small muted">\u76EE\u524D GPX \u9644\u8FD1\u672A\u627E\u5230\u9019\u516D\u985E\u7AD9\u9EDE\uFF0C\u8ACB\u88DC\u9F4A\u7AD9\u9EDE\u5EA7\u6A19\u3002</p>'}${timingIssuesPanel(data)}<p class="small muted">\u4F4D\u7F6E\u63A5\u8FD1\u4E0D\u4EE3\u8868\u5DF2\u9032\u5165\u5C71\u5C4B\uFF1B\u6C34\u6E90\u53EF\u7528\u6027\u8ACB\u53E6\u884C\u78BA\u8A8D\u3002</p><details id="station-source-details" class="small muted"><summary>\u7AD9\u9EDE\u4F86\u6E90\u8207 ETA \u8A08\u7B97\u9650\u5236</summary><p class="small muted">\u4F9D\u4E0A\u6CB3\u6709\u5411\u6642\u9593\u8A08\u7B97\uFF0C\u4E0D\u4EE5 GPX \u6B77\u53F2\u6642\u9593\u6216\u8DDD\u96E2\u88DC\u6642\u9593\u3002\u7F3A\u503C\u6216\u591A\u689D\u53EF\u80FD\u8DEF\u5F91\u6703\u4FDD\u7559\u5F85\u88DC\u3002</p><p class="small muted">\u7AD9\u9EDE\u5EA7\u6A19\u53C3\u8003\uFF1A\u653F\u5E9C\u516C\u958B\u8CC7\u6599\u53CA <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors\uFF08ODbL\uFF09</a>\uFF0C\u4EE5\u53CA <a href="https://joyhike.com/path/31" target="_blank" rel="noopener noreferrer">Joyhike \u5730\u9EDE\u6BD4\u5C0D\u8CC7\u6599</a>\u3002\u6EAA\u6E90\u5EA7\u6A19\u7531\u4F7F\u7528\u8005\u65BC OSM \u67E5\u627E\u63D0\u4F9B\u3002</p></details></section>`;
     }
     const heightLabel = (value2) => value2 === null ? "\u2014" : `${meters(value2)} m`;
+    const etaReasons = {
+      "eta-not-recording": "\u958B\u59CB\u6216\u6062\u5FA9\u7D00\u9304\u4E26\u53D6\u5F97\u6709\u6548\u5B9A\u4F4D\u5F8C\u986F\u793A\u3002",
+      "eta-no-next": "\u6CBF\u9014\u7AD9\u9EDE\u5DF2\u5B8C\u6210\u3002",
+      "eta-factor-unavailable": "\u76EE\u524D\u6C92\u6709\u6709\u6548\u7684\u5373\u6642\u500D\u7387\uFF1B\u4E0A\u6B21\u6709\u6548\u503C\u4E0D\u4F9B ETA \u4F7F\u7528\u3002",
+      "eta-route-position-mismatch": "\u5B9A\u4F4D\u8207\u4E0B\u4E00\u7AD9\u7684\u8DEF\u7DDA\u65B9\u5411\u6216\u6240\u5728\u8DEF\u6BB5\u7121\u6CD5\u78BA\u8A8D\u3002",
+      "eta-unknown-remaining": "\u5230\u4E0B\u4E00\u7AD9\u7684\u4E0A\u6CB3\u6642\u9593\u6216\u9023\u7E8C\u8DEF\u7A0B\u4E0D\u660E\u3002"
+    };
+    function nextEtaFields() {
+      const data = itinerary.nextEtas?.();
+      return Object.fromEntries(
+        ["total", "recent"].flatMap((key2) => {
+          const metric3 = data?.[key2];
+          const usable = Number.isFinite(metric3?.arrivalUtcMs);
+          return [
+            [`itinerary-${key2}-arrival`, usable ? arrival(metric3.arrivalUtcMs) : "\u2014"],
+            [
+              `itinerary-${key2}-remaining`,
+              usable ? `\u5269\u9918 ${duration(metric3.remainingSeconds)}` : "\u4E0D\u53EF\u7528"
+            ],
+            [
+              `itinerary-${key2}-eta-reason`,
+              usable ? "" : etaReasons[metric3?.reason] ?? liveFactorReason(metric3?.reason)
+            ]
+          ];
+        })
+      );
+    }
+    function nextEtaPanel() {
+      const values = nextEtaFields();
+      return `<div class="next-live-etas" role="group" aria-label="\u4E0B\u4E00\u7AD9\u5373\u6642\u4E0A\u6CB3\u500D\u7387 ETA">${[
+        ["total", "\u5168\u7A0B\u500D\u7387 ETA"],
+        ["recent", "\u6700\u8FD1 30 \u5206\u9418\u500D\u7387 ETA"]
+      ].map(
+        ([key2, title]) => `<section class="next-live-eta" aria-label="${title}"><h3>${title}</h3><strong id="itinerary-${key2}-arrival">${esc(values[`itinerary-${key2}-arrival`])}</strong><span id="itinerary-${key2}-remaining">${esc(values[`itinerary-${key2}-remaining`])}</span><p id="itinerary-${key2}-eta-reason" class="small muted" role="status" aria-atomic="true">${esc(values[`itinerary-${key2}-eta-reason`])}</p></section>`
+      ).join(
+        ""
+      )}<p class="small muted">\u9810\u4F30\u62B5\u9054\uFF08\u53F0\u5317\u6642\u9593\uFF09\uFF1B\u4EE5\u73FE\u5728\u52A0\u4E0A\u5269\u9918\u4E0A\u6CB3\u57FA\u6E96 \xD7 \u5404\u81EA\u5373\u6642\u500D\u7387\u3002\u542B\u672A\u4F86\u4F11\u606F\u7684\u8017\u6642\u63A8\u4F30\uFF0C\u50C5\u4F9B\u53C3\u8003\u3002</p></div>`;
+    }
     function nextCard() {
       const data = itinerary.snapshot(), next = data?.next, file = recordingRoute2?.() ?? state.library.find((entry) => entry.id === state.gps.sourceRouteId), metrics = remainingRouteMetrics(file, data, state.gps), remaining = metrics.distanceM;
-      return `<section class="panel next-card itinerary-next"><span class="eyebrow">NEXT STOP</span><h2>${next ? esc(next.station.name) : data?.active ? "\u6CBF\u9014\u7AD9\u9EDE\u5DF2\u5B8C\u6210" : "\u4E0B\u4E00\u7AD9\u5F85\u63D0\u4F9B"}</h2><p class="small station-status">${data?.active ? next ? "\u672A\u5230\u9054" : "\u5DF2\u901A\u904E\u5168\u90E8\u7AD9\u9EDE" : "\u5C1A\u672A\u51FA\u767C"}</p><p class="small">${next ? typeLabels[next.station.type] ?? "\u6CBF\u9014\u7AD9\u9EDE" : "\u9078\u7528 GPX \u5F8C\u81EA\u52D5\u986F\u793A\u3002"}</p><div class="next-metrics"><div><strong id="itinerary-distance">${remaining !== null ? (remaining / 1e3).toFixed(2) + " km" : next ? (next.routeProgressM / 1e3).toFixed(2) + " km" : "\u2014"}</strong><small id="itinerary-distance-label">${remaining !== null ? "\u6CBF GPX \u5269\u9918\u8DDD\u96E2" : "GPX \u7D2F\u8A08\u4F4D\u7F6E"}</small></div><div><strong id="itinerary-next-arrival">${data?.active && next ? arrival(next.arrivalUtcMs) : "\u958B\u59CB\u5F8C\u986F\u793A"}</strong><small>\u9810\u4F30\u62B5\u9054\uFF08\u53F0\u5317\u6642\u9593\uFF09</small></div></div><div class="next-elevation" role="group" aria-label="\u5230\u4E0B\u4E00\u7AD9\u7684\u5269\u9918\u9AD8\u5EA6"><div><span>\u5269\u9918\u722C\u5347</span><strong id="itinerary-remaining-ascent" title="${esc(metrics.message)}">${heightLabel(metrics.ascentM)}</strong></div><div><span>\u5269\u9918\u4E0B\u964D</span><strong id="itinerary-remaining-descent" title="${esc(metrics.message)}">${heightLabel(metrics.descentM)}</strong></div></div><p id="itinerary-countdown" class="small"></p>${data?.offRoute ? '<p class="error-message">\u76EE\u524D\u4F4D\u7F6E\u504F\u96E2\u9810\u5B9A GPX\uFF0C\u8ACB\u78BA\u8A8D\u8DEF\u7DDA\u3002</p>' : ""}${data?.active && next && next.arrivalUtcMs === null ? '<p class="small error-message">\u5C1A\u7121\u53EF\u9760 ETA\uFF1B\u7B49\u5F85\u6709\u6548\u6642\u9593\u8CC7\u6599\u3002</p>' : ""}${next?.reason ? `<p class="small error-message">${esc(next.reason)}</p>` : ""}<p id="itinerary-elevation-status" class="small muted">${esc(metrics.message)}</p><details class="next-details" id="next-details"><summary>\u5230\u7AD9\u78BA\u8A8D\u8207\u5BE6\u6E2C\u500D\u7387</summary>${data?.active && !data.finished && next ? button("\u5DF2\u62B5\u9054\uFF0C\u5207\u63DB\u4E0B\u4E00\u7AD9", "itinerary-arrived", "", "") : ""}<p class="small muted">\u5230\u7AD9\u5BE6\u6E2C\u500D\u7387\uFF1A<strong>${data?.observedFactor === null || !data?.observedFactor ? "\u5C1A\u5F85\u6709\u6548\u5230\u7AD9\u7D00\u9304" : data.observedFactor.toFixed(2) + " \u500D"}</strong></p><p class="small muted">\u5230\u7AD9\u5BE6\u6E2C\u500D\u7387\u4F7F\u7528\u5DF2\u78BA\u8A8D\u5230\u7AD9\u4E4B\u9593\u7684\u8017\u6642\uFF0C\u5305\u542B\u4F11\u606F\u8207\u66AB\u505C\uFF0C\u8207 GPS \u5373\u6642\u500D\u7387\u5206\u958B\u3002\u8A2D\u5B9A\u500D\u7387\u50C5\u7528\u65BC ETA\u3002</p></details></section>`;
+      return `<section class="panel next-card itinerary-next"><span class="eyebrow">NEXT STOP</span><h2>${next ? esc(next.station.name) : data?.active ? "\u6CBF\u9014\u7AD9\u9EDE\u5DF2\u5B8C\u6210" : "\u4E0B\u4E00\u7AD9\u5F85\u63D0\u4F9B"}</h2><p class="small station-status">${data?.active ? next ? "\u672A\u5230\u9054" : "\u5DF2\u901A\u904E\u5168\u90E8\u7AD9\u9EDE" : "\u5C1A\u672A\u51FA\u767C"}</p><p class="small">${next ? typeLabels[next.station.type] ?? "\u6CBF\u9014\u7AD9\u9EDE" : "\u9078\u7528 GPX \u5F8C\u81EA\u52D5\u986F\u793A\u3002"}</p><div class="next-metrics"><div><strong id="itinerary-distance">${remaining !== null ? (remaining / 1e3).toFixed(2) + " km" : next ? (next.routeProgressM / 1e3).toFixed(2) + " km" : "\u2014"}</strong><small id="itinerary-distance-label">${remaining !== null ? "\u6CBF GPX \u5269\u9918\u8DDD\u96E2" : "GPX \u7D2F\u8A08\u4F4D\u7F6E"}</small></div><div><strong id="itinerary-next-arrival">${data?.active && next ? arrival(next.arrivalUtcMs) : "\u958B\u59CB\u5F8C\u986F\u793A"}</strong><small>\u8A2D\u5B9A\u500D\u7387 ETA\uFF08\u53F0\u5317\u6642\u9593\uFF0C\u6BD4\u8F03\u57FA\u6E96\uFF09</small></div></div>${nextEtaPanel()}<div class="next-elevation" role="group" aria-label="\u5230\u4E0B\u4E00\u7AD9\u7684\u5269\u9918\u9AD8\u5EA6"><div><span>\u5269\u9918\u722C\u5347</span><strong id="itinerary-remaining-ascent" title="${esc(metrics.message)}">${heightLabel(metrics.ascentM)}</strong></div><div><span>\u5269\u9918\u4E0B\u964D</span><strong id="itinerary-remaining-descent" title="${esc(metrics.message)}">${heightLabel(metrics.descentM)}</strong></div></div><p id="itinerary-countdown" class="small"></p>${data?.offRoute ? '<p class="error-message">\u76EE\u524D\u4F4D\u7F6E\u504F\u96E2\u9810\u5B9A GPX\uFF0C\u8ACB\u78BA\u8A8D\u8DEF\u7DDA\u3002</p>' : ""}${data?.active && next && next.arrivalUtcMs === null ? '<p class="small error-message">\u8A2D\u5B9A\u500D\u7387 ETA \u5C1A\u7121\u6709\u6548\u6642\u9593\u8CC7\u6599\u3002</p>' : ""}${next?.reason ? `<p class="small error-message">${esc(next.reason)}</p>` : ""}<p id="itinerary-elevation-status" class="small muted">${esc(metrics.message)}</p><details class="next-details" id="next-details"><summary>\u5230\u7AD9\u78BA\u8A8D\u8207\u5BE6\u6E2C\u500D\u7387</summary>${data?.active && !data.finished && next ? button("\u5DF2\u62B5\u9054\uFF0C\u5207\u63DB\u4E0B\u4E00\u7AD9", "itinerary-arrived", "", "") : ""}<p class="small muted">\u5230\u7AD9\u5BE6\u6E2C\u500D\u7387\uFF1A<strong>${data?.observedFactor === null || !data?.observedFactor ? "\u5C1A\u5F85\u6709\u6548\u5230\u7AD9\u7D00\u9304" : data.observedFactor.toFixed(2) + " \u500D"}</strong></p><p class="small muted">\u5230\u7AD9\u5BE6\u6E2C\u500D\u7387\u4F7F\u7528\u5DF2\u78BA\u8A8D\u5230\u7AD9\u4E4B\u9593\u7684\u8017\u6642\uFF0C\u5305\u542B\u4F11\u606F\u8207\u66AB\u505C\uFF0C\u8207 GPS \u5373\u6642\u500D\u7387\u5206\u958B\u3002\u8A2D\u5B9A\u500D\u7387 ETA \u4FDD\u7559\u4F5C\u6BD4\u8F03\uFF1B\u5373\u6642\u500D\u7387\u4E0D\u6703\u8986\u5BEB\u8A2D\u5B9A\u3002</p></details></section>`;
     }
     function updateNumbers() {
       liveFactors.updateNumbers();
+      for (const [id2, value2] of Object.entries(nextEtaFields())) {
+        const field = document2.getElementById(id2);
+        if (field && field.textContent !== value2) field.textContent = value2;
+      }
       const data = itinerary.snapshot(), next = data?.next;
       const file = recordingRoute2?.() ?? state.library.find((entry) => entry.id === state.gps.sourceRouteId);
       const metrics = remainingRouteMetrics(file, data, state.gps);
@@ -5997,7 +6254,7 @@
         return;
       }
       if (element)
-        element.textContent = next?.arrivalUtcMs !== null && Number.isFinite(next?.arrivalUtcMs) ? next.arrivalUtcMs > Date.now() ? `\u9810\u4F30\u5269\u9918 ${duration((next.arrivalUtcMs - Date.now()) / 1e3)}` : "\u9810\u4F30\u6642\u523B\u5DF2\u904E\uFF0C\u5C1A\u672A\u78BA\u8A8D\u62B5\u9054" : "\u7B49\u5F85\u6709\u6548\u6642\u9593\u8CC7\u6599";
+        element.textContent = next?.arrivalUtcMs !== null && Number.isFinite(next?.arrivalUtcMs) ? next.arrivalUtcMs > Date.now() ? `\u8A2D\u5B9A\u500D\u7387\u9810\u4F30\u5269\u9918 ${duration((next.arrivalUtcMs - Date.now()) / 1e3)}` : "\u8A2D\u5B9A\u500D\u7387\u9810\u4F30\u6642\u523B\u5DF2\u904E\uFF0C\u5C1A\u672A\u78BA\u8A8D\u62B5\u9054" : "\u7B49\u5F85\u6709\u6548\u6642\u9593\u8CC7\u6599";
     }
     function referenceDuration() {
       const data = itinerary.snapshot();
@@ -7603,7 +7860,7 @@
   }
 
   // src/features/itinerary/model.js
-  function buildItinerary(resources, file) {
+  function buildItinerary(resources, file, { slopeOptions = {} } = {}) {
     const matched = matchItinerary(resources.stations, file);
     const ids = mapTimeNodes(resources.stations, resources.adapter);
     const graph = createTimeGraph(resources.database);
@@ -7669,7 +7926,7 @@
       row.gap = previous.segmentIndex !== row.segmentIndex;
       segments.push(...row.incoming);
     });
-    return { ...matched, rows, segments, timeModel: buildShangheTimeModel(file, rows) };
+    return { ...matched, rows, segments, timeModel: buildShangheTimeModel(file, rows, slopeOptions) };
   }
   function forecastItinerary(plan, factor, departure, journey) {
     const rows = plan.rows.map((row) => ({ ...row, arrivalUtcMs: null, cumulativeSeconds: null }));
@@ -7717,6 +7974,72 @@
       complete: base.complete && plan.startCovered && plan.endCovered,
       observedFactor
     };
+  }
+
+  // src/features/itinerary/next-eta.js
+  var missing2 = (reason) => ({
+    factor: null,
+    baselineSeconds: null,
+    remainingSeconds: null,
+    arrivalUtcMs: null,
+    reason,
+    source: null
+  });
+  function nextStopEtas(file, data, live, now = Date.now()) {
+    const direction = file?.direction === "reverse" ? "reverse" : "forward";
+    const next = data?.next;
+    const previous = data?.rows?.[Math.max(0, data.nextIndex - 1)];
+    const unavailable2 = (reason) => ({
+      asOf: now,
+      total: missing2(reason),
+      recent: missing2(reason)
+    });
+    if (!data?.active || data.finished) return unavailable2("eta-not-recording");
+    if (!next) return unavailable2("eta-no-next");
+    if (!file || !data.compatible || !data.timeModel)
+      return unavailable2("reference-or-session-changed");
+    function estimate(metric3) {
+      if (!Number.isFinite(metric3?.factor) || metric3.factor <= 0 || metric3.reason || metric3.state !== void 0 && metric3.state !== "live")
+        return missing2(metric3?.reason ?? "eta-factor-unavailable");
+      const source = metric3.source;
+      const position2 = source?.to;
+      if (!position2 || !Number.isFinite(now) || !Number.isFinite(position2.time) || now - position2.time > LIVE_FACTOR_DEFAULTS.maxAgeMs || position2.time > now + LIVE_FACTOR_DEFAULTS.futureToleranceMs || live.asOf !== position2.time || metric3.asOf !== void 0 && metric3.asOf !== position2.time)
+        return missing2("stale-gps-fix");
+      if (source.routeId !== file.id || source.direction !== direction || source.modelVersion !== data.timeModel.version || !Number.isInteger(position2.segmentIndex) || position2.segmentIndex !== next.segmentIndex || !Number.isFinite(position2.routeProgressM) || !Number.isFinite(next.routeProgressM) || next.gap || !previous || !Number.isFinite(previous.routeProgressM) || previous.segmentIndex !== position2.segmentIndex || position2.routeProgressM < previous.routeProgressM || position2.routeProgressM > next.routeProgressM)
+        return missing2("eta-route-position-mismatch");
+      const fromM = position2.routeProgressM, toM = next.routeProgressM, model = data.timeModel;
+      let cursor = fromM;
+      for (const leg of model.legs) {
+        const left = Math.max(fromM, leg.fromM), right = Math.min(toM, leg.toM);
+        if (right <= left) continue;
+        if (Math.abs(left - cursor) > 1e-6 || leg.segmentIndex !== position2.segmentIndex || leg.source.direction !== direction || leg.method === "unavailable")
+          return missing2(leg.reason ?? "eta-unknown-remaining");
+        cursor = right;
+      }
+      if (Math.abs(cursor - toM) > 1e-6) return missing2("eta-unknown-remaining");
+      const options = { segmentIndex: position2.segmentIndex };
+      const from = shangheTimeAt(model, fromM, options), to = shangheTimeAt(model, toM, options);
+      if (![from.elapsedSeconds, to.elapsedSeconds].every(Number.isFinite))
+        return missing2(from.reason ?? to.reason ?? "eta-unknown-remaining");
+      const baselineSeconds = to.elapsedSeconds - from.elapsedSeconds, remainingSeconds = baselineSeconds * metric3.factor, arrivalUtcMs = now + remainingSeconds * 1e3;
+      if (baselineSeconds < 0 || !Number.isFinite(remainingSeconds) || !Number.isFinite(arrivalUtcMs) || Math.abs(arrivalUtcMs) > 864e13)
+        return missing2("eta-unknown-remaining");
+      return {
+        factor: metric3.factor,
+        baselineSeconds,
+        remainingSeconds,
+        arrivalUtcMs,
+        reason: null,
+        source: {
+          direction,
+          segmentIndex: position2.segmentIndex,
+          fromM,
+          toM,
+          fixTime: position2.time
+        }
+      };
+    }
+    return { asOf: now, total: estimate(live?.total), recent: estimate(live?.recent) };
   }
 
   // src/features/itinerary/live-checkpoint.js
@@ -7975,6 +8298,9 @@
         recent: { ...unavailable2 }
       };
     }
+    function interruptLiveFactor(reason, now = Date.now()) {
+      if (!disposed) return liveSession()?.engine.interrupt(reason, now);
+    }
     function historyReference(file) {
       if (!file) return null;
       const plan = planFor(file);
@@ -8034,6 +8360,7 @@
     }
     return {
       snapshot: snapshot3,
+      nextEtas: (now = Date.now()) => nextStopEtas(recordingRoute2(), snapshot3(), liveFactors(now), now),
       restore,
       setFactor,
       begin,
@@ -8045,6 +8372,7 @@
       confirmDeparture,
       updateLiveFactor,
       liveFactors,
+      interruptLiveFactor,
       historyReference,
       dispose() {
         disposed = true;
@@ -8739,6 +9067,7 @@
       onJourneyStart: itinerary.begin,
       onJourneyProgress: itinerary.progress,
       onJourneyFix: itinerary.updateLiveFactor,
+      onJourneyInterruption: itinerary.interruptLiveFactor,
       onJourneyRestore: itinerary.restoreLiveSession,
       prepareHistory: history.prepare,
       state,

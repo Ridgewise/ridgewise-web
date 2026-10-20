@@ -2260,6 +2260,33 @@
   margin-top: 4px;
   padding: 5px 0 2px;
 }
+.next-live-etas {
+  margin-block: 12px;
+  border-top: 1px solid var(--border, #e2e9e3);
+}
+.next-live-eta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  padding-block: 10px;
+  border-bottom: 1px solid var(--border, #e2e9e3);
+  overflow-wrap: anywhere;
+}
+.next-live-eta h3,
+.next-live-eta p {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.next-live-eta h3,
+.next-live-eta span {
+  font-size: 14px;
+}
+.next-live-eta strong {
+  font-size: 18px;
+}
+.next-live-eta p:empty {
+  display: none;
+}
 @media (max-width: 700px) and (orientation: portrait) {
   .recording-scene:not(.recording-stopped) .compact-map .actual-map {
     height: clamp(170px, calc(100dvh - 620px), 350px);
@@ -3070,6 +3097,20 @@ dialog {
   line-height: 1.3;
   margin: 4px 0;
 }
+.live-factor-freshness {
+  font-size: 13px;
+  font-weight: 700;
+  margin: 4px 0;
+}
+.live-factor-freshness:empty {
+  display: none;
+}
+.live-factor-freshness[data-state=stale] {
+  color: #774000;
+  background: #fff0cd;
+  border-radius: 4px;
+  padding: 4px 6px;
+}
 .live-factor-comparison,
 .live-factor-reason {
   color: var(--factor-muted);
@@ -3121,6 +3162,10 @@ dialog {
   }
 }
 @media (prefers-color-scheme: dark) {
+  .live-factor-freshness[data-state=stale] {
+    color: #ffe3a6;
+    background: #543b14;
+  }
   .live-factors {
     color-scheme: dark;
     --factor-bg: #20392e;
