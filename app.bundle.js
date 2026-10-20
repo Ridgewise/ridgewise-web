@@ -1,9 +1,524 @@
 /* Generated from src/ by esbuild; do not edit dist/. */
 (() => {
+  // src/ui/icons.js
+  var icons = {
+    mountain: "M3 20 10 5l5 9 3-5 5 11H3Zm4-8 3 3 3-4",
+    plan: "M5 4h14v17H5z M9 2v4m6-4v4M8 10h8m-8 4h5",
+    compass: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm4 5-3 5-5 3 3-5 5-3Z",
+    route: "M5 18a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm14-16a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM5 18v-4c0-5 14 1 14-4V6",
+    activity: "M2 12h5l3-8 4 16 3-8h5",
+    folder: "M3 6h7l2 2h9v12H3z",
+    clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 4v5l3 2",
+    up: "m5 15 7-7 7 7M12 8v12",
+    down: "m5 9 7 7 7-7M12 4v12",
+    distance: "M4 7h16v10H4z M8 7v4m4-4v6m4-6v4",
+    calendar: "M4 5h16v16H4zM8 2v6m8-6v6M4 11h16",
+    sun: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-6v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2",
+    moon: "M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11Z",
+    info: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 8v6m0-11v1",
+    upload: "M12 16V3m-5 5 5-5 5 5M4 16v5h16v-5",
+    play: "m8 4 12 8-12 8Z",
+    pause: "M8 5v14M16 5v14",
+    stop: "M6 6h12v12H6z",
+    check: "m5 12 4 4L19 6",
+    plus: "M12 5v14M5 12h14",
+    minus: "M5 12h14",
+    locate: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-6v4m0 12v4M2 12h4m12 0h4",
+    leaf: "M20 3C8 2 2 7 5 15s15 6 15-12ZM5 21 15 9",
+    close: "m6 6 12 12M6 18 18 6",
+    file: "M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6",
+    refresh: "M4 9a8 8 0 0 1 14-4l3 3M21 3v5h-5M20 15a8 8 0 0 1-14 4l-3-3M3 21v-5h5",
+    help: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM9 9c0-4 7-4 6 0-.4 2-3 2-3 5m0 3v1",
+    download: "M12 3v13m-5-5 5 5 5-5M4 17v4h16v-4",
+    shield: "m12 2 8 3v7c0 5-8 10-8 10S4 17 4 12V5Z",
+    chevron: "m9 5 7 7-7 7",
+    user: "M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM4 21v-3c0-6 16-6 16 0v3",
+    layers: "m12 3 10 6-10 6L2 9Zm-10 12 10 6 10-6M2 12l10 6 10-6"
+  };
+  var icon = (name, cls = "") => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${icons[name] || icons.mountain}"/></svg>`;
+
+  // src/ui/html.js
+  var esc = (value2) => String(value2).replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+  );
+  var button = (label, action, kind = "", ic = "", extra = "") => `<button class="button ${kind}" data-action="${action}" ${extra}>${ic ? icon(ic) : ""}${label}</button>`;
+  var metric = (label, value2, unit = "", ic = "") => `<div class="stat"><div class="stat-label">${ic ? icon(ic) : ""}${label}</div><div class="stat-value">${value2}<small>${unit}</small></div></div>`;
+  var meters = (value2) => value2 === null ? "\u2014" : Math.round(value2).toLocaleString();
+
+  // ../packages/route-stations/index.js
+  var radius = 6371e3;
+  var rad = (degrees) => degrees * Math.PI / 180;
+  var deltaLon = (degrees) => (degrees + 540) % 360 - 180;
+  var statuses = /* @__PURE__ */ new Set(["located", "pending", "ambiguous"]);
+  function requireCoordinate(point) {
+    if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lon) || Math.abs(point.lat) > 90 || Math.abs(point.lon) > 180) {
+      throw new Error("A valid latitude and longitude are required");
+    }
+  }
+  function distanceM(a, b) {
+    requireCoordinate(a);
+    requireCoordinate(b);
+    const h = Math.sin(rad(b.lat - a.lat) / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(rad(deltaLon(b.lon - a.lon)) / 2) ** 2;
+    return 2 * radius * Math.atan2(Math.sqrt(Math.min(1, h)), Math.sqrt(Math.max(0, 1 - h)));
+  }
+  function readCoordinateCatalog(data) {
+    if (!data || data.schemaVersion !== 2 || data.kind !== "station-coordinate-catalog" || data.coordinateReference !== "WGS84" || !Array.isArray(data.stations)) {
+      throw new Error("Expected station coordinate catalog schema v2 (WGS84)");
+    }
+    const ids = /* @__PURE__ */ new Set();
+    for (const station of data.stations) {
+      if (!station || typeof station.stationId !== "string" || !station.stationId || ids.has(station.stationId) || typeof station.name !== "string" || !station.name || !statuses.has(station.coordinateStatus)) {
+        throw new Error("Station identity or coordinate status is invalid");
+      }
+      ids.add(station.stationId);
+      if (station.coordinateStatus === "located") requireCoordinate(station);
+      else if (station.lat !== null || station.lon !== null) throw new Error("Unresolved station coordinates must remain null");
+      for (const field of ["edgeIndex", "fraction", "routeProgressM", "occurrenceId", "gpxWaypointId", "routeRevisionId", "confirmation"]) {
+        if (field in station) throw new Error("Route-specific marking fields do not belong in the coordinate catalog");
+      }
+    }
+    return data.stations;
+  }
+  function usableStations(stations) {
+    if (!Array.isArray(stations)) throw new Error("Expected station coordinate records");
+    return stations.filter((station) => station.coordinateStatus === "located").map((station) => {
+      requireCoordinate(station);
+      return station;
+    });
+  }
+  function createTrackMatcher(segments) {
+    if (!Array.isArray(segments) || !segments.length || segments.some((segment) => !Array.isArray(segment))) throw new Error("Missing GPX segments");
+    const edges = [];
+    let progress = 0;
+    segments.forEach((segment, segmentIndex) => {
+      segment.forEach(requireCoordinate);
+      for (let i = 1; i < segment.length; i++) {
+        const a = segment[i - 1], b = segment[i], length = distanceM(a, b);
+        edges.push({ a, b, length, startM: progress, segmentIndex });
+        progress += length;
+      }
+    });
+    return { match: (stations, options) => matchTrackEdges(stations, edges, progress, options) };
+  }
+  function matchTrackEdges(stations, edges, progress, { maxOffsetM = 100, mergeWithinM = 25, preserveReversals = false } = {}) {
+    if (!Number.isFinite(maxOffsetM) || maxOffsetM <= 0 || !Number.isFinite(mergeWithinM) || mergeWithinM < 0) throw new Error("Invalid matching distances");
+    const matches = [];
+    for (const station of usableStations(stations)) {
+      const groups = [];
+      for (const edge of edges) {
+        const { a, b, length, startM, segmentIndex } = edge;
+        const cos = Math.max(1e-8, Math.cos(rad((a.lat + b.lat) / 2)));
+        const bx = rad(deltaLon(b.lon - a.lon)) * cos * radius, by = rad(b.lat - a.lat) * radius;
+        const px = rad(deltaLon(station.lon - a.lon)) * cos * radius, py = rad(station.lat - a.lat) * radius;
+        const length2 = bx * bx + by * by;
+        const fraction = length2 ? Math.max(0, Math.min(1, (px * bx + py * by) / length2)) : 0;
+        const point = { lat: a.lat + (b.lat - a.lat) * fraction, lon: deltaLon(a.lon + deltaLon(b.lon - a.lon) * fraction) };
+        const offsetM = distanceM(station, point);
+        if (offsetM > maxOffsetM) continue;
+        const position2 = { segmentIndex, routeProgressM: startM + length * fraction, offsetM };
+        const group = groups.at(-1), last = group?.at(-1);
+        const reversal = preserveReversals && last && position2.routeProgressM - last.position.routeProgressM > 1e-6 && bx * last.dx + by * last.dy < 0;
+        const candidate = { position: position2, dx: length2 ? bx : last?.dx ?? 0, dy: length2 ? by : last?.dy ?? 0 };
+        if (last && !reversal && last.position.segmentIndex === segmentIndex && position2.routeProgressM - last.position.routeProgressM <= mergeWithinM) group.push(candidate);
+        else groups.push([candidate]);
+      }
+      const routePositions = groups.map((group) => group.reduce((a, b) => a.position.offsetM <= b.position.offsetM ? a : b).position);
+      if (!routePositions.length) continue;
+      matches.push({
+        station,
+        nearestTrackDistanceM: Math.min(...routePositions.map((point) => point.offsetM)),
+        routePositions,
+        matchStatus: routePositions.length > 1 ? "multiple_route_positions" : "near_track"
+      });
+    }
+    matches.sort((a, b) => a.routePositions[0].routeProgressM - b.routePositions[0].routeProgressM || a.station.stationId.localeCompare(b.station.stationId));
+    return {
+      matches,
+      totalTrackDistanceM: progress,
+      distanceUnit: "m",
+      gapsAreConnected: false,
+      note: "These are coordinate proximity matches. They do not confirm arrival, hut entry, or a complete Shanghe time path."
+    };
+  }
+
+  // src/features/gpx-stations/landmarks.js
+  var offlineLandmarks = [
+    {
+      stationId: "osm-node-4254423699",
+      name: "\u4E03\u661F\u5C71\u4E3B\u5CF0",
+      aliases: ["\u4E03\u661F\u5C71", "Qixingshan"],
+      type: "summit",
+      lat: 25.1707017,
+      lon: 121.5534401,
+      coordinateStatus: "located",
+      coordinateSource: {
+        provider: "OpenStreetMap contributors",
+        url: "https://www.openstreetmap.org/node/4254423699",
+        version: 19,
+        sourceName: "\u4E03\u661F\u5C71",
+        verifiedOn: "2026-10-20"
+      }
+    },
+    {
+      stationId: "osm-node-5594142817",
+      name: "\u4E03\u661F\u5C71\u51B7\u6C34\u5751\u767B\u5C71\u53E3",
+      aliases: ["\u51B7\u6C34\u5751\u767B\u5C71\u53E3"],
+      type: "trailhead",
+      lat: 25.1661623,
+      lon: 121.5633121,
+      coordinateStatus: "located",
+      coordinateSource: {
+        provider: "OpenStreetMap contributors",
+        url: "https://www.openstreetmap.org/node/5594142817",
+        version: 5,
+        verifiedOn: "2026-10-20"
+      }
+    },
+    {
+      stationId: "osm-node-2689317888",
+      name: "\u51B7\u6C34\u5751\u670D\u52D9\u7AD9",
+      aliases: [],
+      type: "waypoint",
+      lat: 25.1660656,
+      lon: 121.5638266,
+      coordinateStatus: "located",
+      coordinateSource: {
+        provider: "OpenStreetMap contributors",
+        url: "https://www.openstreetmap.org/node/2689317888",
+        version: 11,
+        sourceName: "\u51B7\u6C34\u5751\u670D\u52D9\u7AD9\uFF08\u516C\u8ECA\u7AD9\u724C\uFF0C\u975E\u904A\u5BA2\u4E2D\u5FC3\u5EFA\u7269\uFF09",
+        verifiedOn: "2026-10-20"
+      }
+    }
+  ];
+
+  // src/features/gpx-stations/visits.js
+  var rad2 = (n) => n * Math.PI / 180;
+  var canonicalM = (file, m) => file.direction === "reverse" ? file.stats.km * 1e3 - m : m;
+  var canonicalSegment = (file, s) => file.direction === "reverse" ? file.segments.length - 1 - s : s;
+  function readAnnotations(value2) {
+    const added = (Array.isArray(value2?.added) ? value2.added : []).filter(
+      (p) => p && typeof p.id === "string" && typeof p.name === "string" && p.name.trim() && Number.isFinite(p.distanceM) && p.distanceM >= 0 && Number.isInteger(p.segmentIndex) && p.segmentIndex >= 0
+    ).map((p) => ({
+      id: p.id,
+      name: p.name.slice(0, 300),
+      distanceM: p.distanceM,
+      segmentIndex: p.segmentIndex
+    }));
+    const edits = Object.fromEntries(
+      Object.entries(value2?.edits ?? {}).flatMap(
+        ([id2, edit]) => edit?.deleted === true ? [[id2, { deleted: true }]] : typeof edit?.name === "string" && edit.name.trim() ? [[id2, { name: edit.name.trim().slice(0, 300) }]] : []
+      )
+    );
+    return { added, edits };
+  }
+  function visitId(file, row) {
+    return `${row.station.stationId}:${canonicalSegment(file, row.segmentIndex)}:${Math.round(canonicalM(file, row.routeProgressM))}`;
+  }
+  function pointOnRoute(file, distance2, segmentIndex) {
+    const points = file.points.filter((p) => p.segment === segmentIndex);
+    for (let i = 0; i < points.length; i++) {
+      const b = points[i], a = points[Math.max(0, i - 1)];
+      if (distance2 < a.km * 1e3 - 1e-6 || distance2 > b.km * 1e3 + 1e-6) continue;
+      const f = b.km > a.km ? (distance2 / 1e3 - a.km) / (b.km - a.km) : 0;
+      return { lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f };
+    }
+    return null;
+  }
+  function positionsAtDistance(file, distance2) {
+    return [...new Set(file.points.map((p) => p.segment))].flatMap((segmentIndex) => {
+      const point = pointOnRoute(file, distance2, segmentIndex);
+      return point ? [{ ...point, segmentIndex, routeProgressM: distance2 }] : [];
+    });
+  }
+  function nearbyVisits(file, station, maxOffsetM = 50) {
+    const groups = [];
+    let group = null;
+    for (let i = 1; i < file.points.length; i++) {
+      const a = file.points[i - 1], b = file.points[i];
+      if (a.segment !== b.segment) {
+        group = null;
+        continue;
+      }
+      const cos = Math.cos(rad2((a.lat + b.lat) / 2));
+      const dx = (b.lon - a.lon) * cos, dy = b.lat - a.lat;
+      const f = dx * dx + dy * dy ? Math.max(
+        0,
+        Math.min(
+          1,
+          ((station.lon - a.lon) * cos * dx + (station.lat - a.lat) * dy) / (dx * dx + dy * dy)
+        )
+      ) : 0;
+      const point = { lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f };
+      const offsetM = distanceM(point, station);
+      if (offsetM > maxOffsetM) {
+        group = null;
+        continue;
+      }
+      if (!group) {
+        group = [];
+        groups.push(group);
+      }
+      group.push({
+        point,
+        segmentIndex: b.segment,
+        routeProgressM: (a.km + (b.km - a.km) * f) * 1e3,
+        offsetM
+      });
+    }
+    return groups.flatMap((items) => {
+      const best = items.reduce(
+        (a, b) => Math.abs(a.offsetM - b.offsetM) < 1e-6 ? canonicalM(file, a.routeProgressM) <= canonicalM(file, b.routeProgressM) ? a : b : a.offsetM < b.offsetM ? a : b
+      );
+      const ties = items.filter((p) => p.offsetM <= best.offsetM + 3);
+      if (ties.at(-1).routeProgressM - ties[0].routeProgressM > 25 && ties.some((p) => distanceM(p.point, best.point) > 15))
+        return [];
+      const { segmentIndex, routeProgressM, offsetM } = best;
+      return [{ station, segmentIndex, routeProgressM, offsetM, visible: true }];
+    });
+  }
+  function gpxStationRows(file, waypoints2, annotations = {}, landmarks = offlineLandmarks) {
+    annotations = readAnnotations(annotations);
+    const first = file.points[0], last = file.points.at(-1), total = last.km * 1e3;
+    const rows = [first, last].map((p, i) => ({
+      station: {
+        stationId: `gpx-point-${p.lat}-${p.lon}`,
+        name: i ? "GPX \u7D42\u9EDE" : "GPX \u8D77\u9EDE",
+        lat: p.lat,
+        lon: p.lon,
+        type: i ? "exit" : "trailhead",
+        coordinateStatus: "located",
+        source: "endpoint"
+      },
+      segmentIndex: p.segment,
+      routeProgressM: p.km * 1e3,
+      visible: true
+    }));
+    const wptRows = waypoints2.flatMap((s) => nearbyVisits(file, { ...s, source: "gpx-wpt" }));
+    const normalize2 = (n) => n.trim().toLocaleLowerCase();
+    const places = landmarks.filter(
+      (s) => s.coordinateStatus === "located" && [s.lat, s.lon].every(Number.isFinite) && Math.abs(s.lat) <= 90 && Math.abs(s.lon) <= 180
+    );
+    const automatic = places.filter(
+      (s) => !waypoints2.some(
+        (w) => distanceM(s, w) <= 25 || distanceM(s, w) <= 50 && [s.name, ...s.aliases ?? []].map(normalize2).includes(normalize2(w.name))
+      )
+    ).flatMap((s) => nearbyVisits(file, { ...s, source: "landmark" }));
+    for (const row of [...wptRows, ...automatic]) {
+      const endpoint = rows.find(
+        (r) => r.station.source === "endpoint" && r.segmentIndex === row.segmentIndex && Math.abs(r.routeProgressM - row.routeProgressM) <= 25
+      );
+      if (endpoint) endpoint.station = row.station;
+      else if (!rows.some(
+        (r) => r.segmentIndex === row.segmentIndex && Math.abs(r.routeProgressM - row.routeProgressM) < 1
+      ))
+        rows.push(row);
+    }
+    for (const added of annotations.added ?? []) {
+      const m = canonicalM(file, added.distanceM), s = canonicalSegment(file, added.segmentIndex);
+      if (!Number.isFinite(m) || m < 0 || m > total || !Number.isInteger(s) || !added.name?.trim())
+        continue;
+      const p = pointOnRoute(file, m, s);
+      if (p)
+        rows.push({
+          station: {
+            ...p,
+            stationId: added.id,
+            name: added.name.slice(0, 300),
+            coordinateStatus: "located",
+            type: "waypoint",
+            source: "manual"
+          },
+          segmentIndex: s,
+          routeProgressM: m,
+          visible: true,
+          visitId: added.id
+        });
+    }
+    return rows.flatMap((row) => {
+      row.visitId ??= visitId(file, row);
+      const edit = annotations.edits?.[row.visitId];
+      if (edit?.deleted) {
+        if (row.routeProgressM === 0 || row.routeProgressM === total)
+          return [{ ...row, visible: false }];
+        return [];
+      }
+      return [
+        {
+          ...row,
+          station: { ...row.station, name: edit?.name?.trim()?.slice(0, 300) || row.station.name }
+        }
+      ];
+    });
+  }
+  function manualVisit(file, position2, name, id2) {
+    if (!name?.trim() || !Number.isFinite(position2.routeProgressM) || !pointOnRoute(file, position2.routeProgressM, position2.segmentIndex))
+      throw new Error("\u8ACB\u9078\u64C7\u6709\u6548\u7684 GPX \u4F4D\u7F6E\u4E26\u547D\u540D\u3002");
+    return {
+      id: id2,
+      name: name.trim().slice(0, 300),
+      distanceM: canonicalM(file, position2.routeProgressM),
+      segmentIndex: canonicalSegment(file, position2.segmentIndex)
+    };
+  }
+
+  // src/features/gpx-stations/editor.js
+  function stationControls(row, enabled) {
+    return enabled && row.visitId ? button("\u7DE8\u8F2F\u7AD9\u9EDE", "gpx-stop-edit", "ghost", "", `data-visit="${esc(row.visitId)}"`) : "";
+  }
+  function createGpxStationEditor({
+    state,
+    itinerary,
+    current,
+    gpsPending: gpsPending2,
+    repository,
+    document: document2,
+    render,
+    feedback
+  }) {
+    let picking = false, candidates = [], editing = null, fileKey = null, busy = false;
+    state.itinerary.gpxStations = {};
+    const eligible = () => !gpsPending2() && current()?.kind !== "recording" && !current()?.rerouted && itinerary.snapshot()?.timeBasis === "gpx-moving-time";
+    function reset() {
+      picking = false;
+      candidates = [];
+      editing = null;
+    }
+    function panel() {
+      if (!eligible()) {
+        reset();
+        return "";
+      }
+      const file = current(), key2 = `${file.id}:${file.direction ?? "forward"}`;
+      if (key2 !== fileKey) {
+        reset();
+        fileKey = key2;
+      }
+      return `<section class="stack gpx-station-editor" id="gpx-station-editor" aria-label="GPX \u6CBF\u9014\u7AD9\u9EDE\u7DE8\u8F2F"><p class="small muted">GPX \u7AD9\u9EDE\uFF1A\u822A\u9EDE\u512A\u5148\uFF1B\u96E2\u7DDA\u5730\u6A19\u65BC 50m \u5167\u4E14\u4F4D\u7F6E\u7121\u6B67\u7FA9\u6642\u52A0\u5165\u3002\u5F80\u8FD4\u8A2A\u6B21\u5206\u958B\u4FDD\u5B58\u3002</p>${button("\u65B0\u589E\u6CBF\u9014\u7AD9\u9EDE", "gpx-stop-pick", "ghost", "", busy ? "disabled" : "")}${picking ? `<p role="status">\u9EDE\u9078\u5730\u5716\u6216\u9AD8\u5EA6\u5256\u9762\u4E0A\u7684\u4F4D\u7F6E\uFF1B\u5F80\u8FD4\u91CD\u758A\u6642\u8ACB\u9078\u64C7\u8A2A\u6B21\u3002</p>${button("\u53D6\u6D88\u9078\u9EDE", "gpx-stop-cancel", "ghost")}` : ""}${candidates.length || editing ? `<label for="gpx-stop-name">\u7AD9\u9EDE\u540D\u7A31</label><input id="gpx-stop-name" maxlength="300" type="text" value="${esc(editing?.station.name ?? "")}">${candidates.length ? `<label for="gpx-stop-position">\u884C\u9032\u4F4D\u7F6E</label><select id="gpx-stop-position">${candidates.map((p, i) => `<option value="${i}">\u7B2C ${p.segmentIndex + 1} \u6BB5 \xB7 GPX ${(p.routeProgressM / 1e3).toFixed(3)} km</option>`).join("")}</select>` : `<p class="small">\u6B64\u8A2A\u6B21\u4F4D\u65BC GPX ${(editing.routeProgressM / 1e3).toFixed(3)} km\uFF1B\u7DE8\u8F2F\u53EA\u5F71\u97FF\u9019\u4E00\u6B21\u3002</p>`}${button("\u4FDD\u5B58\u7AD9\u9EDE", "gpx-stop-save", "", "", busy ? "disabled" : "")}${editing ? button("\u522A\u9664\u6B64\u8A2A\u6B21", "gpx-stop-delete", "ghost", "", busy ? "disabled" : "") : ""}${button("\u53D6\u6D88\u7DE8\u8F2F", "gpx-stop-cancel", "ghost")}` : ""}<p class="small muted">\u50C5\u53E6\u5B58\u672C\u7AD9\u9EDE\u8A2D\u5B9A\uFF0C\u4E0D\u6539\u539F\u59CB GPX\u3002\u7D00\u9304\u958B\u59CB\u5F8C\u7AD9\u5E8F\u56FA\u5B9A\uFF1B\u6642\u9593\u4E0D\u8DB3\u4ECD\u986F\u793A\u7F3A\u5931\u3002</p></section>`;
+    }
+    async function persist() {
+      busy = true;
+      itinerary.invalidateGpxStations();
+      render();
+      try {
+        if (!repository.saveGpxStations) throw new Error("unavailable");
+        await repository.saveGpxStations({
+          version: 1,
+          routes: structuredClone(state.itinerary.gpxStations)
+        });
+        feedback.toast("\u7AD9\u9EDE\u5DF2\u4FDD\u5B58\u3002");
+      } catch {
+        feedback.toast("\u7AD9\u9EDE\u50C5\u7559\u5728\u6B64\u5206\u9801\uFF1B\u672C\u6A5F\u4FDD\u5B58\u5931\u6557\uFF0C\u8ACB\u7A0D\u5F8C\u518D\u8A66\u3002");
+      } finally {
+        busy = false;
+        render();
+      }
+    }
+    async function restore() {
+      try {
+        const saved = await repository.getGpxStations?.();
+        if (saved?.version === 1 && saved.routes && typeof saved.routes === "object") {
+          state.itinerary.gpxStations = Object.fromEntries(
+            Object.entries(saved.routes).map(([id2, value2]) => [id2, readAnnotations(value2)])
+          );
+          itinerary.invalidateGpxStations();
+        }
+      } catch {
+        feedback.toast("\u6CBF\u9014\u7AD9\u9EDE\u8A2D\u5B9A\u7121\u6CD5\u8B80\u53D6\uFF1B\u5148\u986F\u793A GPX \u822A\u9EDE\u8207\u96E2\u7DDA\u5730\u6A19\u3002");
+      }
+    }
+    function selectMap(point) {
+      if (!picking || !eligible() || busy) return;
+      candidates = nearbyVisits(current(), { ...point, stationId: "manual-pick" }).map(
+        ({ routeProgressM, segmentIndex }) => ({ routeProgressM, segmentIndex })
+      );
+      if (!candidates.length) {
+        feedback.toast("\u9644\u8FD1\u6C92\u6709\u660E\u78BA\u7684 GPX \u4F4D\u7F6E\uFF0C\u8ACB\u6539\u9078\u9AD8\u5EA6\u5256\u9762\u3002");
+        return;
+      }
+      picking = false;
+      render();
+    }
+    function selectProfile(event) {
+      if (!picking || !eligible() || busy) return false;
+      const chart = event.target.closest?.(".elevation-chart");
+      if (!chart) return false;
+      const matrix = chart.getScreenCTM();
+      if (!matrix) return false;
+      const point = chart.createSVGPoint();
+      point.x = event.clientX;
+      point.y = event.clientY;
+      const x = point.matrixTransform(matrix.inverse()).x;
+      if (x < 56 || x > 620) return true;
+      const distance2 = (x - 56) / (620 - 56) * current().stats.km * 1e3;
+      candidates = positionsAtDistance(current(), distance2);
+      if (!candidates.length) {
+        feedback.toast("\u6B64\u4F4D\u7F6E\u4F4D\u65BC GPX \u4E2D\u65B7\uFF0C\u8ACB\u9078\u64C7\u6709\u8ECC\u8DE1\u7684\u5340\u6BB5\u3002");
+        return true;
+      }
+      picking = false;
+      render();
+      return true;
+    }
+    const actions = {
+      "gpx-stop-pick": () => {
+        if (eligible() && !busy) {
+          reset();
+          picking = true;
+          render();
+        }
+      },
+      "gpx-stop-cancel": () => {
+        reset();
+        render();
+      },
+      "gpx-stop-edit": (target) => {
+        if (!eligible() || busy) return;
+        reset();
+        editing = itinerary.snapshot().rows.find((r) => r.visitId === target.dataset.visit) ?? null;
+        render();
+        document2.getElementById("gpx-stop-name")?.focus();
+      },
+      "gpx-stop-save": async () => {
+        if (!eligible() || busy) return;
+        const file = current(), name = document2.getElementById("gpx-stop-name")?.value.trim();
+        if (!name) {
+          feedback.toast("\u8ACB\u586B\u5BEB\u7AD9\u9EDE\u540D\u7A31\u3002");
+          return;
+        }
+        const data = state.itinerary.gpxStations[file.id] ??= { added: [], edits: {} };
+        if (editing) (data.edits ??= {})[editing.visitId] = { name: name.slice(0, 300) };
+        else {
+          const position2 = candidates[Number(document2.getElementById("gpx-stop-position")?.value)];
+          if (!position2) return;
+          const duplicate = itinerary.snapshot().rows.find(
+            (r) => r.visible && r.segmentIndex === position2.segmentIndex && Math.abs(r.routeProgressM - position2.routeProgressM) < 1
+          );
+          if (duplicate) (data.edits ??= {})[duplicate.visitId] = { name: name.slice(0, 300) };
+          else
+            (data.added ??= []).push(
+              manualVisit(file, position2, name, `manual-${crypto.randomUUID()}`)
+            );
+        }
+        reset();
+        await persist();
+      },
+      "gpx-stop-delete": async () => {
+        if (!eligible() || !editing || busy) return;
+        const data = state.itinerary.gpxStations[current().id] ??= { added: [], edits: {} };
+        (data.edits ??= {})[editing.visitId] = { deleted: true };
+        reset();
+        await persist();
+      }
+    };
+    return { panel, restore, actions, selectMap, selectProfile, canEdit: eligible };
+  }
+
   // src/domain/track-math.js
   function haversine(a, b) {
-    const rad2 = (value2) => value2 * Math.PI / 180;
-    const x = Math.sin(rad2(b.lat - a.lat) / 2) ** 2 + Math.cos(rad2(a.lat)) * Math.cos(rad2(b.lat)) * Math.sin(rad2(b.lon - a.lon) / 2) ** 2;
+    const rad3 = (value2) => value2 * Math.PI / 180;
+    const x = Math.sin(rad3(b.lat - a.lat) / 2) ** 2 + Math.cos(rad3(a.lat)) * Math.cos(rad3(b.lat)) * Math.sin(rad3(b.lon - a.lon) / 2) ** 2;
     return 6371 * 2 * Math.atan2(Math.sqrt(Math.min(1, x)), Math.sqrt(Math.max(0, 1 - x)));
   }
   function trackStats(segments) {
@@ -1262,52 +1777,6 @@
     };
   }
 
-  // src/ui/icons.js
-  var icons = {
-    mountain: "M3 20 10 5l5 9 3-5 5 11H3Zm4-8 3 3 3-4",
-    plan: "M5 4h14v17H5z M9 2v4m6-4v4M8 10h8m-8 4h5",
-    compass: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm4 5-3 5-5 3 3-5 5-3Z",
-    route: "M5 18a2 2 0 1 0 0 4 2 2 0 0 0 0-4Zm14-16a2 2 0 1 0 0 4 2 2 0 0 0 0-4ZM5 18v-4c0-5 14 1 14-4V6",
-    activity: "M2 12h5l3-8 4 16 3-8h5",
-    folder: "M3 6h7l2 2h9v12H3z",
-    clock: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 4v5l3 2",
-    up: "m5 15 7-7 7 7M12 8v12",
-    down: "m5 9 7 7 7-7M12 4v12",
-    distance: "M4 7h16v10H4z M8 7v4m4-4v6m4-6v4",
-    calendar: "M4 5h16v16H4zM8 2v6m8-6v6M4 11h16",
-    sun: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-6v3m0 14v3M2 12h3m14 0h3M5 5l2 2m10 10 2 2M5 19l2-2M17 7l2-2",
-    moon: "M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11Z",
-    info: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 8v6m0-11v1",
-    upload: "M12 16V3m-5 5 5-5 5 5M4 16v5h16v-5",
-    play: "m8 4 12 8-12 8Z",
-    pause: "M8 5v14M16 5v14",
-    stop: "M6 6h12v12H6z",
-    check: "m5 12 4 4L19 6",
-    plus: "M12 5v14M5 12h14",
-    minus: "M5 12h14",
-    locate: "M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm0-6v4m0 12v4M2 12h4m12 0h4",
-    leaf: "M20 3C8 2 2 7 5 15s15 6 15-12ZM5 21 15 9",
-    close: "m6 6 12 12M6 18 18 6",
-    file: "M6 3h8l4 4v14H6zM14 3v5h4M9 12h6m-6 4h6",
-    refresh: "M4 9a8 8 0 0 1 14-4l3 3M21 3v5h-5M20 15a8 8 0 0 1-14 4l-3-3M3 21v-5h5",
-    help: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18ZM9 9c0-4 7-4 6 0-.4 2-3 2-3 5m0 3v1",
-    download: "M12 3v13m-5-5 5 5 5-5M4 17v4h16v-4",
-    shield: "m12 2 8 3v7c0 5-8 10-8 10S4 17 4 12V5Z",
-    chevron: "m9 5 7 7-7 7",
-    user: "M12 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM4 21v-3c0-6 16-6 16 0v3",
-    layers: "m12 3 10 6-10 6L2 9Zm-10 12 10 6 10-6M2 12l10 6 10-6"
-  };
-  var icon = (name, cls = "") => `<svg class="icon ${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${icons[name] || icons.mountain}"/></svg>`;
-
-  // src/ui/html.js
-  var esc = (value2) => String(value2).replace(
-    /[&<>"']/g,
-    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
-  );
-  var button = (label, action, kind = "", ic = "", extra = "") => `<button class="button ${kind}" data-action="${action}" ${extra}>${ic ? icon(ic) : ""}${label}</button>`;
-  var metric = (label, value2, unit = "", ic = "") => `<div class="stat"><div class="stat-label">${ic ? icon(ic) : ""}${label}</div><div class="stat-value">${value2}<small>${unit}</small></div></div>`;
-  var meters = (value2) => value2 === null ? "\u2014" : Math.round(value2).toLocaleString();
-
   // src/features/offline-map/view.js
   var megabytes = (bytes) => `${(bytes / 1048576).toFixed(1)} MB`;
   function offlineMapPanel(controller, file) {
@@ -1717,102 +2186,6 @@
     return gps.segments.findLast((segment) => segment.length)?.at(-1) ?? null;
   }
 
-  // ../packages/route-stations/index.js
-  var radius = 6371e3;
-  var rad = (degrees) => degrees * Math.PI / 180;
-  var deltaLon = (degrees) => (degrees + 540) % 360 - 180;
-  var statuses = /* @__PURE__ */ new Set(["located", "pending", "ambiguous"]);
-  function requireCoordinate(point) {
-    if (!point || !Number.isFinite(point.lat) || !Number.isFinite(point.lon) || Math.abs(point.lat) > 90 || Math.abs(point.lon) > 180) {
-      throw new Error("A valid latitude and longitude are required");
-    }
-  }
-  function distanceM(a, b) {
-    requireCoordinate(a);
-    requireCoordinate(b);
-    const h = Math.sin(rad(b.lat - a.lat) / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(rad(deltaLon(b.lon - a.lon)) / 2) ** 2;
-    return 2 * radius * Math.atan2(Math.sqrt(Math.min(1, h)), Math.sqrt(Math.max(0, 1 - h)));
-  }
-  function readCoordinateCatalog(data) {
-    if (!data || data.schemaVersion !== 2 || data.kind !== "station-coordinate-catalog" || data.coordinateReference !== "WGS84" || !Array.isArray(data.stations)) {
-      throw new Error("Expected station coordinate catalog schema v2 (WGS84)");
-    }
-    const ids = /* @__PURE__ */ new Set();
-    for (const station of data.stations) {
-      if (!station || typeof station.stationId !== "string" || !station.stationId || ids.has(station.stationId) || typeof station.name !== "string" || !station.name || !statuses.has(station.coordinateStatus)) {
-        throw new Error("Station identity or coordinate status is invalid");
-      }
-      ids.add(station.stationId);
-      if (station.coordinateStatus === "located") requireCoordinate(station);
-      else if (station.lat !== null || station.lon !== null) throw new Error("Unresolved station coordinates must remain null");
-      for (const field of ["edgeIndex", "fraction", "routeProgressM", "occurrenceId", "gpxWaypointId", "routeRevisionId", "confirmation"]) {
-        if (field in station) throw new Error("Route-specific marking fields do not belong in the coordinate catalog");
-      }
-    }
-    return data.stations;
-  }
-  function usableStations(stations) {
-    if (!Array.isArray(stations)) throw new Error("Expected station coordinate records");
-    return stations.filter((station) => station.coordinateStatus === "located").map((station) => {
-      requireCoordinate(station);
-      return station;
-    });
-  }
-  function createTrackMatcher(segments) {
-    if (!Array.isArray(segments) || !segments.length || segments.some((segment) => !Array.isArray(segment))) throw new Error("Missing GPX segments");
-    const edges = [];
-    let progress = 0;
-    segments.forEach((segment, segmentIndex) => {
-      segment.forEach(requireCoordinate);
-      for (let i = 1; i < segment.length; i++) {
-        const a = segment[i - 1], b = segment[i], length = distanceM(a, b);
-        edges.push({ a, b, length, startM: progress, segmentIndex });
-        progress += length;
-      }
-    });
-    return { match: (stations, options) => matchTrackEdges(stations, edges, progress, options) };
-  }
-  function matchTrackEdges(stations, edges, progress, { maxOffsetM = 100, mergeWithinM = 25, preserveReversals = false } = {}) {
-    if (!Number.isFinite(maxOffsetM) || maxOffsetM <= 0 || !Number.isFinite(mergeWithinM) || mergeWithinM < 0) throw new Error("Invalid matching distances");
-    const matches = [];
-    for (const station of usableStations(stations)) {
-      const groups = [];
-      for (const edge of edges) {
-        const { a, b, length, startM, segmentIndex } = edge;
-        const cos = Math.max(1e-8, Math.cos(rad((a.lat + b.lat) / 2)));
-        const bx = rad(deltaLon(b.lon - a.lon)) * cos * radius, by = rad(b.lat - a.lat) * radius;
-        const px = rad(deltaLon(station.lon - a.lon)) * cos * radius, py = rad(station.lat - a.lat) * radius;
-        const length2 = bx * bx + by * by;
-        const fraction = length2 ? Math.max(0, Math.min(1, (px * bx + py * by) / length2)) : 0;
-        const point = { lat: a.lat + (b.lat - a.lat) * fraction, lon: deltaLon(a.lon + deltaLon(b.lon - a.lon) * fraction) };
-        const offsetM = distanceM(station, point);
-        if (offsetM > maxOffsetM) continue;
-        const position2 = { segmentIndex, routeProgressM: startM + length * fraction, offsetM };
-        const group = groups.at(-1), last = group?.at(-1);
-        const reversal = preserveReversals && last && position2.routeProgressM - last.position.routeProgressM > 1e-6 && bx * last.dx + by * last.dy < 0;
-        const candidate = { position: position2, dx: length2 ? bx : last?.dx ?? 0, dy: length2 ? by : last?.dy ?? 0 };
-        if (last && !reversal && last.position.segmentIndex === segmentIndex && position2.routeProgressM - last.position.routeProgressM <= mergeWithinM) group.push(candidate);
-        else groups.push([candidate]);
-      }
-      const routePositions = groups.map((group) => group.reduce((a, b) => a.position.offsetM <= b.position.offsetM ? a : b).position);
-      if (!routePositions.length) continue;
-      matches.push({
-        station,
-        nearestTrackDistanceM: Math.min(...routePositions.map((point) => point.offsetM)),
-        routePositions,
-        matchStatus: routePositions.length > 1 ? "multiple_route_positions" : "near_track"
-      });
-    }
-    matches.sort((a, b) => a.routePositions[0].routeProgressM - b.routePositions[0].routeProgressM || a.station.stationId.localeCompare(b.station.stationId));
-    return {
-      matches,
-      totalTrackDistanceM: progress,
-      distanceUnit: "m",
-      gapsAreConnected: false,
-      note: "These are coordinate proximity matches. They do not confirm arrival, hut entry, or a complete Shanghe time path."
-    };
-  }
-
   // src/features/itinerary/station-groups.js
   function groupStations(stations) {
     const groups = /* @__PURE__ */ new Map();
@@ -2022,6 +2395,7 @@
     const visits = [];
     const counts = /* @__PURE__ */ new Map();
     for (const row of data?.rows ?? []) {
+      if (data.timeBasis === "gpx-moving-time" && row.visible === false) continue;
       if (!row.station?.name?.trim() || row.station.coordinateStatus !== "located") continue;
       const id2 = row.station.stationId;
       const visit = (counts.get(id2) ?? 0) + 1;
@@ -2429,6 +2803,7 @@
     recordingView,
     itinerary,
     heightProfile,
+    stationEditor,
     personalFactorView,
     gpsActive: gpsActive2,
     gpsPending: gpsPending2
@@ -2445,6 +2820,7 @@
       }
     });
     listen(document2, "click", (event) => {
+      if (stationEditor?.selectProfile(event)) return;
       if (heightProfile?.select(event)) return;
       const nav = event.target.closest?.("[data-view]");
       if (nav) {
@@ -2632,6 +3008,8 @@
       removeFile: (id2) => gpxStoreAction(requireDatabase(), "delete", id2),
       getRouteDirections: () => draftAction(requireDatabase(), "get", "route-directions"),
       saveRouteDirections: (value2) => draftAction(requireDatabase(), "put", { ...value2, slot: "route-directions" }),
+      getGpxStations: () => draftAction(requireDatabase(), "get", "gpx-stations"),
+      saveGpxStations: (value2) => draftAction(requireDatabase(), "put", { ...value2, slot: "gpx-stations" }),
       getResources: () => draftAction(requireDatabase(), "get", "route-resources"),
       saveResources: (value2) => draftAction(requireDatabase(), "put", { ...value2, slot: "route-resources" }),
       getDraft: () => draftAction(requireDatabase(), "get"),
@@ -4717,7 +5095,7 @@
     };
   }
 
-  // node_modules/@capacitor/core/dist/index.js
+  // ../../gpx-speed-work/app/node_modules/@capacitor/core/dist/index.js
   var ExceptionCode;
   (function(ExceptionCode2) {
     ExceptionCode2["Unimplemented"] = "UNIMPLEMENTED";
@@ -5763,6 +6141,8 @@
   function createTerrain3dController({
     onStatus = () => {
     },
+    onPick = () => {
+    },
     onCamera = () => {
     },
     onFallback = () => {
@@ -5915,6 +6295,7 @@
             "Map.Title": "3D \u5730\u5F62\uFF0C\u53EF\u7E2E\u653E\u3001\u65CB\u8F49\u8207\u50BE\u659C"
           }
         });
+        map.on("click", (event) => onPick({ lat: event.lngLat.lat, lon: event.lngLat.lng }));
         loading = false;
         beginTimer();
         size = { width: canvas.clientWidth, height: canvas.clientHeight };
@@ -6224,6 +6605,8 @@
   function createOfflineRenderer({
     onStatus = () => {
     },
+    onPick = () => {
+    },
     onFallback = () => {
     },
     load = async () => {
@@ -6358,6 +6741,7 @@
         map.addControl(new library.ScaleControl({ unit: "metric" }), "bottom-left");
         map.addControl(new library.AttributionControl({ compact: true }), "bottom-right");
         labels = createOfflineLabels({ library, map, document: canvas.ownerDocument });
+        map.on("click", (event) => onPick({ lat: event.lngLat.lat, lon: event.lngLat.lng }));
         map.on("load", () => {
           if (generation !== version) return;
           draw();
@@ -6456,6 +6840,26 @@
         );
       }
     };
+  }
+
+  // src/features/gpx-stations/markers.js
+  function gpxStationMarkers(data, formatArrival) {
+    const places = /* @__PURE__ */ new Map();
+    for (const row of data.rows.filter((r) => r.visible)) {
+      const visits = places.get(row.station.stationId) ?? [];
+      visits.push(row);
+      places.set(row.station.stationId, visits);
+    }
+    return [...places.values()].map((visits) => {
+      const row = data.active ? visits.find((r) => r.index >= data.nextIndex) ?? visits.at(-1) : visits[0];
+      const visit = visits.indexOf(row) + 1;
+      return {
+        ...row.station,
+        label: esc(`${row.station.name}${visits.length > 1 ? ` \xB7 \u7B2C ${visit} \u6B21\u8A2A\u7D93` : ""}`),
+        arrivalLabel: data.active ? formatArrival(row.arrivalUtcMs) : "",
+        next: row.index === data.next?.index
+      };
+    });
   }
 
   // src/features/itinerary/timing-issues.js
@@ -6606,7 +7010,7 @@
       (point) => point.segmentIndex === next.segmentIndex && point.routeProgressM >= previous.routeProgressM - 25 && point.routeProgressM <= next.routeProgressM + 25
     ) ?? [];
     const accepted = gps.itinerary?.routePosition;
-    if (file.rerouted && accepted?.revisionId === file.id && accepted.time === fix.time && accepted.segmentIndex === next.segmentIndex && accepted.routeProgressM >= previous.routeProgressM - 25 && accepted.routeProgressM <= next.routeProgressM + 25) {
+    if ((file.rerouted || data.timeBasis === "gpx-moving-time") && accepted?.revisionId === file.id && accepted.time === fix.time && accepted.segmentIndex === next.segmentIndex && accepted.routeProgressM >= previous.routeProgressM - 25 && accepted.routeProgressM <= next.routeProgressM + 25) {
       return {
         segmentIndex: next.segmentIndex,
         fromM: Math.min(
@@ -6618,7 +7022,8 @@
     }
     candidates.sort((a, b) => a.offsetM - b.offsetM);
     if (!candidates.length) return null;
-    if (file.rerouted && candidates.length !== 1) return null;
+    if ((file.rerouted || data.timeBasis === "gpx-moving-time") && candidates.length !== 1)
+      return null;
     return {
       segmentIndex: next.segmentIndex,
       fromM: Math.min(
@@ -6762,6 +7167,7 @@
     itinerary,
     gpsPending: gpsPending2,
     recordingRoute: recordingRoute2,
+    stationEditor,
     document: document2 = globalThis.document
   }) {
     const gpxBasis = () => itinerary.snapshot()?.timeBasis === "gpx-moving-time";
@@ -6783,14 +7189,14 @@
       const passed = data.active && row.index < data.nextIndex;
       const unavailable2 = (data.active ? row.arrivalUtcMs : row.cumulativeSeconds) === null;
       const status = passed ? "\u5DF2\u901A\u904E" : data.active ? row.index === data.nextIndex ? "\u4E0B\u4E00\u7AD9 \xB7 \u672A\u5230\u9054" : "\u672A\u5230\u9054" : "\u5C1A\u672A\u51FA\u767C";
-      return `<li class="${passed ? "station-passed" : ""}"><div class="station-number">${number}</div><div><strong>${esc(row.station.name)}</strong><span class="small station-status">${status}${unavailable2 ? " \xB7 \u6642\u9593\u8CC7\u6599\u4E0D\u8DB3" : ""}</span><span class="small muted">${typeLabels[row.station.type] ?? "\u7AD9\u9EDE"} \xB7 ${row.gap ? "GPX \u5206\u6BB5\u9593\u8DDD\u96E2\u672A\u77E5" : "GPX \u7D2F\u8A08 " + (row.routeProgressM / 1e3).toFixed(2) + " km"}</span>${row.reason ? `<span class="small error-message">${esc(row.reason)}</span>` : ""}<details class="small muted station-timing" id="station-time-${row.index}"><summary>\u6642\u9593\u4F9D\u64DA${row.timeNodeNames?.length > 2 ? ` \xB7 \u542B ${row.timeNodeNames.length - 2} \u500B\u6642\u9593\u4E2D\u9593\u7BC0\u9EDE` : ""}</summary><p>${row.index === 0 ? gpxBasis() ? "GPX \u8D77\u59CB\u4F4D\u7F6E" : "\u4E0A\u6CB3\u8D77\u59CB\u7AD9" : `\u524D\u6BB5\u57FA\u6E96\uFF1A${duration3(row.baselineSeconds)}`}</p>${row.index && data.timeModel ? `<p data-time-distribution="${data.timeModel.legs[row.index - 1]?.method ?? "unavailable"}">\u7AD9\u9593\u5206\u914D\uFF1A${esc(timeDistributionLabel(data.timeModel.legs[row.index - 1]))}</p>` : ""}${row.timeNodeNames?.length > 2 ? `<p>${row.timeNodeNames.map(esc).join(" \u2192 ")}</p><p>\u4E2D\u9593\u7BC0\u9EDE\u672A\u5FC5\u5DF2\u6709\u5EA7\u6A19\uFF0C\u4ECD\u9700\u6838\u5C0D\u8207 GPX \u540C\u4E00\u8DEF\u5F91\u3002</p>` : ""}</details></div><div class="station-eta"><small>${data.active ? "\u9810\u4F30\u62B5\u9054" : "\u7D2F\u8A08\u8017\u6642"}</small><strong>${data.active ? arrival2(row.arrivalUtcMs) : duration3(row.cumulativeSeconds)}</strong></div></li>`;
+      return `<li class="${passed ? "station-passed" : ""}"><div class="station-number">${number}</div><div><strong>${esc(row.station.name)}</strong><span class="small station-status">${status}${unavailable2 ? " \xB7 \u6642\u9593\u8CC7\u6599\u4E0D\u8DB3" : ""}</span><span class="small muted">${typeLabels[row.station.type] ?? "\u7AD9\u9EDE"} \xB7 ${row.gap ? "GPX \u5206\u6BB5\u9593\u8DDD\u96E2\u672A\u77E5" : "GPX \u7D2F\u8A08 " + (row.routeProgressM / 1e3).toFixed(2) + " km"}</span>${stationControls(row, stationEditor?.canEdit() === true)}${gpxBasis() && row.station.coordinateSource?.url ? `<a class="small muted" href="${esc(row.station.coordinateSource.url)}" target="_blank" rel="noopener noreferrer">\u5730\u6A19\u5EA7\u6A19\u4F86\u6E90</a>` : ""}${row.reason ? `<span class="small error-message">${esc(row.reason)}</span>` : ""}<details class="small muted station-timing" id="station-time-${row.index}"><summary>\u6642\u9593\u4F9D\u64DA${row.timeNodeNames?.length > 2 ? ` \xB7 \u542B ${row.timeNodeNames.length - 2} \u500B\u6642\u9593\u4E2D\u9593\u7BC0\u9EDE` : ""}</summary><p>${row.index === 0 ? gpxBasis() ? "GPX \u8D77\u59CB\u4F4D\u7F6E" : "\u4E0A\u6CB3\u8D77\u59CB\u7AD9" : `\u524D\u6BB5\u57FA\u6E96\uFF1A${duration3(row.baselineSeconds)}`}</p>${row.index && data.timeModel ? `<p data-time-distribution="${data.timeModel.legs[row.index - 1]?.method ?? "unavailable"}">\u7AD9\u9593\u5206\u914D\uFF1A${esc(timeDistributionLabel(data.timeModel.legs[row.index - 1]))}</p>` : ""}${row.timeNodeNames?.length > 2 ? `<p>${row.timeNodeNames.map(esc).join(" \u2192 ")}</p><p>\u4E2D\u9593\u7BC0\u9EDE\u672A\u5FC5\u5DF2\u6709\u5EA7\u6A19\uFF0C\u4ECD\u9700\u6838\u5C0D\u8207 GPX \u540C\u4E00\u8DEF\u5F91\u3002</p>` : ""}</details></div><div class="station-eta"><small>${data.active ? "\u9810\u4F30\u62B5\u9054" : "\u7D2F\u8A08\u8017\u6642"}</small><strong>${data.active ? arrival2(row.arrivalUtcMs) : duration3(row.cumulativeSeconds)}</strong></div></li>`;
     }
     function stationsPanel() {
       const data = itinerary.snapshot();
       if (!data)
         return `<section class="panel panel-body stack"><h2>\u6CBF\u9014\u7AD9\u9EDE</h2><p class="small muted">\u5167\u5EFA\u8CC7\u6599\u5C1A\u672A\u627E\u5230\u9019\u689D GPX \u7684\u5C0D\u61C9\u7AD9\u9EDE\u3002</p></section>`;
       const rows = data.rows.filter((row) => row.visible);
-      return `<section class="panel panel-body stack itinerary-panel"><div><span class="eyebrow">YOUR STOPS</span><h2>\u6CBF\u9014\u7AD9\u9EDE\u8207 ETA</h2>${gpxBasis() ? '<p data-time-basis="gpx-moving-time">\u6642\u9593\u57FA\u6E96\uFF1AGPX \u901F\u5EA6</p>' : ""}<p class="small muted">${data.active ? "\u62B5\u9054\u5F8C\u6703\u91CD\u65B0\u63A8\u7B97\u5F8C\u7E8C\u6642\u9593\uFF1B\u5F80\u8FD4\u7AD9\u9EDE\u5206\u6B21\u986F\u793A\u3002" : "\u6309\u300C\u958B\u59CB\u767B\u5C71\u7D00\u9304\u300D\u5F8C\uFF0C\u4EE5\u5BE6\u969B\u51FA\u767C\u6642\u9593\u986F\u793A\u62B5\u9054\u6642\u523B\u3002"}</p></div>${!data.compatible ? '<p class="error-message">\u7AD9\u9EDE\u8CC7\u6599\u5DF2\u66F4\u65B0\uFF1B\u7D50\u675F\u76EE\u524D\u7D00\u9304\u5F8C\uFF0C\u91CD\u65B0\u958B\u59CB\u624D\u80FD\u5957\u7528\u65B0\u7684 ETA\u3002</p>' : ""}<div class="itinerary-summary"><span>\u5168\u7A0B\u9810\u4F30</span><strong>${duration3(data.totalSeconds)}</strong><small>\u8A2D\u5B9A\u500D\u7387 ${data.factor.toFixed(2)} \xB7 \u5F71\u97FF ETA</small></div>${!data.startCovered || !data.endCovered ? '<p class="soft-notice">GPX \u8D77\u9EDE\u6216\u7D42\u9EDE\u6C92\u6709\u5C0D\u61C9\u6642\u9593\u7AD9\u9EDE\uFF1B\u53EA\u986F\u793A\u6709\u57FA\u6E96\u7684\u7AD9\u9593\u6642\u9593\u3002</p>' : ""}${rows.length ? `<ol class="station-list">${rows.map((row, index) => stationRow(row, data, index + 1)).join("")}</ol>` : '<p class="small muted">\u76EE\u524D GPX \u9644\u8FD1\u672A\u627E\u5230\u9019\u516D\u985E\u7AD9\u9EDE\uFF0C\u8ACB\u88DC\u9F4A\u7AD9\u9EDE\u5EA7\u6A19\u3002</p>'}${timingIssuesPanel(data)}<p class="small muted">\u4F4D\u7F6E\u63A5\u8FD1\u4E0D\u4EE3\u8868\u5DF2\u9032\u5165\u5C71\u5C4B\uFF1B\u6C34\u6E90\u53EF\u7528\u6027\u8ACB\u53E6\u884C\u78BA\u8A8D\u3002</p><details id="station-source-details" class="small muted"><summary>\u7AD9\u9EDE\u4F86\u6E90\u8207 ETA \u8A08\u7B97\u9650\u5236</summary><p class="small muted">${gpxBasis() ? "\u4F9D\u4F86\u6E90\u5DF2\u78BA\u8A8D\u3001\u54C1\u8CEA\u5408\u683C\u4E14\u9023\u7E8C\u7684\u539F GPX \u5BE6\u6E2C\u79FB\u52D5\u6642\u9593\u8A08\u7B97\u3002\u8D77\u7D42\u9EDE\u53CA\u8CBC\u5408\u8DEF\u5F91\u7684 GPX \u822A\u9EDE\u4F5C\u70BA\u9032\u5EA6\uFF1B\u7F3A\u6642\u9593\u3001\u8DF3\u9EDE\u3001\u4E2D\u65B7\u53CA\u672A\u78BA\u8A8D\u5340\u9593\u4FDD\u7559\u7F3A\u5931\uFF0C\u4E0D\u4EE5\u8DDD\u96E2\u3001\u5761\u5EA6\u6216\u5E73\u5747\u901F\u5EA6\u88DC\u503C\u3002\u500D\u7387\u8207\u4E0A\u6CB3\u5206\u958B\u4FDD\u5B58\u3002" : "\u4F9D\u4E0A\u6CB3\u6709\u5411\u6642\u9593\u8A08\u7B97\uFF0C\u4E0D\u4EE5 GPX \u6B77\u53F2\u6642\u9593\u6216\u8DDD\u96E2\u88DC\u6642\u9593\u3002\u7F3A\u503C\u6216\u591A\u689D\u53EF\u80FD\u8DEF\u5F91\u6703\u4FDD\u7559\u5F85\u88DC\u3002"}</p><p class="small muted">${gpxBasis() ? "\u5EA7\u6A19\u53D6\u81EA\u532F\u5165 GPX \u7684\u8D77\u7D42\u9EDE\u53CA\u8CBC\u5408\u8ECC\u8DE1\u7684\u822A\u9EDE\uFF0C\u5C1A\u672A\u7368\u7ACB\u6E2C\u91CF\u9A57\u8B49\u3002" : "\u7AD9\u9EDE\u5EA7\u6A19\u53C3\u8003\uFF1A\u653F\u5E9C\u516C\u958B\u8CC7\u6599\u53CA "}${gpxBasis() ? "" : `<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors\uFF08ODbL\uFF09</a>\uFF0C\u4EE5\u53CA <a href="https://joyhike.com/path/31" target="_blank" rel="noopener noreferrer">Joyhike \u5730\u9EDE\u6BD4\u5C0D\u8CC7\u6599</a>\u3002\u6EAA\u6E90\u5EA7\u6A19\u7531\u4F7F\u7528\u8005\u65BC OSM \u67E5\u627E\u63D0\u4F9B\u3002`}</p></details></section>`;
+      return `<section class="panel panel-body stack itinerary-panel"><div><span class="eyebrow">YOUR STOPS</span><h2>\u6CBF\u9014\u7AD9\u9EDE\u8207 ETA</h2>${gpxBasis() ? '<p data-time-basis="gpx-moving-time">\u6642\u9593\u57FA\u6E96\uFF1AGPX \u901F\u5EA6</p>' : ""}<p class="small muted">${data.active ? "\u62B5\u9054\u5F8C\u6703\u91CD\u65B0\u63A8\u7B97\u5F8C\u7E8C\u6642\u9593\uFF1B\u5F80\u8FD4\u7AD9\u9EDE\u5206\u6B21\u986F\u793A\u3002" : "\u6309\u300C\u958B\u59CB\u767B\u5C71\u7D00\u9304\u300D\u5F8C\uFF0C\u4EE5\u5BE6\u969B\u51FA\u767C\u6642\u9593\u986F\u793A\u62B5\u9054\u6642\u523B\u3002"}</p></div>${!data.compatible ? '<p class="error-message">\u7AD9\u9EDE\u8CC7\u6599\u5DF2\u66F4\u65B0\uFF1B\u7D50\u675F\u76EE\u524D\u7D00\u9304\u5F8C\uFF0C\u91CD\u65B0\u958B\u59CB\u624D\u80FD\u5957\u7528\u65B0\u7684 ETA\u3002</p>' : ""}<div class="itinerary-summary"><span>\u5168\u7A0B\u9810\u4F30</span><strong>${duration3(data.totalSeconds)}</strong><small>\u8A2D\u5B9A\u500D\u7387 ${data.factor.toFixed(2)} \xB7 \u5F71\u97FF ETA</small></div>${!data.startCovered || !data.endCovered ? '<p class="soft-notice">GPX \u8D77\u9EDE\u6216\u7D42\u9EDE\u6C92\u6709\u5C0D\u61C9\u6642\u9593\u7AD9\u9EDE\uFF1B\u53EA\u986F\u793A\u6709\u57FA\u6E96\u7684\u7AD9\u9593\u6642\u9593\u3002</p>' : ""}${rows.length ? `<ol class="station-list">${rows.map((row, index) => stationRow(row, data, index + 1)).join("")}</ol>` : '<p class="small muted">\u76EE\u524D GPX \u9644\u8FD1\u672A\u627E\u5230\u9019\u516D\u985E\u7AD9\u9EDE\uFF0C\u8ACB\u88DC\u9F4A\u7AD9\u9EDE\u5EA7\u6A19\u3002</p>'}${timingIssuesPanel(data)}<p class="small muted">\u4F4D\u7F6E\u63A5\u8FD1\u4E0D\u4EE3\u8868\u5DF2\u9032\u5165\u5C71\u5C4B\uFF1B\u6C34\u6E90\u53EF\u7528\u6027\u8ACB\u53E6\u884C\u78BA\u8A8D\u3002</p><details id="station-source-details" class="small muted"><summary>\u7AD9\u9EDE\u4F86\u6E90\u8207 ETA \u8A08\u7B97\u9650\u5236</summary><p class="small muted">${gpxBasis() ? "\u4F9D\u4F86\u6E90\u5DF2\u78BA\u8A8D\u3001\u54C1\u8CEA\u5408\u683C\u4E14\u9023\u7E8C\u7684\u539F GPX \u5BE6\u6E2C\u79FB\u52D5\u6642\u9593\u8A08\u7B97\u3002\u8D77\u7D42\u9EDE\u53CA\u8CBC\u5408\u8DEF\u5F91\u7684 GPX \u822A\u9EDE\u4F5C\u70BA\u9032\u5EA6\uFF1B\u7F3A\u6642\u9593\u3001\u8DF3\u9EDE\u3001\u4E2D\u65B7\u53CA\u672A\u78BA\u8A8D\u5340\u9593\u4FDD\u7559\u7F3A\u5931\uFF0C\u4E0D\u4EE5\u8DDD\u96E2\u3001\u5761\u5EA6\u6216\u5E73\u5747\u901F\u5EA6\u88DC\u503C\u3002\u500D\u7387\u8207\u4E0A\u6CB3\u5206\u958B\u4FDD\u5B58\u3002" : "\u4F9D\u4E0A\u6CB3\u6709\u5411\u6642\u9593\u8A08\u7B97\uFF0C\u4E0D\u4EE5 GPX \u6B77\u53F2\u6642\u9593\u6216\u8DDD\u96E2\u88DC\u6642\u9593\u3002\u7F3A\u503C\u6216\u591A\u689D\u53EF\u80FD\u8DEF\u5F91\u6703\u4FDD\u7559\u5F85\u88DC\u3002"}</p><p class="small muted">${gpxBasis() ? "\u7AD9\u9EDE\u53D6\u81EA GPX \u822A\u9EDE\u3001\u96E2\u7DDA\u5730\u6A19\uFF08OpenStreetMap contributors\uFF0CODbL\uFF09\u8207\u4F7F\u7528\u8005\u53E6\u5B58\u4F4D\u7F6E\uFF1B\u4F4D\u7F6E\u63A5\u8FD1\u4E0D\u4EE3\u8868\u5FC5\u7D93\u6216\u5DF2\u5230\u7AD9\u3002\u5404\u96E2\u7DDA\u5730\u6A19\u4FDD\u7559\u4F86\u6E90\u9023\u7D50\uFF0C\u672A\u4F5C\u7368\u7ACB\u6E2C\u91CF\u9A57\u8B49\u3002" : "\u7AD9\u9EDE\u5EA7\u6A19\u53C3\u8003\uFF1A\u653F\u5E9C\u516C\u958B\u8CC7\u6599\u53CA "}${gpxBasis() ? "" : `<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap contributors\uFF08ODbL\uFF09</a>\uFF0C\u4EE5\u53CA <a href="https://joyhike.com/path/31" target="_blank" rel="noopener noreferrer">Joyhike \u5730\u9EDE\u6BD4\u5C0D\u8CC7\u6599</a>\u3002\u6EAA\u6E90\u5EA7\u6A19\u7531\u4F7F\u7528\u8005\u65BC OSM \u67E5\u627E\u63D0\u4F9B\u3002`}</p></details></section>`;
     }
     const heightLabel = (value2) => value2 === null ? "\u2014" : `${meters(value2)} m`;
     const etaReasons = {
@@ -6909,6 +7315,7 @@
   // src/features/itinerary/markers.js
   function itineraryMarkers(data) {
     if (!data) return [];
+    if (data.timeBasis === "gpx-moving-time") return gpxStationMarkers(data, arrival2);
     const points = /* @__PURE__ */ new Map();
     for (const row of data.rows.filter((row2) => row2.visible)) {
       if (points.has(row.station.stationId)) continue;
@@ -6970,6 +7377,8 @@
     },
     onCamera = () => {
     },
+    onPick = () => {
+    },
     load3d,
     offlineMaps
   } = {}) {
@@ -6984,6 +7393,7 @@
       onStatus(status);
     };
     const terrain3d = createTerrain3dController({
+      onPick,
       onStatus,
       onCamera,
       ...load3d ? { load: load3d } : {},
@@ -6996,6 +7406,7 @@
     });
     let usingOffline = false, offlineFailed = false, lastContext;
     const offlineRenderer = createOfflineRenderer({
+      onPick,
       onStatus,
       onFallback: (context) => {
         offlineFailed = true;
@@ -7224,6 +7635,7 @@
           scrollWheelZoom: true,
           touchZoom: true
         });
+        terrainMap.on("click", (event) => onPick({ lat: event.latlng.lat, lon: event.latlng.lng }));
         leaflet.control.zoom({
           position: "topright",
           zoomInTitle: "\u653E\u5927\u8DEF\u7DDA\u5716",
@@ -7323,7 +7735,14 @@
   }
 
   // src/features/map/view.js
-  function createMapView({ state, terrainMap, itinerary, heightProfile, offlineMaps }) {
+  function createMapView({
+    state,
+    terrainMap,
+    itinerary,
+    heightProfile,
+    offlineMaps,
+    stationEditor
+  }) {
     const directMap = state.directMap;
     function heightPanel(file, _live = []) {
       const plotted = file === directMap ? {
@@ -7349,6 +7768,7 @@
         )
       ).join("")}</div>${button("\u770B\u5168\u7A0B", "map-fit", "", "locate")}</div>
     ${state.mapMode === "terrain" ? `<div class="terrain-camera-controls" role="group" aria-label="3D \u8996\u89D2"><label for="map-pitch">\u50BE\u659C <span id="map-pitch-value">${Math.round(terrainMap.pitch())}\xB0</span></label><input id="map-pitch" type="range" min="0" max="75" step="5" value="${Math.round(terrainMap.pitch())}">${button("\u5DE6\u8F49", "map-rotate", "ghost", "", 'data-angle="-30"')}${button("\u53F3\u8F49", "map-rotate", "ghost", "", 'data-angle="30"')}${button("\u5317\u5411", "map-north", "ghost")}</div><p class="terrain-gesture-note">\u53F3\u9375\u62D6\u66F3\u53EF\u65CB\u8F49\u8207\u50BE\u659C\uFF1B\u624B\u6A5F\u53EF\u96D9\u6307\u65CB\u8F49\u3001\u4E0A\u4E0B\u6ED1\u52D5\uFF0C\u6216\u4F7F\u7528\u4E0A\u65B9\u8996\u89D2\u63A7\u5236\u3002</p>` : ""}
+    ${stationEditor?.panel() ?? ""}
     <div class="actual-map" id="track-map">${mapSvg(file, position2, live, false, itineraryMarkers(itinerary?.snapshot()))}</div>
     <div class="terrain-status-row"><p id="map-status" class="terrain-status" role="status" aria-live="polite">${state.mapMode === "plain" ? "\u55AE\u7D14\u8ECC\u8DE1\u6A21\u5F0F\uFF0C\u4E0D\u8F09\u5165\u5E95\u5716\u3002" : "\u6B63\u5728\u8F09\u5165\u5E95\u5716\u2026"}</p>${button("\u91CD\u8A66\u5E95\u5716", "map-retry", "ghost", "refresh", 'id="map-retry" hidden')}</div>
     <div class="legend">${file === directMap ? "" : `<span><i style="background:#326753"></i>${file.kind === "recording" ? "\u4FDD\u5B58\u7684 GPS \u8ECC\u8DE1" : "\u61C9\u8D70\u8DEF\u7DDA"}</span>`}${live.length ? '<span><i style="background:#4388b7"></i>\u5BE6\u969B GPS \u7D00\u9304</span>' : ""}<span class="legend-note">\u4E2D\u65B7\u8655\u4E0D\u9023\u7DDA \xB7 \u62D6\u66F3\u79FB\u52D5\u3001\u6EFE\u8F2A\u6216\u96D9\u6307\u7E2E\u653E</span></div>
@@ -8647,29 +9067,9 @@
       ] : [];
     });
   }
-  function buildGpxItinerary(file) {
-    const model = buildGpxTimeModel(file), first = file.points[0], last = file.points.at(-1);
-    const rows = [first, last].map((p, i) => ({
-      station: {
-        stationId: `gpx-point-${p.lat}-${p.lon}`,
-        name: i ? "GPX \u7D42\u9EDE" : "GPX \u8D77\u9EDE",
-        lat: p.lat,
-        lon: p.lon,
-        type: i ? "exit" : "trailhead"
-      },
-      routeProgressM: p.km * 1e3,
-      segmentIndex: p.segment,
-      visible: true
-    }));
-    const matched = routeMatcherFor(file).match(waypoints(file), {
-      maxOffsetM: 50,
-      mergeWithinM: 25
-    });
-    for (const match of matched.matches)
-      for (const pos of match.routePositions) {
-        if (pos.routeProgressM > 1 && pos.routeProgressM < last.km * 1e3 - 1)
-          rows.push({ station: match.station, ...pos, visible: true });
-      }
+  function buildGpxItinerary(file, annotations) {
+    const model = buildGpxTimeModel(file), last = file.points.at(-1);
+    const rows = gpxStationRows(file, waypoints(file), annotations);
     for (let i = 0; i < model.legs.length; i++) {
       const leg = model.legs[i], before = model.legs[i - 1];
       if (i && (before.method !== leg.method || before.segmentIndex !== leg.segmentIndex || before.reason !== leg.reason || leg.toM === leg.fromM && leg.method === "unavailable")) {
@@ -8688,7 +9088,9 @@
         });
       }
     }
-    rows.sort((a, b) => a.routeProgressM - b.routeProgressM || a.segmentIndex - b.segmentIndex);
+    rows.sort(
+      (a, b) => a.routeProgressM - b.routeProgressM || a.segmentIndex - b.segmentIndex || Number(b.visible) - Number(a.visible)
+    );
     const deduplicated = rows.filter(
       (r, i) => !i || r.routeProgressM !== rows[i - 1].routeProgressM || r.segmentIndex !== rows[i - 1].segmentIndex
     );
@@ -8850,7 +9252,10 @@
   }
   function buildRouteItinerary(resources, file, options) {
     const legacy = buildItinerary(resources, file, options), decision = selectTimeBasis(resources, file, legacy);
-    return { ...decision.timeBasis === "shanghe" ? legacy : buildGpxItinerary(file), ...decision };
+    return {
+      ...decision.timeBasis === "shanghe" ? legacy : buildGpxItinerary(file, options?.gpxStations),
+      ...decision
+    };
   }
   var forecastRouteItinerary = (plan, ...args) => plan.timeBasis === "gpx-moving-time" ? forecastGpxItinerary(plan, ...args) : forecastItinerary(plan, ...args);
 
@@ -9530,7 +9935,7 @@
   }
 
   // src/features/itinerary/smart-routing.js
-  var canonicalM = (file, m) => file.direction === "reverse" ? file.stats.km * 1e3 - m : m;
+  var canonicalM2 = (file, m) => file.direction === "reverse" ? file.stats.km * 1e3 - m : m;
   function startsAtSmartLocation(network, fix, location) {
     if (!location || location.sourceId !== network.sourceFile.id) return [];
     const total = network.sourceFile.stats.km * 1e3;
@@ -9538,7 +9943,7 @@
     const knownSegment = location.segment ?? (Number.isInteger(location.directedSegment) ? location.direction === "reverse" ? network.sourceFile.segments.length - 1 - location.directedSegment : location.directedSegment : void 0);
     return rerouteStarts(network, fix).filter((edge) => {
       const segment = edge.source.direction === "reverse" ? edge.source.segments.length - 1 - edge.segment : edge.segment;
-      return (knownSegment === void 0 || knownSegment === segment) && Math.abs(canonicalM(edge.source, edge.startM) - m) <= 25;
+      return (knownSegment === void 0 || knownSegment === segment) && Math.abs(canonicalM2(edge.source, edge.startM) - m) <= 25;
     });
   }
   function smartRequests(network, home) {
@@ -9602,7 +10007,7 @@
         const pair = (edge) => JSON.stringify([edge.fromKey, edge.toKey].sort());
         const prefixPairs = new Set(starts.map(pair));
         for (const edge of network.edges) {
-          const from = canonicalM(edge.source, edge.startM), to = canonicalM(edge.source, edge.endM);
+          const from = canonicalM2(edge.source, edge.startM), to = canonicalM2(edge.source, edge.endM);
           if (Math.min(from, to) >= Math.min(currentM, home.canonicalM) - 1e-6 && Math.max(from, to) <= Math.max(currentM, home.canonicalM) + 1e-6)
             prefixPairs.add(pair(edge));
         }
@@ -10033,7 +10438,10 @@
       if (!file?.points?.length || !resources.stations.length) return null;
       let saved = plans.get(file);
       if (!saved || saved.revision !== revision) {
-        saved = { revision, plan: buildRouteItinerary(resources, file) };
+        saved = {
+          revision,
+          plan: buildRouteItinerary(resources, file, { gpxStations: ui.gpxStations?.[file.id] })
+        };
         plans.set(file, saved);
       }
       return saved.plan;
@@ -10514,6 +10922,9 @@
       render
     });
     return {
+      invalidateGpxStations: () => {
+        revision++;
+      },
       invalidateReroute: () => {
         smart.invalidate();
         preview = null;
@@ -11225,8 +11636,19 @@
       render,
       feedback
     });
+    const stationEditor = createGpxStationEditor({
+      state,
+      itinerary,
+      current: selectors.current,
+      gpsPending: selectors.gpsPending,
+      repository,
+      document: document2,
+      render,
+      feedback
+    });
     const itineraryViews = createItineraryViews({
       state,
+      stationEditor,
       itinerary,
       gpsPending: selectors.gpsPending,
       recordingRoute: selectors.recordingRoute,
@@ -11251,6 +11673,7 @@
     const presenter = createMapPresenter({ document: document2 });
     const map = createTerrainMapController({
       offlineMaps,
+      onPick: stationEditor.selectMap,
       onStatus: presenter.updateStatus,
       onCamera: presenter.updateCamera
     });
@@ -11301,7 +11724,8 @@
       terrainMap: map,
       offlineMaps,
       itinerary,
-      heightProfile
+      heightProfile,
+      stationEditor
     });
     const routeViews = createRouteViews({ ...selectors, mapPanel, itineraryViews, state });
     recordingView = createRecordingView({
@@ -11333,23 +11757,26 @@
       recordingView,
       personalFactorView
     });
-    const actions = createActions({
-      state,
-      current: selectors.current,
-      document: document2,
-      render,
-      navigate,
-      library,
-      recording,
-      estimates,
-      itinerary,
-      persistence,
-      map,
-      offlineMaps,
-      direction,
-      feedback,
-      personalFactorView
-    });
+    const actions = {
+      ...createActions({
+        state,
+        current: selectors.current,
+        document: document2,
+        render,
+        navigate,
+        library,
+        recording,
+        estimates,
+        itinerary,
+        persistence,
+        map,
+        offlineMaps,
+        direction,
+        feedback,
+        personalFactorView
+      }),
+      ...stationEditor.actions
+    };
     async function initialize() {
       navigation.readInitial();
       render();
@@ -11357,6 +11784,7 @@
         await repository.open();
         if (disposed) return;
         await itinerary.restore();
+        await stationEditor.restore();
         if (disposed) return;
         const records = await repository.listFiles();
         if (disposed) return;
@@ -11415,6 +11843,7 @@
           map,
           recordingView,
           heightProfile,
+          stationEditor,
           personalFactorView,
           ...selectors
         });
@@ -11452,6 +11881,7 @@
         recording,
         estimates,
         itinerary,
+        stationEditor,
         daylight,
         offlineMaps,
         direction,

@@ -3745,5 +3745,20 @@ dialog {
   }
 }
 
+/* src/features/gpx-stations/stations.css */
+.gpx-station-editor {
+  padding: 16px 20px;
+  gap: 10px;
+  border-top: 1px solid var(--line, #dce3d9);
+}
+.gpx-station-editor p {
+  margin: 0;
+}
+.gpx-station-editor input,
+.gpx-station-editor select {
+  width: 100%;
+  min-width: 0;
+}
+
 /* src/styles/index.css */
 /*# sourceMappingURL=app.bundle.css.map */
