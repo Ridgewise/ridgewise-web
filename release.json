@@ -1,6 +1,10 @@
 {
   "sourceRepository": "Ridgewise/app",
-  "sourceSha": "9b6a48ebee3556b40f0d0fa514a1a203f901b058",
-  "publishedAt": "2026-10-20T14:00:23.029211+00:00",
-  "bundleSha256": "d9857af74008ec103d5c4fc9d61ead69db61a7746324129faa2aa3b504731823"
+  "sourceSha": "59b19ce06be34db8224756f6b7169452b5d1b179",
+  "pullRequest": 41,
+  "publishedAt": "2026-10-21T11:14:57.782680+00:00",
+  "bundleSha256": "f787fd4230b2af4e68fb15f1232677d02425a9a5c48fb2c7659236353e86a0a8",
+  "cssSha256": "840bb786cea83bd737f88d374f9cbf4ec41cf063ea029638105d2977c01fd274",
+  "serviceWorkerSha256": "56c77d908e78942269cb4e43f7e9f2e79dcba15347f11f4109d729629f64b046",
+  "validationSourceSha": "212de1c87c612013e213be7a20b796f24116a57d"
 }
