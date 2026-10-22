@@ -21,7 +21,7 @@
       "imports": []
     },
     "src/features/map/map.css": {
-      "bytes": 3247,
+      "bytes": 7171,
       "imports": []
     },
     "src/features/itinerary/itinerary.css": {
@@ -29,7 +29,7 @@
       "imports": []
     },
     "src/styles/mobile.css": {
-      "bytes": 15454,
+      "bytes": 17410,
       "imports": []
     },
     "src/features/itinerary/live-factor.css": {
@@ -41,7 +41,7 @@
       "imports": []
     },
     "src/features/offline-map/offline-map.css": {
-      "bytes": 1782,
+      "bytes": 1601,
       "imports": []
     },
     "src/features/gpx/diagnostics.css": {
@@ -656,9 +656,20 @@
       "imports": [],
       "format": "esm"
     },
-    "src/core/browser-events.js": {
-      "bytes": 3990,
+    "src/features/map/position.js": {
+      "bytes": 703,
       "imports": [],
+      "format": "esm"
+    },
+    "src/core/browser-events.js": {
+      "bytes": 4127,
+      "imports": [
+        {
+          "path": "src/features/map/position.js",
+          "kind": "import-statement",
+          "original": "../features/map/position.js"
+        }
+      ],
       "format": "esm"
     },
     "src/storage/database.js": {
@@ -784,7 +795,7 @@
       "format": "esm"
     },
     "src/features/map/thumbnail.js": {
-      "bytes": 3106,
+      "bytes": 2909,
       "imports": [
         {
           "path": "src/domain/track.js",
@@ -863,8 +874,13 @@
       "format": "esm"
     },
     "src/features/recording/geolocation.js": {
-      "bytes": 5667,
+      "bytes": 5784,
       "imports": [
+        {
+          "path": "src/features/map/position.js",
+          "kind": "import-statement",
+          "original": "../map/position.js"
+        },
         {
           "path": "src/domain/track-math.js",
           "kind": "import-statement",
@@ -1131,8 +1147,13 @@
       "format": "esm"
     },
     "src/features/recording/view.js": {
-      "bytes": 12680,
+      "bytes": 13822,
       "imports": [
+        {
+          "path": "src/features/map/position.js",
+          "kind": "import-statement",
+          "original": "../map/position.js"
+        },
         {
           "path": "src/features/itinerary/reroute-view.js",
           "kind": "import-statement",
@@ -1176,9 +1197,36 @@
       ],
       "format": "esm"
     },
-    "src/features/map/terrain-3d.js": {
-      "bytes": 16599,
+    "src/features/map/navigation-overlay.js": {
+      "bytes": 13464,
+      "imports": [
+        {
+          "path": "src/ui/html.js",
+          "kind": "import-statement",
+          "original": "../../ui/html.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/features/map/camera.js": {
+      "bytes": 1208,
       "imports": [],
+      "format": "esm"
+    },
+    "src/features/map/terrain-3d.js": {
+      "bytes": 17987,
+      "imports": [
+        {
+          "path": "src/features/map/navigation-overlay.js",
+          "kind": "import-statement",
+          "original": "./navigation-overlay.js"
+        },
+        {
+          "path": "src/features/map/camera.js",
+          "kind": "import-statement",
+          "original": "./camera.js"
+        }
+      ],
       "format": "esm"
     },
     "src/features/offline-map/style.js": {
@@ -1193,13 +1241,23 @@
       "format": "esm"
     },
     "src/features/offline-map/labels.js": {
-      "bytes": 2232,
+      "bytes": 2415,
       "imports": [],
       "format": "esm"
     },
     "src/features/offline-map/map.js": {
-      "bytes": 9038,
+      "bytes": 10410,
       "imports": [
+        {
+          "path": "src/features/map/navigation-overlay.js",
+          "kind": "import-statement",
+          "original": "../map/navigation-overlay.js"
+        },
+        {
+          "path": "src/features/map/camera.js",
+          "kind": "import-statement",
+          "original": "../map/camera.js"
+        },
         {
           "path": "src/features/map/terrain-3d.js",
           "kind": "import-statement",
@@ -1218,8 +1276,39 @@
       ],
       "format": "esm"
     },
+    "src/features/map/controller.js": {
+      "bytes": 18264,
+      "imports": [
+        {
+          "path": "src/features/offline-map/map.js",
+          "kind": "import-statement",
+          "original": "../offline-map/map.js"
+        },
+        {
+          "path": "src/features/map/navigation-overlay.js",
+          "kind": "import-statement",
+          "original": "./navigation-overlay.js"
+        },
+        {
+          "path": "src/features/map/camera.js",
+          "kind": "import-statement",
+          "original": "./camera.js"
+        },
+        {
+          "path": "src/features/map/terrain-3d.js",
+          "kind": "import-statement",
+          "original": "./terrain-3d.js"
+        }
+      ],
+      "format": "esm"
+    },
+    "src/features/map/presenter.js": {
+      "bytes": 674,
+      "imports": [],
+      "format": "esm"
+    },
     "src/features/gpx-stations/markers.js": {
-      "bytes": 946,
+      "bytes": 1015,
       "imports": [
         {
           "path": "src/ui/html.js",
@@ -1336,17 +1425,12 @@
       "format": "esm"
     },
     "src/features/itinerary/markers.js": {
-      "bytes": 1318,
+      "bytes": 201,
       "imports": [
         {
           "path": "src/features/gpx-stations/markers.js",
           "kind": "import-statement",
           "original": "../gpx-stations/markers.js"
-        },
-        {
-          "path": "src/ui/html.js",
-          "kind": "import-statement",
-          "original": "../../ui/html.js"
         },
         {
           "path": "src/features/itinerary/views.js",
@@ -1356,34 +1440,8 @@
       ],
       "format": "esm"
     },
-    "src/features/map/controller.js": {
-      "bytes": 15662,
-      "imports": [
-        {
-          "path": "src/features/offline-map/map.js",
-          "kind": "import-statement",
-          "original": "../offline-map/map.js"
-        },
-        {
-          "path": "src/features/itinerary/markers.js",
-          "kind": "import-statement",
-          "original": "../itinerary/markers.js"
-        },
-        {
-          "path": "src/features/map/terrain-3d.js",
-          "kind": "import-statement",
-          "original": "./terrain-3d.js"
-        }
-      ],
-      "format": "esm"
-    },
-    "src/features/map/presenter.js": {
-      "bytes": 674,
-      "imports": [],
-      "format": "esm"
-    },
     "src/features/map/view.js": {
-      "bytes": 4223,
+      "bytes": 5057,
       "imports": [
         {
           "path": "src/features/offline-map/view.js",
@@ -1414,6 +1472,11 @@
           "path": "src/features/elevation/view.js",
           "kind": "import-statement",
           "original": "../elevation/view.js"
+        },
+        {
+          "path": "src/features/map/position.js",
+          "kind": "import-statement",
+          "original": "./position.js"
         }
       ],
       "format": "esm"
@@ -1487,7 +1550,7 @@
       "format": "esm"
     },
     "src/ui/feedback.js": {
-      "bytes": 2585,
+      "bytes": 3031,
       "imports": [
         {
           "path": "src/ui/html.js",
@@ -1524,12 +1587,12 @@
       "format": "esm"
     },
     "src/features/map/actions.js": {
-      "bytes": 1223,
+      "bytes": 1253,
       "imports": [],
       "format": "esm"
     },
     "src/features/recording/actions.js": {
-      "bytes": 1514,
+      "bytes": 1872,
       "imports": [
         {
           "path": "src/ui/html.js",
@@ -1603,8 +1666,13 @@
       "format": "esm"
     },
     "src/ui/renderer.js": {
-      "bytes": 4606,
+      "bytes": 4855,
       "imports": [
+        {
+          "path": "src/features/map/position.js",
+          "kind": "import-statement",
+          "original": "../features/map/position.js"
+        },
         {
           "path": "src/features/recording/analysis.js",
           "kind": "import-statement",
@@ -2466,7 +2534,7 @@
       "imports": [],
       "exports": [],
       "inputs": {},
-      "bytes": 5025502
+      "bytes": 5064746
     },
     "dist/app.bundle.js": {
       "imports": [],
@@ -2600,8 +2668,11 @@
         "src/core/navigation.js": {
           "bytesInOutput": 1453
         },
+        "src/features/map/position.js": {
+          "bytesInOutput": 509
+        },
         "src/core/browser-events.js": {
-          "bytesInOutput": 4272
+          "bytesInOutput": 4349
         },
         "src/storage/database.js": {
           "bytesInOutput": 3199
@@ -2631,7 +2702,7 @@
           "bytesInOutput": 589
         },
         "src/features/map/thumbnail.js": {
-          "bytesInOutput": 3060
+          "bytesInOutput": 2864
         },
         "src/features/gpx/views.js": {
           "bytesInOutput": 3972
@@ -2646,7 +2717,7 @@
           "bytesInOutput": 636
         },
         "src/features/recording/geolocation.js": {
-          "bytesInOutput": 5882
+          "bytesInOutput": 5948
         },
         "src/ui/download.js": {
           "bytesInOutput": 297
@@ -2694,22 +2765,34 @@
           "bytesInOutput": 1854
         },
         "src/features/recording/view.js": {
-          "bytesInOutput": 14376
+          "bytesInOutput": 15660
+        },
+        "src/features/map/navigation-overlay.js": {
+          "bytesInOutput": 13005
+        },
+        "src/features/map/camera.js": {
+          "bytesInOutput": 919
         },
         "src/features/map/terrain-3d.js": {
-          "bytesInOutput": 17653
+          "bytesInOutput": 19016
         },
         "src/features/offline-map/style.js": {
           "bytesInOutput": 2776
         },
         "src/features/offline-map/labels.js": {
-          "bytesInOutput": 2225
+          "bytesInOutput": 2375
         },
         "src/features/offline-map/map.js": {
-          "bytesInOutput": 9399
+          "bytesInOutput": 10733
+        },
+        "src/features/map/controller.js": {
+          "bytesInOutput": 18936
+        },
+        "src/features/map/presenter.js": {
+          "bytesInOutput": 712
         },
         "src/features/gpx-stations/markers.js": {
-          "bytesInOutput": 794
+          "bytesInOutput": 877
         },
         "src/features/itinerary/timing-issues.js": {
           "bytesInOutput": 717
@@ -2730,16 +2813,10 @@
           "bytesInOutput": 19339
         },
         "src/features/itinerary/markers.js": {
-          "bytesInOutput": 1203
-        },
-        "src/features/map/controller.js": {
-          "bytesInOutput": 16398
-        },
-        "src/features/map/presenter.js": {
-          "bytesInOutput": 712
+          "bytesInOutput": 98
         },
         "src/features/map/view.js": {
-          "bytesInOutput": 4722
+          "bytesInOutput": 5580
         },
         "src/features/gpx/diagnostics.js": {
           "bytesInOutput": 5170
@@ -2754,7 +2831,7 @@
           "bytesInOutput": 7012
         },
         "src/ui/feedback.js": {
-          "bytesInOutput": 4054
+          "bytesInOutput": 4481
         },
         "src/features/itinerary/actions.js": {
           "bytesInOutput": 2957
@@ -2763,10 +2840,10 @@
           "bytesInOutput": 2483
         },
         "src/features/map/actions.js": {
-          "bytesInOutput": 1203
+          "bytesInOutput": 1235
         },
         "src/features/recording/actions.js": {
-          "bytesInOutput": 1781
+          "bytesInOutput": 2277
         },
         "src/ui/actions.js": {
           "bytesInOutput": 814
@@ -2778,7 +2855,7 @@
           "bytesInOutput": 707
         },
         "src/ui/renderer.js": {
-          "bytesInOutput": 4357
+          "bytesInOutput": 4548
         },
         "../packages/prediction-engine/internal/input.js": {
           "bytesInOutput": 2842
@@ -2832,13 +2909,13 @@
           "bytesInOutput": 4056
         },
         "src/features/itinerary/rerouting.js": {
-          "bytesInOutput": 16689
+          "bytesInOutput": 16694
         },
         "src/features/itinerary/reroute-eta.js": {
           "bytesInOutput": 1877
         },
         "src/features/itinerary/smart-location.js": {
-          "bytesInOutput": 3864
+          "bytesInOutput": 3867
         },
         "src/features/itinerary/connected-routing.js": {
           "bytesInOutput": 4242
@@ -2883,13 +2960,13 @@
           "bytesInOutput": 100
         }
       },
-      "bytes": 3263497
+      "bytes": 3285649
     },
     "dist/app.bundle.css.map": {
       "imports": [],
       "exports": [],
       "inputs": {},
-      "bytes": 120547
+      "bytes": 130193
     },
     "dist/app.bundle.css": {
       "imports": [],
@@ -2910,13 +2987,13 @@
           "bytesInOutput": 11335
         },
         "src/features/map/map.css": {
-          "bytesInOutput": 3245
+          "bytesInOutput": 7082
         },
         "src/features/itinerary/itinerary.css": {
           "bytesInOutput": 3259
         },
         "src/styles/mobile.css": {
-          "bytesInOutput": 15255
+          "bytesInOutput": 17132
         },
         "src/features/itinerary/live-factor.css": {
           "bytesInOutput": 2519
@@ -2925,7 +3002,7 @@
           "bytesInOutput": 1984
         },
         "src/features/offline-map/offline-map.css": {
-          "bytesInOutput": 1774
+          "bytesInOutput": 1593
         },
         "src/features/gpx/diagnostics.css": {
           "bytesInOutput": 2251
@@ -2943,7 +3020,7 @@
           "bytesInOutput": 0
         }
       },
-      "bytes": 71988
+      "bytes": 77521
     }
   }
 }

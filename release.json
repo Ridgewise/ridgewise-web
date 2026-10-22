@@ -1,10 +1,23 @@
 {
   "sourceRepository": "Ridgewise/app",
-  "sourceSha": "59b19ce06be34db8224756f6b7169452b5d1b179",
-  "pullRequest": 41,
-  "publishedAt": "2026-10-21T11:14:57.782680+00:00",
-  "bundleSha256": "f787fd4230b2af4e68fb15f1232677d02425a9a5c48fb2c7659236353e86a0a8",
-  "cssSha256": "840bb786cea83bd737f88d374f9cbf4ec41cf063ea029638105d2977c01fd274",
-  "serviceWorkerSha256": "56c77d908e78942269cb4e43f7e9f2e79dcba15347f11f4109d729629f64b046",
-  "validationSourceSha": "212de1c87c612013e213be7a20b796f24116a57d"
+  "sourceSha": "231c1b857b0724fc7b57c527765634e61a46cc50",
+  "pullRequest": 42,
+  "publishedAt": "2026-10-22T05:24:18.860316+00:00",
+  "bundleSha256": "d7a7607877b82ec905ed91982e9a96ea1e482d4a4ac572540e5d3226411c0188",
+  "cssSha256": "7b1e86d909c540b537560584abf3e4202a554638c4c0fd6eb5f0b524c8d67644",
+  "serviceWorkerSha256": "b1e4e2ea64f4990be19cabde5f1aa63dfc1b928a762055b917e4baf3c6bdfab0",
+  "validationSourceSha": "a6e44f4316929c39c7dfb4dfabcc6fe7de8146d5",
+  "validation": {
+    "localVerify": "passed",
+    "chromium": {
+      "passed": 142,
+      "skipped": 8
+    },
+    "webkit": {
+      "passed": 142,
+      "skipped": 8
+    },
+    "cloudCI": "not-executed-account-billing-limit-accepted-by-owner",
+    "iPhoneDeviceVerified": false
+  }
 }

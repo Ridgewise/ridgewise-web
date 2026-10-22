@@ -2230,6 +2230,211 @@
     padding: 0 18px 12px;
   }
 }
+.navigation-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 650;
+  pointer-events: none;
+  overflow: hidden;
+}
+.navigation-pin,
+.station-pin {
+  position: absolute;
+  transform: translate(-50%, -50%);
+}
+.navigation-pin {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  line-height: 1;
+  color: white;
+  border: 2px solid white;
+  box-shadow: 0 1px 4px #17332b66;
+}
+.navigation-start {
+  background: #183e35;
+  border-radius: 50%;
+}
+.navigation-end {
+  background: #8daa64;
+  border-radius: 3px;
+}
+.navigation-gps {
+  width: 18px;
+  height: 18px;
+  border: 3px solid white;
+  border-radius: 50%;
+  background: #2477d4;
+  box-shadow: 0 0 0 7px #2477d433, 0 1px 5px #12385477;
+  z-index: 2;
+}
+.station-pin {
+  pointer-events: auto;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #586c62;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.station-pin > span {
+  width: 16px;
+  height: 16px;
+  border: 2px solid white;
+  border-radius: 50%;
+  background: #586c62;
+  color: white;
+  font-size: 16px;
+  line-height: 10px;
+  box-shadow: 0 1px 4px #17332b66;
+}
+.station-pin-next > span {
+  width: 22px;
+  height: 22px;
+  background: #b87930;
+  font-size: 14px;
+  line-height: 18px;
+  border-radius: 4px;
+}
+.station-pin small {
+  position: absolute;
+  right: 0;
+  top: 0;
+  min-width: 18px;
+  border-radius: 9px;
+  background: #244b3d;
+  color: white;
+  font: 12px/18px system-ui;
+}
+.station-pin:focus-visible,
+.station-pin[aria-expanded=true] {
+  outline: 2px solid #244b3d;
+  outline-offset: -3px;
+  background: #ffffffaa;
+}
+.station-card {
+  pointer-events: auto;
+  position: absolute;
+  left: 12px;
+  bottom: 44px;
+  width: min(280px, calc(100% - 80px));
+  max-height: min(210px, calc(100% - 70px));
+  overflow: auto;
+  padding: 12px 48px 12px 12px;
+  border: 1px solid #cbd7c3;
+  border-radius: 12px;
+  background: #fffffff5;
+  color: #263e33;
+  box-shadow: 0 3px 12px #183e3526;
+  font: 14px/1.5 system-ui;
+  overflow-wrap: anywhere;
+  z-index: 3;
+}
+.station-card[hidden] {
+  display: none;
+}
+.station-card strong,
+.station-card > span {
+  display: block;
+}
+.station-card p {
+  margin: 4px 0 0;
+}
+.station-card-close {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  background: transparent;
+  color: #244b3d;
+  font-size: 24px;
+  cursor: pointer;
+}
+.station-next-badge {
+  color: #87511c;
+  font-weight: 700;
+}
+.station-card-places {
+  margin-top: 6px;
+  display: grid;
+  gap: 4px;
+}
+.station-card-places button {
+  min-height: 44px;
+  text-align: left;
+  border: 1px solid #d3ddc8;
+  border-radius: 6px;
+  background: #f6f8f1;
+  color: #244b3d;
+  overflow-wrap: anywhere;
+}
+.terrain-map-canvas .maplibregl-control-container {
+  position: absolute;
+  inset: 0;
+  z-index: 800;
+  pointer-events: none;
+}
+.terrain-map-canvas .maplibregl-ctrl {
+  pointer-events: auto;
+}
+.terrain-map-canvas .maplibregl-ctrl-group button,
+.terrain-map-canvas .leaflet-control-zoom a {
+  width: 44px;
+  height: 44px;
+  line-height: 44px;
+}
+.map-navigation-tools {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.terrain-toolbar .button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.station-tethers {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.station-tethers line {
+  stroke: #586c62;
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+}
+.navigation-tether {
+  color: #183e35;
+}
+.navigation-tether-end {
+  color: #647e40;
+}
+.station-tethers .navigation-tether line {
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-dasharray: none;
+}
+.navigation-tether circle {
+  fill: currentColor;
+  stroke: white;
+  stroke-width: 1;
+}
+.station-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
 
 /* src/features/itinerary/itinerary.css */
 .itinerary-buttons {
@@ -2900,7 +3105,7 @@ input[type=checkbox] {
 }
 .live-stats {
   display: grid;
-  grid-template-columns: 1.3fr 1fr 0.9fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   border-top: 1px solid var(--line);
   margin: 12px 0;
   padding-top: 10px;
@@ -3138,11 +3343,8 @@ summary {
 }
 @media (max-width: 700px) and (orientation: portrait) {
   .recording-scene:not(.recording-stopped) .compact-map .actual-map {
-    height: clamp(300px, 50dvh, 520px);
-    min-height: 300px;
-  }
-  .recording-scene:not(.recording-stopped) .recording-map-expanded .actual-map {
-    height: 85dvh;
+    height: clamp(240px, 36dvh, 380px);
+    min-height: 240px;
   }
   .recording-stopped .compact-map .actual-map {
     height: clamp(130px, calc(100dvh - 680px), 210px);
@@ -3176,45 +3378,124 @@ dialog {
   max-height: calc(100dvh - 32px);
   overflow: auto;
 }
-.recording-map-size {
-  display: none;
+.recording-heading {
+  padding-top: calc(12px + env(safe-area-inset-top));
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
 }
-@media (max-width: 700px) and (orientation: portrait) {
-  .recording-map {
-    min-width: 0;
-  }
-  .recording-map-size {
-    position: sticky;
-    top: 0;
-    z-index: 1050;
-    display: flex;
-    justify-content: flex-end;
-    padding: calc(4px + env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) 4px max(14px, env(safe-area-inset-left));
-    background: #f4f6ef;
-  }
-  .recording-map-size .button {
-    min-height: 44px;
-    font-size: 14px;
-    padding: 6px 12px;
-  }
+.recording-heading h2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.recording-map .terrain-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  padding: 6px max(12px, env(safe-area-inset-right)) 6px max(12px, env(safe-area-inset-left));
+  gap: 4px;
+}
+.recording-map .terrain-toolbar .tab-group {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.recording-map .terrain-toolbar .button {
+  min-height: 44px;
+  min-width: 44px;
+  font-size: 14px;
+  padding: 6px 8px;
+}
+.recording-map .map-navigation-tools {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.recording-map .map-navigation-tools .button {
+  white-space: nowrap;
+}
+.recording-map .terrain-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 900;
+  background: #f4f6ef;
+}
+.recording-scene:not(.recording-stopped) .recording-map-expanded .actual-map {
+  height: calc(100dvh - 260px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  min-height: 180px;
+}
+.recording-sheet .itinerary-next h2 {
+  font-size: 22px;
+  overflow-wrap: anywhere;
+}
+.recording-sheet {
+  z-index: auto;
+}
+@media (min-width: 701px) {
   .recording-map .terrain-toolbar {
-    flex-wrap: wrap;
+    grid-template-columns: minmax(0, 1fr) auto;
   }
-  .recording-map .terrain-toolbar .button {
-    min-height: 44px;
+}
+@media (max-width: 700px) and (orientation: landscape) {
+  .recording-map .terrain-toolbar {
+    grid-template-columns: minmax(0, 1fr) auto;
   }
-  .recording-map .terrain-status-row {
-    flex-wrap: wrap;
-    overflow-wrap: anywhere;
+  .recording-heading {
+    min-height: 0;
   }
-  .recording-map .actual-map {
-    scroll-margin-top: calc(60px + env(safe-area-inset-top));
-    scroll-margin-bottom: calc(160px + env(safe-area-inset-bottom));
+  .recording-scene:not(.recording-stopped) .recording-map-expanded .actual-map {
+    height: 65dvh;
   }
-  .recording-scene .live-controls {
-    padding-left: max(20px, env(safe-area-inset-left));
-    padding-right: max(20px, env(safe-area-inset-right));
-  }
+}
+.recording-status-group {
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+}
+.recording-elapsed {
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.recording-map .map-navigation-tools [aria-pressed=true] {
+  color: #1a5d9f;
+  background: #e4eef7;
+}
+.recording-stopped .terrain-toolbar {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.recording-stopped .map-navigation-tools {
+  grid-template-columns: 1fr;
+}
+.recording-map .terrain-toolbar {
+  padding-top: max(6px, env(safe-area-inset-top));
+}
+.recording-scene .live-controls {
+  padding-left: max(20px, env(safe-area-inset-left));
+  padding-right: max(20px, env(safe-area-inset-right));
+}
+.recording-sheet .itinerary-next {
+  position: relative;
+}
+.recording-sheet .itinerary-next > .station-status {
+  position: absolute;
+  top: 0;
+  right: 0;
+  margin: 0;
+  font-size: 12px;
+}
+.recording-map .panel {
+  overflow: visible;
+}
+.recording-map .actual-map {
+  scroll-margin-top: calc(110px + env(safe-area-inset-top));
+  scroll-margin-bottom: calc(168px + env(safe-area-inset-bottom));
+}
+.recording-heading > .recording-status-group {
+  flex-shrink: 0;
+  min-width: max-content;
+}
+.record-status[data-status=tracking][data-location=unavailable] {
+  color: #805100;
+  background: #fff0ca;
 }
 
 /* src/features/itinerary/live-factor.css */
@@ -3519,7 +3800,10 @@ dialog {
   color: #976334;
 }
 .offline-map-label {
-  max-width: 180px;
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font: 11px/1.3 system-ui, sans-serif;
   color: #3e543f;
   text-shadow:
@@ -3528,18 +3812,6 @@ dialog {
     1px -1px 0 #fff,
     -1px 1px 0 #fff;
   pointer-events: none;
-}
-.offline-map-label.station-label {
-  background: #fffffff0;
-  padding: 3px 6px;
-  border-radius: 6px;
-  border: 1px solid #d0d9c6;
-  font-weight: 600;
-  text-shadow: none;
-}
-.offline-map-label.next-label {
-  border-color: #b87930;
-  color: #89561f;
 }
 @media (max-width: 480px) {
   .offline-map-panel {

@@ -3498,6 +3498,18 @@
     };
   }
 
+  // src/features/map/position.js
+  var fixes = /* @__PURE__ */ new WeakMap();
+  function rememberMapFix(gps, fix) {
+    fixes.set(gps, fix);
+  }
+  function currentMapPosition(gps, now = Date.now()) {
+    const fix = fixes.get(gps);
+    if (gps?.status !== "tracking" || !fix || fix.excluded || !Number.isFinite(fix.lat) || !Number.isFinite(fix.lon) || !Number.isFinite(fix.accuracy) || fix.accuracy < 0 || fix.accuracy > 50 || !Number.isFinite(fix.time) || now - fix.time > 6e4 || fix.time > now + 5e3)
+      return null;
+    return fix;
+  }
+
   // src/core/browser-events.js
   function bindBrowserEvents({
     state,
@@ -3613,7 +3625,10 @@
     });
     const clock = window2.setInterval(() => {
       heightProfile?.update();
-      if (state.view === "record" && gpsPending2()) recordingView.updateNumbers();
+      if (state.view === "record" && gpsPending2()) {
+        map.updatePosition(currentMapPosition(state.gps));
+        recordingView.updateNumbers();
+      }
     }, 1e3);
     const autosave = window2.setInterval(() => {
       if (["requesting", "tracking"].includes(state.gps.status)) persistence.save();
@@ -4253,10 +4268,9 @@
     ${file.segments.map((segment) => line(segment, "white", 8)).join("")}${file.segments.map((segment) => line(segment, "#326753", 4)).join("")}
     ${live.map((segment) => line(segment, "#4388b7", 3)).join("")}
     ${file.points.length ? dot(file.points[0], "#183e35") + dot(file.points.at(-1), "#8daa64") : ""}
-    ${position3 ? dot(position3, "#d3a34c", 9) : ""}${live.at(-1)?.length ? dot(live.at(-1).at(-1), "#4388b7", 8) : ""}
+    ${position3 ? dot(position3, "#2477d4", 9) : ""}
     ${stations.map((station) => {
-      const p = project2(station);
-      return `<g>${dot(station, station.next ? "#b87930" : "#326753", 7)}<title>${esc(station.name)} ${esc(station.arrivalLabel || "")}</title><text x="${p.x + 10}" y="${p.y - 7}" fill="#183e35" font-size="12">${esc(station.name)}</text></g>`;
+      return `<g>${dot(station, station.next ? "#b87930" : "#326753", 7)}<title>${esc(station.name)} ${esc(station.arrivalLabel || "")}</title></g>`;
     }).join("")}
     <text x="20" y="27" fill="#527062" font-size="13">N \u2191</text></svg>`;
   }
@@ -4604,6 +4618,7 @@
           const reliable = positionReliable(point) && !latest?.excluded;
           gps.status = reliable ? "tracking" : "requesting";
           gps.error = !positionReliable(point) ? "\u76EE\u524D\u5B9A\u4F4D\u7CBE\u5EA6\u4E0D\u8DB3\uFF0C\u539F\u59CB\u4F4D\u7F6E\u5DF2\u4FDD\u7559\uFF0C\u8A72\u6BB5\u66AB\u4E0D\u8A08\u5165\u8DDD\u96E2\u3002" : latest?.excluded ? "\u4F4D\u7F6E\u8DF3\u52D5\u5F85\u78BA\u8A8D\uFF0C\u539F\u59CB\u4F4D\u7F6E\u5DF2\u4FDD\u7559\uFF0C\u66AB\u4E0D\u8A08\u5165\u8DDD\u96E2\u3002" : !elevationReliable(point) ? "\u6D77\u62D4\u7CBE\u5EA6\u4E0D\u8DB3\uFF0C\u539F\u59CB\u9AD8\u5EA6\u5DF2\u4FDD\u7559\uFF0C\u722C\u5347\u8CC7\u6599\u66AB\u4E0D\u5B8C\u6574\u3002" : "";
+          rememberMapFix(gps, { ...point, excluded: !reliable });
           onFix(
             {
               ...point,
@@ -6313,7 +6328,7 @@
       );
       const status = {
         requesting: "\u7B49\u5F85\u5B9A\u4F4D",
-        tracking: "GPS \u7D00\u9304\u4E2D",
+        tracking: currentMapPosition(gps) ? "GPS \u7D00\u9304\u4E2D" : "\u7B49\u5F85\u6709\u6548\u5B9A\u4F4D",
         paused: "\u5DF2\u66AB\u505C",
         error: "\u5B9A\u4F4D\u5DF2\u4E2D\u65B7",
         stopping: "\u6B63\u5728\u7D50\u675F",
@@ -6324,13 +6339,13 @@
       }[gps.status];
       const locationStatus = stopped ? "\u5B9A\u4F4D\u5DF2\u505C\u6B62\uFF1B\u5730\u5716\u986F\u793A\u672C\u6B21\u5DF2\u8A18\u9304\u8ECC\u8DE1\u3002" : {
         requesting: "\u7B49\u5F85\u6709\u6548\u5B9A\u4F4D\uFF1B\u5730\u5716\u4E0A\u7684\u5DF2\u8A18\u9304\u4F4D\u7F6E\u4E0D\u4EE3\u8868\u76EE\u524D\u4F4D\u7F6E\u3002",
-        tracking: "\u6B63\u5728\u63A5\u6536 GPS \u5B9A\u4F4D\u4E26\u8A18\u9304\u8ECC\u8DE1\u3002",
+        tracking: currentMapPosition(gps) ? "\u6B63\u5728\u63A5\u6536 GPS \u5B9A\u4F4D\u4E26\u8A18\u9304\u8ECC\u8DE1\u3002" : "\u5B9A\u4F4D\u5DF2\u904E\u671F\u6216\u7CBE\u5EA6\u4E0D\u8DB3\uFF1B\u7B49\u5F85\u6709\u6548 GPS\uFF0C\u5730\u5716\u53EA\u986F\u793A\u5DF2\u8A18\u9304\u8ECC\u8DE1\u3002",
         paused: "\u5DF2\u66AB\u505C\u5B9A\u4F4D\uFF1B\u5730\u5716\u986F\u793A\u5DF2\u8A18\u9304\u8ECC\u8DE1\uFF0C\u4E0D\u4EE3\u8868\u76EE\u524D\u4F4D\u7F6E\u3002",
         error: "\u5B9A\u4F4D\u5DF2\u4E2D\u65B7\uFF1B\u5730\u5716\u50C5\u986F\u793A\u5148\u524D\u8ECC\u8DE1\uFF0C\u6700\u5F8C\u7D00\u9304\u4F4D\u7F6E\u4E0D\u4EE3\u8868\u76EE\u524D\u4F4D\u7F6E\u3002"
       }[gps.status];
       const expanded = !stopped && state.recordingMapExpandedId === gps.id;
       const currentAccuracy = gps.status === "tracking" && Number.isFinite(gps.accuracy);
-      return `<section data-status="${esc(gps.status)}" class="recording-scene ${stopped ? "recording-stopped" : ""}"><header class="recording-heading"><div><span class="eyebrow">${stopped ? "YOUR WALK" : gps.status === "tracking" ? "LIVE GPS" : "GPS STATUS"}${gps.sourceRouteId ? gps.sourceRouteDirection === "reverse" ? " \xB7 \u53CD\u5411\u8D70" : " \xB7 \u539F\u5411\u8D70" : ""}</span><h2>${esc(gps.name || file.name)}</h2></div><span class="record-status" data-status="${esc(gps.status)}" role="status" aria-live="polite">${status}</span></header><p id="gps-location-status" class="recording-location-status"${stopped ? " hidden" : ""}>${locationStatus}</p><div class="recording-map ${expanded ? "recording-map-expanded" : ""}" aria-describedby="gps-location-status">${stopped ? "" : `<div class="recording-map-size"><button class="button" data-action="recording-map-toggle" aria-expanded="${expanded}" aria-controls="track-map">${expanded ? "\u7E2E\u5C0F\u5730\u5716" : "\u5C55\u958B\u5730\u5716"}</button></div>`}${mapPanel(file, null, recordingSegments(gps), { compact: true })}</div>${stopped ? completionView(gps, gpsElapsed()) : `<section class="recording-sheet"><div class="sheet-handle"></div>${itineraryViews?.liveFactorsPanel?.() ?? ""}${itineraryViews && gps.sourceRouteId ? itineraryViews.nextCard() : '<div class="direct-next"><span class="eyebrow">\u8A18\u4E0B\u81EA\u5DF1\u7684\u8DEF</span><h2>\u81EA\u7531\u7D00\u9304</h2><p class="small muted">\u85CD\u7DDA\u662F\u5DF2\u8A18\u9304\u8ECC\u8DE1\uFF0C\u76EE\u524D\u672A\u4F7F\u7528\u9810\u5B9A\u8DEF\u7DDA\u3002</p></div>'}<div class="live-stats"><div><small>\u7D00\u9304\u6642\u9593</small><strong id="gps-clock">${elapsedLabel(gpsElapsed())}</strong></div><div><small>\u884C\u9032\u91CC\u7A0B</small><strong id="gps-distance">${stats.km.toFixed(2)} <small>km</small></strong></div><div><small>GPS \u7CBE\u5EA6</small><strong>${currentAccuracy ? `${Math.round(gps.accuracy)} <small>m</small>` : "\u2014"}</strong></div></div>${gps.error ? `<p class="error-message" role="status">${esc(gps.error)}</p>` : ""}${reroutePanel(state)}${itineraryViews?.departureNotice?.() ?? ""}<div class="live-controls">${button(["paused", "error"].includes(gps.status) ? "\u7E7C\u7E8C\u7D00\u9304" : "\u66AB\u505C\u7D00\u9304", ["paused", "error"].includes(gps.status) ? "gps-resume" : "gps-pause", "", ["paused", "error"].includes(gps.status) ? "play" : "pause")}${button("\u7D50\u675F\u7D00\u9304", "gps-finish", "end-recording", "stop")}</div><details class="recording-more" id="recording-more"><summary>\u7D00\u9304\u72C0\u614B\u8207\u66F4\u591A\u8CC7\u8A0A</summary><div class="stack">${itineraryViews?.departurePanel?.() ?? ""}<p id="gps-save-status" class="small muted" role="status">${esc(saveStatus())}</p>${button("\u91CD\u8A66\u4FDD\u5B58", "gps-save-retry", "", "refresh", `id="gps-save-retry" ${gps.saveError ? "" : "hidden"}`)}<p class="small muted">\u8ACB\u4FDD\u6301\u5206\u9801\u958B\u555F\uFF1B\u9396\u5C4F\u8207\u80CC\u666F\u5B9A\u4F4D\u53EF\u80FD\u4E2D\u65B7\u3002\u8349\u7A3F\u53EA\u4F9B\u6062\u5FA9\uFF0C\u4E0D\u6703\u81EA\u52D5\u52A0\u5165\u300C\u6211\u7684 GPX\u300D\u3002\u8DDD\u96E2\u8207\u9AD8\u5EA6\u6703\u96A8\u5F8C\u7E8C\u5B9A\u4F4D\u6821\u6B63\uFF0C\u539F\u59CB GPX \u4FDD\u7559\u3002</p>${button("\u4E0B\u8F09\u5099\u4EFD", "gps-download", "ghost", "download")}${button(stats.points ? "\u653E\u68C4\u9019\u6B21\u7D00\u9304" : "\u53D6\u6D88\u7A7A\u767D\u7D00\u9304", "gps-discard", "ghost", "close")}<p class="small muted">\u5DF2\u4FDD\u7559 ${stats.points} \u500B\u539F\u59CB\u9EDE \xB7 ${gps.segments.filter((segment) => segment.length).length} \u6BB5\u8ECC\u8DE1</p><p class="small muted">\u6821\u6B63\u722C\u5347 <span id="gps-ascent">${meters(stats.up)}</span> m \uFF0F\u4E0B\u964D <span id="gps-descent">${meters(stats.down)}</span> m \xB7 \u5E73\u5747\u901F\u5EA6 <span id="gps-average">\u2014</span></p></div></details></section>`}</section>${heightPanel ? `<details class="recording-height-profile" id="recording-height-profile"><summary>\u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762\u30FB\u65E5\u591C\u8DEF\u6BB5</summary>${heightPanel(file, recordingSegments(gps))}</details>` : ""}${!stopped && file === directMap ? `<details class="manual-reference" id="manual-reference"><summary>\u9032\u968E\uFF1A\u624B\u52D5\u4E0A\u6CB3\u8DEF\u6BB5\u8A08\u6642</summary>${shanghePanel()}</details>` : ""}`;
+      return `<section data-status="${esc(gps.status)}" class="recording-scene ${stopped ? "recording-stopped" : ""}"><header class="recording-heading"><div><span class="eyebrow">${stopped ? "YOUR WALK" : currentMapPosition(gps) ? "LIVE GPS" : "GPS STATUS"}${gps.sourceRouteId ? gps.sourceRouteDirection === "reverse" ? " \xB7 \u53CD\u5411\u8D70" : " \xB7 \u539F\u5411\u8D70" : ""}</span><h2>${esc(gps.name || file.name)}</h2></div><div class="recording-status-group"><span class="record-status" data-status="${esc(gps.status)}" role="status" aria-live="polite">${status}</span><span id="gps-clock" class="recording-elapsed" aria-label="\u7D00\u9304\u6642\u9593">${elapsedLabel(gpsElapsed())}</span></div></header><p id="gps-location-status" class="recording-location-status"${stopped || currentMapPosition(gps) ? " hidden" : ""}>${locationStatus}</p><div class="recording-map ${expanded ? "recording-map-expanded" : ""}" aria-describedby="gps-location-status">${mapPanel(file, null, recordingSegments(gps), { compact: true })}</div>${stopped ? completionView(gps, gpsElapsed()) : `<section class="recording-sheet"><div class="sheet-handle"></div>${itineraryViews && gps.sourceRouteId ? itineraryViews.nextCard() : '<div class="direct-next"><span class="eyebrow">\u8A18\u4E0B\u81EA\u5DF1\u7684\u8DEF</span><h2>\u81EA\u7531\u7D00\u9304</h2><p class="small muted">\u85CD\u7DDA\u662F\u5DF2\u8A18\u9304\u8ECC\u8DE1\uFF0C\u76EE\u524D\u672A\u4F7F\u7528\u9810\u5B9A\u8DEF\u7DDA\u3002</p></div>'}<div class="live-stats"><div><small>\u884C\u9032\u91CC\u7A0B</small><strong id="gps-distance">${stats.km.toFixed(2)} <small>km</small></strong></div><div><small>GPS \u7CBE\u5EA6</small><strong>${currentAccuracy ? `${Math.round(gps.accuracy)} <small>m</small>` : "\u2014"}</strong></div></div>${gps.error ? `<p class="error-message" role="status">${esc(gps.error)}</p>` : ""}${reroutePanel(state)}${itineraryViews?.departureNotice?.() ?? ""}<div class="live-controls">${button(["paused", "error"].includes(gps.status) ? "\u7E7C\u7E8C\u7D00\u9304" : "\u66AB\u505C\u7D00\u9304", ["paused", "error"].includes(gps.status) ? "gps-resume" : "gps-pause", "", ["paused", "error"].includes(gps.status) ? "play" : "pause")}${button("\u7D50\u675F\u7D00\u9304", "gps-finish", "end-recording", "stop")}</div><details class="recording-more" id="recording-more"><summary>\u7D00\u9304\u72C0\u614B\u8207\u66F4\u591A\u8CC7\u8A0A</summary><div class="stack">${itineraryViews?.liveFactorsPanel?.() ?? ""}${itineraryViews?.departurePanel?.() ?? ""}<p id="gps-save-status" class="small muted" role="status">${esc(saveStatus())}</p>${button("\u91CD\u8A66\u4FDD\u5B58", "gps-save-retry", "", "refresh", `id="gps-save-retry" ${gps.saveError ? "" : "hidden"}`)}<p class="small muted">\u8ACB\u4FDD\u6301\u5206\u9801\u958B\u555F\uFF1B\u9396\u5C4F\u8207\u80CC\u666F\u5B9A\u4F4D\u53EF\u80FD\u4E2D\u65B7\u3002\u8349\u7A3F\u53EA\u4F9B\u6062\u5FA9\uFF0C\u4E0D\u6703\u81EA\u52D5\u52A0\u5165\u300C\u6211\u7684 GPX\u300D\u3002\u8DDD\u96E2\u8207\u9AD8\u5EA6\u6703\u96A8\u5F8C\u7E8C\u5B9A\u4F4D\u6821\u6B63\uFF0C\u539F\u59CB GPX \u4FDD\u7559\u3002</p>${button("\u4E0B\u8F09\u5099\u4EFD", "gps-download", "ghost", "download")}${button(stats.points ? "\u653E\u68C4\u9019\u6B21\u7D00\u9304" : "\u53D6\u6D88\u7A7A\u767D\u7D00\u9304", "gps-discard", "ghost", "close")}<p class="small muted">\u5DF2\u4FDD\u7559 ${stats.points} \u500B\u539F\u59CB\u9EDE \xB7 ${gps.segments.filter((segment) => segment.length).length} \u6BB5\u8ECC\u8DE1</p><p class="small muted">\u6821\u6B63\u722C\u5347 <span id="gps-ascent">${meters(stats.up)}</span> m \uFF0F\u4E0B\u964D <span id="gps-descent">${meters(stats.down)}</span> m \xB7 \u5E73\u5747\u901F\u5EA6 <span id="gps-average">\u2014</span></p></div></details></section>`}</section>${heightPanel ? `<details class="recording-height-profile" id="recording-height-profile"><summary>\u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762\u30FB\u65E5\u591C\u8DEF\u6BB5</summary>${heightPanel(file, recordingSegments(gps))}</details>` : ""}${!stopped && file === directMap ? `<details class="manual-reference" id="manual-reference"><summary>\u9032\u968E\uFF1A\u624B\u52D5\u4E0A\u6CB3\u8DEF\u6BB5\u8A08\u6642</summary>${shanghePanel()}</details>` : ""}`;
     }
     function shanghePanel(readonly = false) {
       const gps = state.gps, calibration = gps.calibration || { completed: [] }, active = calibration.active, factor = shangheFactor(calibration.completed);
@@ -6346,6 +6361,25 @@
         if (el) el.textContent = value2;
       };
       itineraryViews?.updateNumbers();
+      const location = document2.getElementById("gps-location-status");
+      if (location)
+        location.hidden = Boolean(currentMapPosition(gps)) || ["review", "stopping", "finishing", "discarding", "finished"].includes(gps.status);
+      if (gps.status === "tracking") {
+        const live = currentMapPosition(gps);
+        if (location)
+          location.textContent = live ? "\u6B63\u5728\u63A5\u6536 GPS \u5B9A\u4F4D\u4E26\u8A18\u9304\u8ECC\u8DE1\u3002" : "\u5B9A\u4F4D\u5DF2\u904E\u671F\u6216\u7CBE\u5EA6\u4E0D\u8DB3\uFF1B\u7B49\u5F85\u6709\u6548 GPS\uFF0C\u5730\u5716\u53EA\u986F\u793A\u5DF2\u8A18\u9304\u8ECC\u8DE1\u3002";
+        const status = document2.querySelector?.(".record-status");
+        if (status) {
+          status.textContent = live ? "GPS \u7D00\u9304\u4E2D" : "\u7B49\u5F85\u6709\u6548\u5B9A\u4F4D";
+          status.setAttribute?.("data-location", live ? "live" : "unavailable");
+        }
+        const eyebrow = document2.querySelector?.(".recording-heading .eyebrow");
+        if (eyebrow)
+          eyebrow.textContent = eyebrow.textContent.replace(
+            /^(LIVE GPS|GPS STATUS)/,
+            live ? "LIVE GPS" : "GPS STATUS"
+          );
+      }
       const navigation = recordingTravelStats(gps);
       const tripSeconds = navigation?.elapsedSeconds;
       const km2 = navigation?.distanceM != null ? navigation.distanceM / 1e3 : recordingStats(gps).km;
@@ -6391,6 +6425,284 @@
       if (retry) retry.hidden = !state.gps.saveError;
     }
     return { recordView, updateNumbers: updateRecordingNumbers, updateSaveStatus };
+  }
+
+  // src/features/map/navigation-overlay.js
+  var stationKey = (station) => String(station.stationId ?? `${station.lat}:${station.lon}:${station.name}`);
+  function navigationPinLayout(entries, project2, width, height) {
+    const pins = entries.map((entry) => {
+      const anchor = project2(entry.point);
+      return { ...entry, anchor, ...anchor, radius: entry.kind === "gps" ? 16 : 9 };
+    });
+    const overlaps = (a, b) => {
+      const dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y);
+      if (a.kind === "end" || b.kind === "end") {
+        const square = a.kind === "end" ? a : b;
+        const circle = square === a ? b : a;
+        return Math.hypot(Math.max(0, dx - square.radius), Math.max(0, dy - square.radius)) < circle.radius;
+      }
+      return Math.hypot(dx, dy) < a.radius + b.radius;
+    };
+    const displaced = pins.filter(
+      (pin) => pin.kind !== "gps" && pins.some((other) => other !== pin && overlaps(pin, other))
+    );
+    const placed = pins.filter((pin) => !displaced.includes(pin));
+    for (const pin of displaced) {
+      const direction = pin.kind === "start" ? -1 : 1;
+      const candidates = [32, 48, 64, 96].flatMap(
+        (distance2) => [
+          [direction, 0],
+          [0, -1],
+          [0, 1],
+          [-direction, 0],
+          [direction, -1],
+          [direction, 1],
+          [-direction, -1],
+          [-direction, 1]
+        ].map(([dx, dy]) => ({
+          ...pin,
+          x: pin.anchor.x + dx * distance2,
+          y: pin.anchor.y + dy * distance2
+        }))
+      );
+      const clear = (candidate) => !placed.some((other) => overlaps(candidate, other)) && !pins.some((other) => other !== pin && overlaps(candidate, { ...other, ...other.anchor }));
+      const inside = (candidate) => candidate.x >= pin.radius && candidate.x <= width - pin.radius && candidate.y >= pin.radius && candidate.y <= height - pin.radius;
+      const position3 = candidates.find((p) => inside(p) && clear(p)) ?? candidates.find(clear);
+      if (position3) {
+        pin.x = position3.x;
+        pin.y = position3.y;
+      }
+      placed.push(pin);
+    }
+    return pins;
+  }
+  function stationClusters(stations, project2, width, height, reserved = []) {
+    const groups = [];
+    const inside = (p) => p.x >= 22 && p.x <= width - 22 && p.y >= 24 && p.y <= height - 40;
+    const clear = (p) => !(p.x > width - 76 && p.y < 170) && !reserved.some((r) => Math.abs(p.x - r.x) < 36 && Math.abs(p.y - r.y) < 36);
+    for (const station of [...stations].sort(
+      (a, b) => Number(Boolean(b.next)) - Number(Boolean(a.next))
+    )) {
+      const anchor = project2(station);
+      if (!Number.isFinite(anchor.x) || !Number.isFinite(anchor.y) || anchor.x < 0 || anchor.y < 0 || anchor.x > width || anchor.y > height)
+        continue;
+      let p = {
+        x: Math.max(22, Math.min(width - 22, anchor.x)),
+        y: Math.max(24, Math.min(height - 40, anchor.y))
+      };
+      if (!clear(p)) {
+        const options = [
+          [0, 48],
+          [0, -48],
+          [-48, 0],
+          [48, 0],
+          [-48, 48],
+          [-96, 0],
+          [0, 96]
+        ];
+        p = options.map(([dx, dy]) => ({ x: p.x + dx, y: p.y + dy })).find((candidate) => inside(candidate) && clear(candidate)) ?? p;
+      }
+      const nearby = groups.find((g) => Math.abs(g.x - p.x) < 44 && Math.abs(g.y - p.y) < 44);
+      if (nearby) nearby.stations.push(station);
+      else groups.push({ ...p, anchor, stations: [station] });
+    }
+    return groups;
+  }
+  function createNavigationOverlay({ container, project: project2 }) {
+    const document2 = container.ownerDocument;
+    const root = document2.createElement("div");
+    root.className = "navigation-overlay";
+    const tethers = document2.createElementNS("http://www.w3.org/2000/svg", "svg");
+    tethers.classList.add("station-tethers");
+    tethers.setAttribute("aria-hidden", "true");
+    const pins = document2.createElement("div");
+    const card = document2.createElement("section");
+    card.className = "station-card";
+    card.setAttribute("aria-label", "\u7AD9\u9EDE\u8CC7\u8A0A");
+    card.hidden = true;
+    root.append(tethers, pins, card);
+    container.append(root);
+    let data = {}, selected = null, selectedGroup = [], signature = "", drawingSignature = "", selectedButton, cardSignature = "", projectedGroups = [];
+    const close = (restore = false) => {
+      selected = null;
+      card.hidden = true;
+      cardSignature = "";
+      pins.querySelectorAll("[aria-expanded]").forEach((el) => el.setAttribute("aria-expanded", "false"));
+      if (restore) selectedButton?.focus({ preventScroll: true });
+    };
+    function showCard() {
+      const station = (data.stations ?? []).find((s) => stationKey(s) === selected);
+      if (!station) return close();
+      const group = projectedGroups.find((g) => g.stations.some((s) => stationKey(s) === selected));
+      if (group) {
+        const gps = data.position ? project2(data.position) : null;
+        const anchors = [group, gps].filter(Boolean);
+        const above = Math.min(...anchors.map((p) => p.y)) - 36;
+        const below = container.clientHeight - Math.max(...anchors.map((p) => p.y)) - 62;
+        const top = above >= below;
+        card.style.top = top ? "12px" : "auto";
+        card.style.bottom = top ? "auto" : "38px";
+        card.style.maxHeight = `${Math.max(44, Math.min(210, top ? above : below))}px`;
+      }
+      card.hidden = false;
+      const contentSignature = JSON.stringify([
+        station,
+        selectedGroup.map((key2) => data.stations.find((s) => stationKey(s) === key2))
+      ]);
+      if (contentSignature === cardSignature) return;
+      cardSignature = contentSignature;
+      const active = card.contains(document2.activeElement) ? document2.activeElement : null;
+      const activeKey = active?.dataset?.stationKey;
+      card.innerHTML = `<button type="button" id="station-card-close" class="station-card-close" aria-label="\u95DC\u9589\u7AD9\u9EDE\u8CC7\u8A0A">\xD7</button><strong>${esc(station.name)}</strong><div class="station-card-meta">${station.type ? `<span>${esc({ trailhead: "\u767B\u5C71\u53E3", exit: "\u51FA\u53E3", summit: "\u5C71\u9802", hut: "\u5C71\u5C4B", water: "\u6C34\u6E90", camp: "\u71DF\u5730", waypoint: "\u822A\u9EDE" }[station.type] ?? "\u7AD9\u9EDE")}</span>` : ""}${station.next ? '<span class="station-next-badge">\u4E0B\u4E00\u7AD9</span>' : ""}${station.visitLabel ? `<span>${esc(station.visitLabel)}</span>` : ""}</div>${station.arrivalLabel && station.arrivalLabel !== "\u2014" ? `<p>\u9810\u4F30\u62B5\u9054 ${esc(station.arrivalLabel)}</p>` : ""}${selectedGroup.length > 1 ? `<div class="station-card-places" aria-label="\u9644\u8FD1\u7AD9\u9EDE">${selectedGroup.map((key2) => {
+        const s = data.stations.find((item) => stationKey(item) === key2);
+        return s ? `<button type="button" id="station-choice-${encodeURIComponent(key2)}" data-station-key="${esc(key2)}" aria-pressed="${key2 === selected}">${esc(s.name)}${s.next ? " \xB7 \u4E0B\u4E00\u7AD9" : ""}</button>` : "";
+      }).join("")}</div>` : ""}`;
+      if (active) {
+        const target = activeKey ? [...card.querySelectorAll("[data-station-key]")].find(
+          (el) => el.dataset.stationKey === activeKey
+        ) : card.querySelector(".station-card-close");
+        target?.focus({ preventScroll: true });
+      }
+      card.querySelector(".station-card-close").onclick = () => close(true);
+      card.querySelectorAll("[data-station-key]").forEach((button2) => {
+        button2.onclick = () => {
+          selected = button2.dataset.stationKey;
+          showCard();
+          card.querySelector(`[aria-pressed="true"]`)?.focus({ preventScroll: true });
+        };
+      });
+    }
+    for (const type of ["click", "dblclick", "pointerdown", "mousedown", "touchstart", "wheel"]) {
+      root.addEventListener(type, (event) => event.stopPropagation());
+    }
+    root.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        close(true);
+      }
+    });
+    function draw(next = data) {
+      data = next;
+      const width = container.clientWidth, height = container.clientHeight;
+      const start = data.file?.points[0], end = data.file?.points.at(-1);
+      const sourceEntries = [];
+      if (start) sourceEntries.push({ kind: "start", point: start, text: "\u25CF", label: "GPX \u8D77\u9EDE" });
+      if (end) sourceEntries.push({ kind: "end", point: end, text: "\u25A0", label: "GPX \u7D42\u9EDE" });
+      if (data.position)
+        sourceEntries.push({ kind: "gps", point: data.position, text: "", label: "\u76EE\u524D GPS \u4F4D\u7F6E" });
+      const entries = navigationPinLayout(sourceEntries, project2, width, height);
+      const reserved = entries.flatMap((entry) => [entry, entry.anchor]);
+      const groups = stationClusters(data.stations ?? [], project2, width, height, reserved);
+      projectedGroups = groups;
+      const drawing = JSON.stringify([
+        width,
+        height,
+        entries.map((p) => [p.kind, p.x, p.y, p.anchor.x, p.anchor.y]),
+        groups,
+        data.stations
+      ]);
+      if (drawing === drawingSignature) return;
+      drawingSignature = drawing;
+      tethers.setAttribute("viewBox", `0 0 ${width} ${height}`);
+      tethers.innerHTML = groups.filter((g) => Math.abs(g.x - g.anchor.x) + Math.abs(g.y - g.anchor.y) > 2).map((g) => `<line x1="${g.anchor.x}" y1="${g.anchor.y}" x2="${g.x}" y2="${g.y}"/>`).join("") + entries.filter((p) => p.x !== p.anchor.x || p.y !== p.anchor.y).map(
+        (p) => `<g class="navigation-tether navigation-tether-${p.kind}"><line x1="${p.anchor.x}" y1="${p.anchor.y}" x2="${p.x}" y2="${p.y}"/><circle cx="${p.anchor.x}" cy="${p.anchor.y}" r="3"/></g>`
+      ).join("");
+      const nextSignature = JSON.stringify([
+        groups.map((g) => g.stations.map(stationKey)),
+        entries.map((e) => e.kind),
+        (data.stations ?? []).map((s) => [stationKey(s), s.next])
+      ]);
+      if (signature !== nextSignature) {
+        signature = nextSignature;
+        const focusKey = pins.contains(document2.activeElement) ? document2.activeElement.dataset.stationKey : null;
+        pins.replaceChildren();
+        for (const entry of entries) {
+          const el = document2.createElement("span");
+          el.className = `navigation-pin navigation-${entry.kind}`;
+          el.setAttribute("role", "img");
+          el.setAttribute("aria-label", entry.label);
+          el.textContent = entry.text;
+          pins.append(el);
+        }
+        for (const group of groups) {
+          const station = group.stations[0];
+          const el = document2.createElement("button");
+          el.type = "button";
+          el.dataset.stationKey = stationKey(station);
+          el.id = `map-station-${encodeURIComponent(stationKey(station))}`;
+          el.className = `station-pin${station.next ? " station-pin-next" : ""}`;
+          el.setAttribute(
+            "aria-label",
+            `${station.name}${station.next ? " \xB7 \u4E0B\u4E00\u7AD9" : ""}${group.stations.length > 1 ? ` \xB7 \u9644\u8FD1 ${group.stations.length} \u500B\u7AD9\u9EDE` : ""}`
+          );
+          const isSelected = group.stations.some((s) => stationKey(s) === selected);
+          el.setAttribute("aria-expanded", String(isSelected));
+          if (isSelected) {
+            selectedButton = el;
+            selectedGroup = group.stations.map(stationKey);
+          }
+          el.innerHTML = `<span aria-hidden="true">${station.next ? "\u25C6" : "\u2022"}</span>${group.stations.length > 1 ? `<small>${group.stations.length}</small>` : ""}`;
+          el.onclick = () => {
+            const key2 = stationKey(station);
+            if (!card.hidden && selectedGroup.includes(key2)) {
+              close();
+              return;
+            }
+            close();
+            selected = key2;
+            selectedButton = el;
+            selectedGroup = group.stations.map(stationKey);
+            el.setAttribute("aria-expanded", "true");
+            showCard();
+          };
+          pins.append(el);
+          if (focusKey && group.stations.some((s) => stationKey(s) === focusKey))
+            el.focus({ preventScroll: true });
+        }
+      }
+      entries.forEach((entry, index) => {
+        const el = pins.children[index];
+        el.style.left = `${entry.x}px`;
+        el.style.top = `${entry.y}px`;
+        el.setAttribute(
+          "aria-label",
+          entry.label + (entry.x !== entry.anchor.x || entry.y !== entry.anchor.y ? "\uFF08\u6A19\u8A18\u907F\u8B93\uFF0C\u5BE6\u969B\u4F4D\u7F6E\u898B\u5F15\u7DDA\u7AEF\u9EDE\uFF09" : "")
+        );
+        el.hidden = entry.anchor.x < 0 || entry.anchor.x > width || entry.anchor.y < 0 || entry.anchor.y > height;
+      });
+      groups.forEach((group, index) => {
+        const el = pins.children[entries.length + index];
+        el.style.left = `${group.x}px`;
+        el.style.top = `${group.y}px`;
+      });
+      if (selected) showCard();
+    }
+    return { draw, close, destroy: () => root.remove() };
+  }
+
+  // src/features/map/camera.js
+  function isMapCentered(center, position3) {
+    const lat = center.lat ?? center[0];
+    const lon = center.lng ?? center.lon ?? center[1];
+    const longitudeDelta2 = (lon - position3.lon + 540) % 360 - 180;
+    return Math.abs(lat - position3.lat) < 1e-9 && Math.abs(longitudeDelta2) < 1e-9;
+  }
+  var followed = /* @__PURE__ */ new WeakMap();
+  var positionOf = (center) => ({
+    lat: center.lat ?? center[0],
+    lon: center.lng ?? center.lon ?? center[1]
+  });
+  function followMapPosition(map, position3, move) {
+    const center = map.getCenter();
+    const previous = followed.get(map);
+    if (isMapCentered(center, position3)) return;
+    if (previous && isMapCentered(previous.position, position3) && isMapCentered(center, previous.center))
+      return;
+    move();
+    followed.set(map, {
+      position: { lat: position3.lat, lon: position3.lon },
+      center: positionOf(map.getCenter())
+    });
   }
 
   // src/features/map/terrain-3d.js
@@ -6486,6 +6798,7 @@
         },
         {
           id: "station-pins",
+          layout: { visibility: "none" },
           type: "circle",
           source: "stations",
           paint: {
@@ -6497,6 +6810,7 @@
         },
         {
           id: "pins",
+          layout: { visibility: "none" },
           type: "circle",
           source: "pins",
           paint: {
@@ -6522,6 +6836,8 @@
   function createTerrain3dController({
     onStatus = () => {
     },
+    onManualMove = () => {
+    },
     onPick = () => {
     },
     onCamera = () => {
@@ -6530,6 +6846,20 @@
     },
     load = loadMapLibre
   } = {}) {
+    let navigation = { position: null, following: false }, navigationOverlay;
+    function drawNavigation() {
+      navigationOverlay?.draw({ file, stations, position: navigation.position });
+      if (map && navigation.position && navigation.following)
+        followMapPosition(
+          map,
+          navigation.position,
+          () => map.jumpTo({ center: [navigation.position.lon, navigation.position.lat] })
+        );
+    }
+    function setNavigation(next) {
+      navigation = next;
+      if (map) drawNavigation();
+    }
     let map = null, canvas = null, file = null, live = [], estimated = [], stations = [], key2 = null, version = 0, loading = false, unavailable2 = false;
     let timer = null, failed = false, loadedTopo = false, loadedHeight = false, hasCoordinates = false, needsFirstFix = false, initialView = null;
     let size = null, drawnFile = null;
@@ -6589,8 +6919,8 @@
       };
       pin(file.points[0], "start");
       pin(file.points.at(-1), "end");
-      pin(live.findLast((segment) => segment.length)?.at(-1), "live");
       map.getSource("pins").setData({ type: "FeatureCollection", features });
+      drawNavigation();
     }
     function fit() {
       if (!map) return;
@@ -6677,13 +7007,27 @@
             "Map.Title": "3D \u5730\u5F62\uFF0C\u53EF\u7E2E\u653E\u3001\u65CB\u8F49\u8207\u50BE\u659C"
           }
         });
-        map.on("click", (event) => onPick({ lat: event.lngLat.lat, lon: event.lngLat.lng }));
+        map.on("click", (event) => {
+          navigationOverlay?.close();
+          onPick({ lat: event.lngLat.lat, lon: event.lngLat.lng });
+        });
         loading = false;
         beginTimer();
         size = { width: canvas.clientWidth, height: canvas.clientHeight };
         map.addControl(new library.NavigationControl({ visualizePitch: true }), "top-right");
         map.addControl(new library.ScaleControl({ unit: "metric" }), "bottom-left");
         map.addControl(new library.AttributionControl({ compact: true }), "bottom-right");
+        if (map.project) {
+          navigationOverlay = createNavigationOverlay({
+            container: canvas,
+            project: (p) => map.project([p.lon, p.lat])
+          });
+          map.on("move", () => navigationOverlay?.draw());
+        }
+        map.on("dragstart", onManualMove);
+        map.on("zoomstart", (event) => {
+          if (event.originalEvent) onManualMove();
+        });
         map.on("error", (event) => {
           if (generation !== version) return;
           failed = true;
@@ -6703,6 +7047,7 @@
           if (generation !== version) return;
           draw();
           if (!initialView || needsFirstFix) fit();
+          drawNavigation();
         });
         map.on("sourcedata", (event) => {
           if (generation !== version || event.sourceDataType !== "content") return;
@@ -6715,6 +7060,9 @@
         map.on("move", () => {
           if (generation === version && map)
             onCamera({ pitch: map.getPitch(), bearing: map.getBearing() });
+        });
+        map.getCanvas().addEventListener("keydown", (event) => {
+          if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) onManualMove();
         });
         map.getCanvas().addEventListener("webglcontextlost", (event) => {
           if (generation !== version) return;
@@ -6735,6 +7083,8 @@
       version++;
       clearTimer();
       globalThis.window?.removeEventListener("offline", offline);
+      navigationOverlay?.destroy();
+      navigationOverlay = null;
       map?.remove();
       canvas?.remove();
       map = canvas = file = key2 = null;
@@ -6830,6 +7180,7 @@
         size = { width: canvas.clientWidth, height: canvas.clientHeight };
       },
       mount,
+      setNavigation,
       beforeRender: () => canvas?.remove(),
       view,
       fit,
@@ -6954,13 +7305,14 @@
       for (const marker of markers) marker.remove();
       markers = [];
     }
-    function draw(stations = []) {
+    function draw(stations = [], position3 = null) {
       const pois = map.getZoom() >= 11 ? map.queryRenderedFeatures({ layers: ["poi-points"] }) : [];
       const places = map.querySourceFeatures("basemap", { sourceLayer: "places" });
       const nextSignature = JSON.stringify([
         map.getBounds().toArray(),
         map.getZoom(),
         stations,
+        position3,
         [...pois, ...places].map((f) => [f.geometry, f.properties.name])
       ]);
       if (nextSignature === signature) return;
@@ -6968,24 +7320,27 @@
       signature = nextSignature;
       const bounds = map.getBounds();
       const used = /* @__PURE__ */ new Set();
-      const occupied = [];
-      const add2 = (coordinates, name, station = null) => {
+      const occupied = [...stations, ...position3 ? [position3] : []].map(
+        (p) => map.project([p.lon, p.lat])
+      );
+      const container = map.getContainer?.();
+      const width = container?.clientWidth ?? Infinity, height = container?.clientHeight ?? Infinity;
+      const add2 = (coordinates, name) => {
         if (!name || !bounds.contains(coordinates)) return;
         const key2 = `${name}:${coordinates.map((v) => v.toFixed(4)).join(":")}`;
         if (used.has(key2)) return;
         used.add(key2);
         const point = map.project(coordinates);
-        if (!station && occupied.some((p) => Math.abs(p.x - point.x) < 80 && Math.abs(p.y - point.y) < 26))
+        if (point.x < 70 || point.x > width - 70 || point.y < 30 || point.y > height - 60 || point.x > width - 120 && point.y < 200 || occupied.some((p) => Math.abs(p.x - point.x) < 140 && Math.abs(p.y - point.y) < 52))
           return;
         occupied.push(point);
         const element = document2.createElement("span");
-        element.className = `offline-map-label${station ? " station-label" : ""}${station?.next ? " next-label" : ""}`;
-        element.textContent = station?.arrivalLabel ? `${name} \xB7 ${station.arrivalLabel}` : name;
+        element.className = "offline-map-label";
+        element.textContent = name;
         markers.push(
           new library.Marker({ element, anchor: "bottom", offset: [0, -10] }).setLngLat(coordinates).addTo(map)
         );
       };
-      for (const station of stations) add2([station.lon, station.lat], station.name, station);
       for (const feature of [...pois, ...places]) {
         if (markers.length >= 45) break;
         if (feature.geometry.type !== "Point" || (feature.properties.min_zoom ?? 0) > map.getZoom())
@@ -7001,6 +7356,8 @@
   function createOfflineRenderer({
     onStatus = () => {
     },
+    onManualMove = () => {
+    },
     onPick = () => {
     },
     onFallback = () => {
@@ -7013,6 +7370,20 @@
       return { library, pmtiles };
     }
   } = {}) {
+    let navigation = { position: null, following: false }, navigationOverlay;
+    function drawNavigation() {
+      navigationOverlay?.draw({ file, stations, position: navigation.position });
+      if (map && navigation.position && navigation.following)
+        followMapPosition(
+          map,
+          navigation.position,
+          () => map.jumpTo({ center: [navigation.position.lon, navigation.position.lat] })
+        );
+    }
+    function setNavigation(next) {
+      navigation = next;
+      if (map) drawNavigation();
+    }
     let map, canvas, file, live = [], estimated = [], stations = [], pack, labels, protocol, library;
     let hasLoaded = false, needsFirstFix = false;
     let version = 0, drawnFile, status, camera, failed = false;
@@ -7044,8 +7415,7 @@
       });
       const points = [
         [file.points[0], "start"],
-        [file.points.at(-1), "end"],
-        [live.findLast((s) => s.length)?.at(-1), "live"]
+        [file.points.at(-1), "end"]
       ];
       map.getSource("pins").setData({
         type: "FeatureCollection",
@@ -7055,7 +7425,8 @@
           geometry: { type: "Point", coordinates: [p.lon, p.lat] }
         }))
       });
-      labels?.draw(stations);
+      labels?.draw(stations, navigation.position);
+      drawNavigation();
     }
     function fit() {
       if (!map || !file) return;
@@ -7083,6 +7454,8 @@
       camera = view();
       version++;
       labels?.clear();
+      navigationOverlay?.destroy();
+      navigationOverlay = null;
       map?.remove();
       canvas?.remove();
       if (library && protocol) library.removeProtocol("pmtiles");
@@ -7138,8 +7511,22 @@
         map.addControl(new library.NavigationControl({ showCompass: false }), "top-right");
         map.addControl(new library.ScaleControl({ unit: "metric" }), "bottom-left");
         map.addControl(new library.AttributionControl({ compact: true }), "bottom-right");
+        if (map.project) {
+          navigationOverlay = createNavigationOverlay({
+            container: canvas,
+            project: (p) => map.project([p.lon, p.lat])
+          });
+          map.on("move", () => navigationOverlay?.draw());
+        }
+        map.on("dragstart", onManualMove);
+        map.on("zoomstart", (event) => {
+          if (event.originalEvent) onManualMove();
+        });
         labels = createOfflineLabels({ library, map, document: canvas.ownerDocument });
-        map.on("click", (event) => onPick({ lat: event.lngLat.lat, lon: event.lngLat.lng }));
+        map.on("click", (event) => {
+          navigationOverlay?.close();
+          onPick({ lat: event.lngLat.lat, lon: event.lngLat.lng });
+        });
         map.on("load", () => {
           if (generation !== version) return;
           draw();
@@ -7153,10 +7540,11 @@
           else if (file.points.length || live.some((s) => s.length)) fit();
           else map.jumpTo({ center: [121, 23.7], zoom: 7 });
           hasLoaded = true;
+          drawNavigation();
         });
         map.on("idle", () => {
           if (generation !== version || !hasLoaded) return;
-          labels.draw(stations);
+          labels.draw(stations, navigation.position);
           if (!failed) {
             const bounds = map.getBounds(), b = pack.bounds;
             const outside = bounds.getWest() < b[0] || bounds.getSouth() < b[1] || bounds.getEast() > b[2] || bounds.getNorth() > b[3];
@@ -7173,6 +7561,9 @@
           }
         });
         map.setStyle(offlineStyle(pack));
+        map.getCanvas().addEventListener("keydown", (event) => {
+          if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) onManualMove();
+        });
         map.getCanvas().addEventListener("webglcontextlost", (event) => {
           if (generation !== version) return;
           event.preventDefault();
@@ -7222,6 +7613,7 @@
     return {
       resize: () => map?.resize(),
       mount,
+      setNavigation,
       fit,
       view,
       beforeRender: () => canvas?.remove(),
@@ -7251,6 +7643,510 @@
     };
   }
 
+  // src/features/map/controller.js
+  var MAP_SOURCES = {
+    standard: {
+      label: "OSM \u6A19\u6E96\u5730\u5716",
+      url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+      options: {
+        minZoom: 1,
+        maxNativeZoom: 19,
+        maxZoom: 19,
+        detectRetina: false,
+        referrerPolicy: "strict-origin-when-cross-origin",
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      }
+    },
+    opentopo: {
+      label: "OpenTopo \u5730\u5F62\u5E95\u5716",
+      url: "https://tile.opentopomap.org/{z}/{x}/{y}.png",
+      options: {
+        minZoom: 1,
+        maxNativeZoom: 17,
+        maxZoom: 19,
+        detectRetina: false,
+        attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | DEM: <a href="https://viewfinderpanoramas.org/">SRTM</a>, <a href="https://sonny.4lima.de/">Sonny</a> | Map style: &copy; <a href="https://opentopomap.org/">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)'
+      }
+    }
+  };
+  function createTerrainMapController({
+    leaflet = globalThis.L,
+    onStatus = () => {
+    },
+    onCamera = () => {
+    },
+    onPick = () => {
+    },
+    load3d,
+    offlineMaps
+  } = {}) {
+    let terrainMap = null, canvas = null, routeKey = null, overlay = null, liveOverlay = null, estimatedOverlay = null, navigationOverlay = null, tiles = null;
+    let currentFile2 = null, currentLive = [], currentEstimated = [], mapMode = "plain", attempt = 0, tileTimer = null;
+    let status = { kind: "off", message: "\u55AE\u7D14\u8ECC\u8DE1\u6A21\u5F0F\uFF0C\u4E0D\u8F09\u5165\u5E95\u5716\u3002" };
+    let offlineTarget = null, hasCoordinates = false;
+    const views = /* @__PURE__ */ new Map();
+    let navigation = { position: null, following: false }, recordingId = null;
+    function refreshLocationControl() {
+      const button2 = lastContext?.slot?.ownerDocument?.querySelector?.('[data-action="map-locate"]');
+      if (!button2) return;
+      button2.disabled = !navigation.position;
+      button2.setAttribute(
+        "aria-pressed",
+        String(navigation.following && Boolean(navigation.position))
+      );
+      const label = button2.querySelector("[data-location-label]");
+      const text = navigation.position ? navigation.following ? "\u8DDF\u96A8\u4E2D" : "\u6211\u7684\u4F4D\u7F6E" : "\u5C1A\u7121\u5B9A\u4F4D";
+      if (label && label.textContent !== text) label.textContent = text;
+    }
+    function manualMove() {
+      navigation.following = false;
+      refreshLocationControl();
+    }
+    function updatePosition(position3) {
+      navigation.position = position3;
+      const active = navigation;
+      if (usingOffline) offlineRenderer.setNavigation(active);
+      else if (requestedMode === "terrain" && !terrain3d.unavailable())
+        terrain3d.setNavigation(active);
+      else {
+        navigationOverlay?.draw({
+          file: currentFile2,
+          stations: lastContext?.stations ?? [],
+          position: position3
+        });
+        if (position3 && navigation.following && terrainMap)
+          followMapPosition(
+            terrainMap,
+            position3,
+            () => terrainMap.setView([position3.lat, position3.lon], terrainMap.getZoom(), {
+              animate: false
+            })
+          );
+      }
+      refreshLocationControl();
+    }
+    function locate() {
+      if (!navigation.position) return;
+      navigation.following = true;
+      updatePosition(navigation.position);
+    }
+    let resizeObserver = null;
+    function observeSize(slot) {
+      resizeObserver?.disconnect();
+      if (!slot || !globalThis.ResizeObserver) return;
+      resizeObserver ??= new globalThis.ResizeObserver(() => {
+        if (usingOffline) offlineRenderer.resize();
+        else if (requestedMode === "terrain" && !terrain3d.unavailable()) terrain3d.resize();
+        else terrainMap?.invalidateSize({ pan: true, animate: false, debounceMoveend: true });
+      });
+      resizeObserver.observe(slot);
+    }
+    let requestedMode = "plain", terrainContext = null;
+    const report = (kind, message) => {
+      status = { kind, message };
+      onStatus(status);
+    };
+    const terrain3d = createTerrain3dController({
+      onManualMove: manualMove,
+      onPick,
+      onStatus,
+      onCamera,
+      ...load3d ? { load: load3d } : {},
+      onFallback: (context) => {
+        if (requestedMode !== "terrain" || !context.slot) return;
+        mount(context.slot, context.file, context.live, "plain", context.stations, context.estimated);
+        requestedMode = "terrain";
+        report("error", context.message);
+      }
+    });
+    let usingOffline = false, offlineFailed = false, lastContext;
+    const offlineRenderer = createOfflineRenderer({
+      onManualMove: manualMove,
+      onPick,
+      onStatus,
+      onFallback: (context) => {
+        offlineFailed = true;
+        usingOffline = false;
+        if (context.slot)
+          mount(
+            context.slot,
+            context.file,
+            context.live,
+            "plain",
+            context.stations,
+            context.estimated
+          );
+        requestedMode = "standard";
+      }
+    });
+    const clearTileTimer = () => {
+      if (tileTimer !== null) clearTimeout(tileTimer);
+      tileTimer = null;
+    };
+    function removeTiles() {
+      attempt++;
+      clearTileTimer();
+      if (tiles) {
+        terrainMap?.removeLayer(tiles);
+        tiles.off();
+        tiles = null;
+      }
+    }
+    function offline() {
+      if (!terrainMap || mapMode === "plain") return;
+      removeTiles();
+      report("error", "\u76EE\u524D\u6C92\u6709\u7DB2\u8DEF\uFF0CGPX \u8DEF\u7DDA\u4ECD\u53EF\u67E5\u770B\uFF1B\u6062\u5FA9\u9023\u7DDA\u5F8C\u53EF\u91CD\u8A66\u5E95\u5716\u3002");
+    }
+    function startTiles() {
+      removeTiles();
+      const source = MAP_SOURCES[mapMode];
+      if (!terrainMap || !source) return;
+      if (mapMode === "standard" && globalThis.location?.protocol === "file:") {
+        report("error", "OSM \u6A19\u6E96\u5730\u5716\u8ACB\u7531\u672C\u6A5F\u9810\u89BD\u7DB2\u7AD9\u958B\u555F\uFF1B\u76EE\u524D\u4ECD\u53EF\u67E5\u770B GPX \u8ECC\u8DE1\u3002");
+        return;
+      }
+      if (globalThis.navigator?.onLine === false) {
+        offline();
+        return;
+      }
+      const thisAttempt = attempt;
+      let failed = false, loaded = 0;
+      const active = () => terrainMap && mapMode !== "plain" && attempt === thisAttempt;
+      const timeout = () => {
+        clearTileTimer();
+        tileTimer = setTimeout(() => {
+          if (!active()) return;
+          failed = true;
+          report("error", `${source.label}\u8F09\u5165\u903E\u6642\uFF0CGPX \u8DEF\u7DDA\u4ECD\u53EF\u67E5\u770B\uFF1B\u53EF\u6309\u91CD\u8A66\u91CD\u65B0\u8F09\u5165\u3002`);
+        }, 15e3);
+        tileTimer.unref?.();
+      };
+      report("loading", `\u6B63\u5728\u8F09\u5165${source.label}\u2026`);
+      tiles = leaflet.tileLayer(source.url, { ...source.options });
+      tiles.on("loading", () => {
+        if (!active()) return;
+        loaded = 0;
+        if (!failed) report("loading", `\u6B63\u5728\u8F09\u5165${source.label}\u2026`);
+        timeout();
+      });
+      tiles.on("tileload", () => {
+        if (active()) loaded++;
+      });
+      tiles.on("tileerror", () => {
+        if (!active()) return;
+        failed = true;
+        report("error", `\u90E8\u5206${source.label}\u7121\u6CD5\u8F09\u5165\uFF0CGPX \u8DEF\u7DDA\u4ECD\u53EF\u67E5\u770B\uFF1B\u53EF\u6309\u91CD\u8A66\u91CD\u65B0\u8F09\u5165\u3002`);
+      });
+      tiles.on("load", () => {
+        if (!active()) return;
+        clearTileTimer();
+        if (failed) return;
+        if (loaded) report("ready", `${source.label}\u5DF2\u8F09\u5165\u3002`);
+        else report("error", `\u5C1A\u672A\u53D6\u5F97${source.label}\uFF0CGPX \u8DEF\u7DDA\u4ECD\u53EF\u67E5\u770B\uFF1B\u53EF\u6309\u91CD\u8A66\u91CD\u65B0\u8F09\u5165\u3002`);
+      });
+      timeout();
+      tiles.addTo(terrainMap);
+    }
+    function coordinates(segment) {
+      const reference = currentFile2.points[0]?.lon ?? currentLive.flat()[0]?.lon ?? 121;
+      return segment.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon)).map((point) => [point.lat, reference + (point.lon - reference + 540) % 360 - 180]);
+    }
+    function allCoordinates() {
+      return [...currentFile2.segments, ...currentLive, ...currentEstimated].flatMap(coordinates);
+    }
+    function path(segment, color, weight, group, dashed = false) {
+      const points = coordinates(segment);
+      if (points.length > 1)
+        leaflet.polyline(points, {
+          color,
+          weight,
+          opacity: 1,
+          interactive: false,
+          ...dashed ? { dashArray: "9 7" } : {}
+        }).addTo(group);
+    }
+    function drawRoute() {
+      if (overlay) terrainMap.removeLayer(overlay);
+      overlay = leaflet.featureGroup().addTo(terrainMap);
+      for (const segment of currentFile2.segments) path(segment, "#ffffff", 8, overlay);
+      for (const segment of currentFile2.segments) path(segment, "#326753", 4, overlay);
+    }
+    function drawEstimated() {
+      if (estimatedOverlay) terrainMap.removeLayer(estimatedOverlay);
+      estimatedOverlay = leaflet.featureGroup().addTo(terrainMap);
+      for (const segment of currentEstimated) path(segment, "#e0a040", 5, estimatedOverlay, true);
+    }
+    function drawLive() {
+      if (liveOverlay) terrainMap.removeLayer(liveOverlay);
+      liveOverlay = leaflet.featureGroup().addTo(terrainMap);
+      for (const segment of currentLive) path(segment, "#4388b7", 4, liveOverlay);
+    }
+    function fit() {
+      manualMove();
+      if (usingOffline) {
+        offlineRenderer.fit();
+        return;
+      }
+      if (requestedMode === "terrain" && !terrain3d.unavailable()) {
+        terrain3d.fit();
+        return;
+      }
+      if (!terrainMap || !currentFile2) return;
+      const points = allCoordinates();
+      if (points.length)
+        terrainMap.fitBounds(leaflet.latLngBounds(points), {
+          padding: [30, 30],
+          maxZoom: 15,
+          animate: false
+        });
+    }
+    function releaseMap() {
+      if (terrainMap) {
+        const center = terrainMap.getCenter();
+        views.set(routeKey, {
+          center: [center.lat ?? center[0], center.lng ?? center[1]],
+          zoom: terrainMap.getZoom()
+        });
+        if (views.size > 20) views.delete(views.keys().next().value);
+      }
+      removeTiles();
+      offlineTarget?.removeEventListener("offline", offline);
+      offlineTarget = null;
+      navigationOverlay?.destroy();
+      navigationOverlay = null;
+      terrainMap?.remove();
+      canvas?.remove();
+      terrainMap = canvas = overlay = liveOverlay = estimatedOverlay = navigationOverlay = routeKey = currentFile2 = null;
+      currentLive = [];
+      currentEstimated = [];
+      hasCoordinates = false;
+      mapMode = "plain";
+      status = { kind: "off", message: "\u55AE\u7D14\u8ECC\u8DE1\u6A21\u5F0F\uFF0C\u4E0D\u8F09\u5165\u5E95\u5716\u3002" };
+    }
+    function beforeRender() {
+      resizeObserver?.disconnect();
+      canvas?.remove();
+      terrain3d.beforeRender();
+      offlineRenderer.beforeRender();
+    }
+    function mount(slot, file, live = [], mode = "standard", stations = [], estimated = [], context = null) {
+      if (context) {
+        if (recordingId !== context.recordingId) navigation.following = Boolean(context.recordingId);
+        recordingId = context.recordingId;
+        navigation.position = context.position;
+      }
+      observeSize(slot);
+      requestedMode = mode;
+      lastContext = { slot, file, live, mode, stations, estimated };
+      if (!slot || !file || !file.points?.length && !file.recording) {
+        releaseMap();
+        offlineRenderer.mount(null, null);
+        usingOffline = false;
+        offlineFailed = false;
+        terrain3d.mount(null, null);
+        terrainContext = null;
+        return;
+      }
+      const key2 = file.id ?? file;
+      const offlinePack = mode === "standard" && !offlineFailed ? offlineMaps?.forRoute(file) : null;
+      if (offlinePack) {
+        const center = terrainMap?.getCenter();
+        const camera = terrainMap && routeKey === key2 ? {
+          key: key2,
+          center: [center.lat ?? center[0], center.lng ?? center[1]],
+          zoom: terrainMap.getZoom()
+        } : terrain3d.view()?.key === key2 ? terrain3d.view() : views.has(key2) ? { ...views.get(key2), key: key2 } : null;
+        releaseMap();
+        terrain3d.mount(null, null);
+        usingOffline = true;
+        offlineRenderer.setNavigation(navigation);
+        offlineRenderer.mount(slot, file, live, stations, offlinePack, camera, estimated);
+        refreshLocationControl();
+        return;
+      }
+      if (usingOffline) {
+        const previous = offlineRenderer.view();
+        if (previous?.key) views.set(previous.key, previous);
+        offlineRenderer.mount(null, null);
+        usingOffline = false;
+      }
+      if (mode !== "standard") offlineFailed = false;
+      if (mode === "terrain") terrainContext = { slot, file, live, stations, estimated };
+      if (mode === "terrain" && !terrain3d.unavailable()) {
+        const center = terrainMap?.getCenter();
+        const camera = terrainMap && routeKey === key2 ? {
+          center: [center.lat ?? center[0], center.lng ?? center[1]],
+          zoom: terrainMap.getZoom()
+        } : views.has(key2) ? { ...views.get(key2), key: key2 } : null;
+        releaseMap();
+        terrain3d.setNavigation(navigation);
+        terrain3d.mount(slot, file, live, camera, stations, estimated);
+        refreshLocationControl();
+        return;
+      }
+      const from3d = terrain3d.view();
+      if (from3d?.key === key2) views.set(key2, from3d);
+      terrain3d.mount(null, null);
+      const nextMode = Object.hasOwn(MAP_SOURCES, mode) ? mode : "plain";
+      if (!leaflet?.map) {
+        releaseMap();
+        report("error", "\u5730\u5716\u5143\u4EF6\u7121\u6CD5\u8F09\u5165\uFF0C\u76EE\u524D\u986F\u793A GPX \u5E73\u9762\u8ECC\u8DE1\u3002");
+        return;
+      }
+      if (terrainMap && routeKey !== key2) releaseMap();
+      const changedRoute = !terrainMap || currentFile2 !== file;
+      const firstFix = terrainMap && !hasCoordinates && live.some((segment) => segment.length);
+      currentFile2 = file;
+      currentLive = live;
+      currentEstimated = estimated;
+      if (!terrainMap) {
+        routeKey = key2;
+        canvas = slot.ownerDocument.createElement("div");
+        canvas.className = "terrain-map-canvas";
+        canvas.setAttribute("aria-label", "GPX \u8DEF\u7DDA\u5730\u5716\uFF0C\u53EF\u4F7F\u7528\u65B9\u5411\u9375\u79FB\u52D5\u53CA\u52A0\u6E1B\u9375\u7E2E\u653E");
+        slot.replaceChildren(canvas);
+        terrainMap = leaflet.map(canvas, {
+          zoomControl: false,
+          minZoom: 1,
+          maxZoom: 19,
+          zoomSnap: 0,
+          scrollWheelZoom: true,
+          touchZoom: true
+        });
+        terrainMap.on("click", (event) => {
+          navigationOverlay?.close();
+          onPick({ lat: event.latlng.lat, lon: event.latlng.lng });
+        });
+        terrainMap.on("dragstart", manualMove);
+        canvas.addEventListener?.("keydown", (event) => {
+          if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) manualMove();
+        });
+        if (terrainMap.latLngToContainerPoint) {
+          navigationOverlay = createNavigationOverlay({
+            container: canvas,
+            project: (p) => terrainMap.latLngToContainerPoint([p.lat, p.lon])
+          });
+          terrainMap.on("move zoom resize", () => navigationOverlay?.draw());
+        }
+        leaflet.control.zoom({
+          position: "topright",
+          zoomInTitle: "\u653E\u5927\u8DEF\u7DDA\u5716",
+          zoomOutTitle: "\u7E2E\u5C0F\u8DEF\u7DDA\u5716",
+          zoomInText: "+",
+          zoomOutText: "\u2212"
+        }).addTo(terrainMap);
+        leaflet.control.scale({ imperial: false, position: "bottomleft" }).addTo(terrainMap);
+        const previous = views.get(key2);
+        if (previous) terrainMap.setView(previous.center, previous.zoom, { animate: false });
+        else if (allCoordinates().length) {
+          const following = navigation.following;
+          fit();
+          navigation.following = following;
+        } else terrainMap.setView([23.7, 121], 7, { animate: false });
+        offlineTarget = globalThis.window;
+        offlineTarget?.addEventListener("offline", offline);
+      } else {
+        slot.replaceChildren(canvas);
+        terrainMap.invalidateSize({ pan: false, animate: false });
+      }
+      if (changedRoute) drawRoute();
+      drawEstimated();
+      drawLive();
+      updatePosition(navigation.position);
+      if (firstFix) {
+        const following = navigation.following;
+        fit();
+        navigation.following = following;
+        updatePosition(navigation.position);
+      }
+      hasCoordinates = Boolean(file.points.length || live.some((segment) => segment.length));
+      if (mapMode !== nextMode) {
+        mapMode = nextMode;
+        if (mapMode !== "plain") startTiles();
+        else {
+          removeTiles();
+          report("off", "\u55AE\u7D14\u8ECC\u8DE1\u6A21\u5F0F\uFF0C\u4E0D\u8F09\u5165\u5E95\u5716\u3002");
+        }
+      } else onStatus(status);
+      if (mode === "terrain")
+        report("error", "3D \u5730\u5F62\u76EE\u524D\u7121\u6CD5\u986F\u793A\uFF0C\u5DF2\u4FDD\u7559\u5E73\u9762\u8ECC\u8DE1\uFF1B\u53EF\u91CD\u8A66\u6216\u5207\u63DB\u6A19\u6E96\u5730\u5716\u3002");
+    }
+    function retry() {
+      if (usingOffline) {
+        offlineRenderer.retry();
+        return;
+      }
+      if (offlineFailed && lastContext) {
+        offlineFailed = false;
+        mount(
+          lastContext.slot,
+          lastContext.file,
+          lastContext.live,
+          "standard",
+          lastContext.stations,
+          lastContext.estimated
+        );
+        return;
+      }
+      if (requestedMode === "terrain") {
+        if (terrain3d.unavailable() && terrainContext) {
+          terrain3d.resetUnavailable();
+          mount(
+            terrainContext.slot,
+            terrainContext.file,
+            terrainContext.live,
+            "terrain",
+            terrainContext.stations,
+            terrainContext.estimated
+          );
+        } else terrain3d.retry();
+        return;
+      }
+      if (terrainMap && mapMode !== "plain") startTiles();
+    }
+    function destroy() {
+      resizeObserver?.disconnect();
+      resizeObserver = null;
+      releaseMap();
+      terrain3d.destroy();
+      offlineRenderer.destroy();
+      views.clear();
+    }
+    return {
+      beforeRender,
+      mount,
+      fit,
+      retry,
+      destroy,
+      locate,
+      updatePosition,
+      following: () => navigation.following,
+      pitch: terrain3d.pitch,
+      tilt: terrain3d.tilt,
+      rotate: terrain3d.rotate,
+      north: terrain3d.north
+    };
+  }
+
+  // src/features/map/presenter.js
+  function createMapPresenter({ document: document2 }) {
+    function updateCamera({ pitch }) {
+      const slider = document2.getElementById("map-pitch"), label = document2.getElementById("map-pitch-value");
+      if (slider) slider.value = String(Math.round(pitch));
+      if (label) label.textContent = `${Math.round(pitch)}\xB0`;
+    }
+    function updateStatus({ kind, message }) {
+      const status = document2.getElementById("map-status");
+      if (status) {
+        status.textContent = message;
+        status.dataset.kind = kind;
+      }
+      const retry = document2.getElementById("map-retry");
+      if (retry) retry.hidden = kind !== "error";
+    }
+    return { updateCamera, updateStatus };
+  }
+
   // src/features/gpx-stations/markers.js
   function gpxStationMarkers(data, formatArrival) {
     const places = /* @__PURE__ */ new Map();
@@ -7265,6 +8161,7 @@
       return {
         ...row.station,
         label: esc(`${row.station.name}${visits.length > 1 ? ` \xB7 \u7B2C ${visit} \u6B21\u8A2A\u7D93` : ""}`),
+        visitLabel: visits.length > 1 ? `\u7B2C ${visit} \u6B21\u8A2A\u7D93` : "",
         arrivalLabel: data.active ? formatArrival(row.arrivalUtcMs) : "",
         next: row.index === data.next?.index
       };
@@ -7685,469 +8582,7 @@
 
   // src/features/itinerary/markers.js
   function itineraryMarkers(data) {
-    if (!data) return [];
-    if (data.timeBasis === "gpx-moving-time") return gpxStationMarkers(data, arrival2);
-    const points = /* @__PURE__ */ new Map();
-    for (const row of data.rows.filter((row2) => row2.visible)) {
-      if (points.has(row.station.stationId)) continue;
-      points.set(row.station.stationId, {
-        ...row.station,
-        label: esc(row.station.name),
-        arrivalLabel: data.active ? arrival2(row.arrivalUtcMs) : "",
-        next: row.station.stationId === data.next?.station.stationId
-      });
-    }
-    return [...points.values()];
-  }
-  function createStationLayer(leaflet, map, stations) {
-    if (!stations.length) return null;
-    const group = leaflet.featureGroup().addTo(map);
-    for (const station of stations)
-      leaflet.circleMarker([station.lat, station.lon], {
-        radius: station.next ? 8 : 6,
-        color: "#fff",
-        weight: 2,
-        fillColor: station.next ? "#b87930" : "#326753",
-        fillOpacity: 1
-      }).bindTooltip(
-        `${station.label}${station.arrivalLabel ? " \xB7 " + esc(station.arrivalLabel) : ""}`,
-        { direction: "top" }
-      ).addTo(group);
-    return group;
-  }
-
-  // src/features/map/controller.js
-  var MAP_SOURCES = {
-    standard: {
-      label: "OSM \u6A19\u6E96\u5730\u5716",
-      url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-      options: {
-        minZoom: 1,
-        maxNativeZoom: 19,
-        maxZoom: 19,
-        detectRetina: false,
-        referrerPolicy: "strict-origin-when-cross-origin",
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-      }
-    },
-    opentopo: {
-      label: "OpenTopo \u5730\u5F62\u5E95\u5716",
-      url: "https://tile.opentopomap.org/{z}/{x}/{y}.png",
-      options: {
-        minZoom: 1,
-        maxNativeZoom: 17,
-        maxZoom: 19,
-        detectRetina: false,
-        attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors | DEM: <a href="https://viewfinderpanoramas.org/">SRTM</a>, <a href="https://sonny.4lima.de/">Sonny</a> | Map style: &copy; <a href="https://opentopomap.org/">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)'
-      }
-    }
-  };
-  function createTerrainMapController({
-    leaflet = globalThis.L,
-    onStatus = () => {
-    },
-    onCamera = () => {
-    },
-    onPick = () => {
-    },
-    load3d,
-    offlineMaps
-  } = {}) {
-    let terrainMap = null, canvas = null, routeKey = null, overlay = null, liveOverlay = null, estimatedOverlay = null, stationOverlay = null, tiles = null;
-    let currentFile2 = null, currentLive = [], currentEstimated = [], mapMode = "plain", attempt = 0, tileTimer = null;
-    let status = { kind: "off", message: "\u55AE\u7D14\u8ECC\u8DE1\u6A21\u5F0F\uFF0C\u4E0D\u8F09\u5165\u5E95\u5716\u3002" };
-    let offlineTarget = null, hasCoordinates = false;
-    const views = /* @__PURE__ */ new Map();
-    let resizeObserver = null;
-    function observeSize(slot) {
-      resizeObserver?.disconnect();
-      if (!slot || !globalThis.ResizeObserver) return;
-      resizeObserver ??= new globalThis.ResizeObserver(() => {
-        if (usingOffline) offlineRenderer.resize();
-        else if (requestedMode === "terrain" && !terrain3d.unavailable()) terrain3d.resize();
-        else terrainMap?.invalidateSize({ pan: true, animate: false, debounceMoveend: true });
-      });
-      resizeObserver.observe(slot);
-    }
-    let requestedMode = "plain", terrainContext = null;
-    const report = (kind, message) => {
-      status = { kind, message };
-      onStatus(status);
-    };
-    const terrain3d = createTerrain3dController({
-      onPick,
-      onStatus,
-      onCamera,
-      ...load3d ? { load: load3d } : {},
-      onFallback: (context) => {
-        if (requestedMode !== "terrain" || !context.slot) return;
-        mount(context.slot, context.file, context.live, "plain", context.stations, context.estimated);
-        requestedMode = "terrain";
-        report("error", context.message);
-      }
-    });
-    let usingOffline = false, offlineFailed = false, lastContext;
-    const offlineRenderer = createOfflineRenderer({
-      onPick,
-      onStatus,
-      onFallback: (context) => {
-        offlineFailed = true;
-        usingOffline = false;
-        if (context.slot)
-          mount(
-            context.slot,
-            context.file,
-            context.live,
-            "plain",
-            context.stations,
-            context.estimated
-          );
-        requestedMode = "standard";
-      }
-    });
-    const clearTileTimer = () => {
-      if (tileTimer !== null) clearTimeout(tileTimer);
-      tileTimer = null;
-    };
-    function removeTiles() {
-      attempt++;
-      clearTileTimer();
-      if (tiles) {
-        terrainMap?.removeLayer(tiles);
-        tiles.off();
-        tiles = null;
-      }
-    }
-    function offline() {
-      if (!terrainMap || mapMode === "plain") return;
-      removeTiles();
-      report("error", "\u76EE\u524D\u6C92\u6709\u7DB2\u8DEF\uFF0CGPX \u8DEF\u7DDA\u4ECD\u53EF\u67E5\u770B\uFF1B\u6062\u5FA9\u9023\u7DDA\u5F8C\u53EF\u91CD\u8A66\u5E95\u5716\u3002");
-    }
-    function startTiles() {
-      removeTiles();
-      const source = MAP_SOURCES[mapMode];
-      if (!terrainMap || !source) return;
-      if (mapMode === "standard" && globalThis.location?.protocol === "file:") {
-        report("error", "OSM \u6A19\u6E96\u5730\u5716\u8ACB\u7531\u672C\u6A5F\u9810\u89BD\u7DB2\u7AD9\u958B\u555F\uFF1B\u76EE\u524D\u4ECD\u53EF\u67E5\u770B GPX \u8ECC\u8DE1\u3002");
-        return;
-      }
-      if (globalThis.navigator?.onLine === false) {
-        offline();
-        return;
-      }
-      const thisAttempt = attempt;
-      let failed = false, loaded = 0;
-      const active = () => terrainMap && mapMode !== "plain" && attempt === thisAttempt;
-      const timeout = () => {
-        clearTileTimer();
-        tileTimer = setTimeout(() => {
-          if (!active()) return;
-          failed = true;
-          report("error", `${source.label}\u8F09\u5165\u903E\u6642\uFF0CGPX \u8DEF\u7DDA\u4ECD\u53EF\u67E5\u770B\uFF1B\u53EF\u6309\u91CD\u8A66\u91CD\u65B0\u8F09\u5165\u3002`);
-        }, 15e3);
-        tileTimer.unref?.();
-      };
-      report("loading", `\u6B63\u5728\u8F09\u5165${source.label}\u2026`);
-      tiles = leaflet.tileLayer(source.url, { ...source.options });
-      tiles.on("loading", () => {
-        if (!active()) return;
-        loaded = 0;
-        if (!failed) report("loading", `\u6B63\u5728\u8F09\u5165${source.label}\u2026`);
-        timeout();
-      });
-      tiles.on("tileload", () => {
-        if (active()) loaded++;
-      });
-      tiles.on("tileerror", () => {
-        if (!active()) return;
-        failed = true;
-        report("error", `\u90E8\u5206${source.label}\u7121\u6CD5\u8F09\u5165\uFF0CGPX \u8DEF\u7DDA\u4ECD\u53EF\u67E5\u770B\uFF1B\u53EF\u6309\u91CD\u8A66\u91CD\u65B0\u8F09\u5165\u3002`);
-      });
-      tiles.on("load", () => {
-        if (!active()) return;
-        clearTileTimer();
-        if (failed) return;
-        if (loaded) report("ready", `${source.label}\u5DF2\u8F09\u5165\u3002`);
-        else report("error", `\u5C1A\u672A\u53D6\u5F97${source.label}\uFF0CGPX \u8DEF\u7DDA\u4ECD\u53EF\u67E5\u770B\uFF1B\u53EF\u6309\u91CD\u8A66\u91CD\u65B0\u8F09\u5165\u3002`);
-      });
-      timeout();
-      tiles.addTo(terrainMap);
-    }
-    function coordinates(segment) {
-      const reference = currentFile2.points[0]?.lon ?? currentLive.flat()[0]?.lon ?? 121;
-      return segment.filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lon)).map((point) => [point.lat, reference + (point.lon - reference + 540) % 360 - 180]);
-    }
-    function allCoordinates() {
-      return [...currentFile2.segments, ...currentLive, ...currentEstimated].flatMap(coordinates);
-    }
-    function path(segment, color, weight, group, dashed = false) {
-      const points = coordinates(segment);
-      if (points.length > 1)
-        leaflet.polyline(points, {
-          color,
-          weight,
-          opacity: 1,
-          interactive: false,
-          ...dashed ? { dashArray: "9 7" } : {}
-        }).addTo(group);
-    }
-    function marker(point, color, label, group, radius2 = 6) {
-      const coordinate = coordinates([point])[0];
-      if (!coordinate) return;
-      leaflet.circleMarker(coordinate, {
-        radius: radius2,
-        color: "#ffffff",
-        weight: 3,
-        fillColor: color,
-        fillOpacity: 1
-      }).bindTooltip(label, { direction: "top" }).addTo(group);
-    }
-    function drawRoute() {
-      if (overlay) terrainMap.removeLayer(overlay);
-      overlay = leaflet.featureGroup().addTo(terrainMap);
-      for (const segment of currentFile2.segments) path(segment, "#ffffff", 8, overlay);
-      for (const segment of currentFile2.segments) path(segment, "#326753", 4, overlay);
-      if (currentFile2.points.length) {
-        marker(currentFile2.points[0], "#183e35", "GPX \u8D77\u9EDE", overlay);
-        marker(currentFile2.points.at(-1), "#8daa64", "GPX \u7D42\u9EDE", overlay);
-      }
-    }
-    function drawEstimated() {
-      if (estimatedOverlay) terrainMap.removeLayer(estimatedOverlay);
-      estimatedOverlay = leaflet.featureGroup().addTo(terrainMap);
-      for (const segment of currentEstimated) path(segment, "#e0a040", 5, estimatedOverlay, true);
-    }
-    function drawLive() {
-      if (liveOverlay) terrainMap.removeLayer(liveOverlay);
-      liveOverlay = leaflet.featureGroup().addTo(terrainMap);
-      for (const segment of currentLive) path(segment, "#4388b7", 4, liveOverlay);
-      const lastLive = currentLive.findLast((segment) => segment.length)?.at(-1);
-      if (lastLive) marker(lastLive, "#d88d55", "\u6700\u65B0 GPS \u7D00\u9304\u4F4D\u7F6E", liveOverlay, 8);
-    }
-    function fit() {
-      if (usingOffline) {
-        offlineRenderer.fit();
-        return;
-      }
-      if (requestedMode === "terrain" && !terrain3d.unavailable()) {
-        terrain3d.fit();
-        return;
-      }
-      if (!terrainMap || !currentFile2) return;
-      const points = allCoordinates();
-      if (points.length)
-        terrainMap.fitBounds(leaflet.latLngBounds(points), {
-          padding: [30, 30],
-          maxZoom: 15,
-          animate: false
-        });
-    }
-    function releaseMap() {
-      if (terrainMap) {
-        views.set(routeKey, { center: terrainMap.getCenter(), zoom: terrainMap.getZoom() });
-        if (views.size > 20) views.delete(views.keys().next().value);
-      }
-      removeTiles();
-      offlineTarget?.removeEventListener("offline", offline);
-      offlineTarget = null;
-      terrainMap?.remove();
-      canvas?.remove();
-      terrainMap = canvas = overlay = liveOverlay = estimatedOverlay = stationOverlay = routeKey = currentFile2 = null;
-      currentLive = [];
-      currentEstimated = [];
-      hasCoordinates = false;
-      mapMode = "plain";
-      status = { kind: "off", message: "\u55AE\u7D14\u8ECC\u8DE1\u6A21\u5F0F\uFF0C\u4E0D\u8F09\u5165\u5E95\u5716\u3002" };
-    }
-    function beforeRender() {
-      resizeObserver?.disconnect();
-      canvas?.remove();
-      terrain3d.beforeRender();
-      offlineRenderer.beforeRender();
-    }
-    function mount(slot, file, live = [], mode = "standard", stations = [], estimated = []) {
-      observeSize(slot);
-      requestedMode = mode;
-      lastContext = { slot, file, live, mode, stations, estimated };
-      if (!slot || !file || !file.points?.length && !file.recording) {
-        releaseMap();
-        offlineRenderer.mount(null, null);
-        usingOffline = false;
-        offlineFailed = false;
-        terrain3d.mount(null, null);
-        terrainContext = null;
-        return;
-      }
-      const key2 = file.id ?? file;
-      const offlinePack = mode === "standard" && !offlineFailed ? offlineMaps?.forRoute(file) : null;
-      if (offlinePack) {
-        const center = terrainMap?.getCenter();
-        const camera = terrainMap && routeKey === key2 ? {
-          key: key2,
-          center: [center.lat ?? center[0], center.lng ?? center[1]],
-          zoom: terrainMap.getZoom()
-        } : terrain3d.view()?.key === key2 ? terrain3d.view() : views.has(key2) ? { ...views.get(key2), key: key2 } : null;
-        releaseMap();
-        terrain3d.mount(null, null);
-        usingOffline = true;
-        offlineRenderer.mount(slot, file, live, stations, offlinePack, camera, estimated);
-        return;
-      }
-      if (usingOffline) {
-        const previous = offlineRenderer.view();
-        if (previous?.key) views.set(previous.key, previous);
-        offlineRenderer.mount(null, null);
-        usingOffline = false;
-      }
-      if (mode !== "standard") offlineFailed = false;
-      if (mode === "terrain") terrainContext = { slot, file, live, stations, estimated };
-      if (mode === "terrain" && !terrain3d.unavailable()) {
-        const center = terrainMap?.getCenter();
-        const camera = terrainMap && routeKey === key2 ? {
-          center: [center.lat ?? center[0], center.lng ?? center[1]],
-          zoom: terrainMap.getZoom()
-        } : null;
-        releaseMap();
-        terrain3d.mount(slot, file, live, camera, stations, estimated);
-        return;
-      }
-      const from3d = terrain3d.view();
-      if (from3d?.key === key2) views.set(key2, from3d);
-      terrain3d.mount(null, null);
-      const nextMode = Object.hasOwn(MAP_SOURCES, mode) ? mode : "plain";
-      if (!leaflet?.map) {
-        releaseMap();
-        report("error", "\u5730\u5716\u5143\u4EF6\u7121\u6CD5\u8F09\u5165\uFF0C\u76EE\u524D\u986F\u793A GPX \u5E73\u9762\u8ECC\u8DE1\u3002");
-        return;
-      }
-      if (terrainMap && routeKey !== key2) releaseMap();
-      const changedRoute = !terrainMap || currentFile2 !== file;
-      const firstFix = terrainMap && !hasCoordinates && live.some((segment) => segment.length);
-      currentFile2 = file;
-      currentLive = live;
-      currentEstimated = estimated;
-      if (!terrainMap) {
-        routeKey = key2;
-        canvas = slot.ownerDocument.createElement("div");
-        canvas.className = "terrain-map-canvas";
-        canvas.setAttribute("aria-label", "GPX \u8DEF\u7DDA\u5730\u5716\uFF0C\u53EF\u4F7F\u7528\u65B9\u5411\u9375\u79FB\u52D5\u53CA\u52A0\u6E1B\u9375\u7E2E\u653E");
-        slot.replaceChildren(canvas);
-        terrainMap = leaflet.map(canvas, {
-          zoomControl: false,
-          minZoom: 1,
-          maxZoom: 19,
-          zoomSnap: 0,
-          scrollWheelZoom: true,
-          touchZoom: true
-        });
-        terrainMap.on("click", (event) => onPick({ lat: event.latlng.lat, lon: event.latlng.lng }));
-        leaflet.control.zoom({
-          position: "topright",
-          zoomInTitle: "\u653E\u5927\u8DEF\u7DDA\u5716",
-          zoomOutTitle: "\u7E2E\u5C0F\u8DEF\u7DDA\u5716",
-          zoomInText: "+",
-          zoomOutText: "\u2212"
-        }).addTo(terrainMap);
-        leaflet.control.scale({ imperial: false, position: "bottomleft" }).addTo(terrainMap);
-        const previous = views.get(key2);
-        if (previous) terrainMap.setView(previous.center, previous.zoom, { animate: false });
-        else if (allCoordinates().length) fit();
-        else terrainMap.setView([23.7, 121], 7, { animate: false });
-        offlineTarget = globalThis.window;
-        offlineTarget?.addEventListener("offline", offline);
-      } else {
-        slot.replaceChildren(canvas);
-        terrainMap.invalidateSize({ pan: false, animate: false });
-      }
-      if (changedRoute) drawRoute();
-      drawEstimated();
-      drawLive();
-      if (stationOverlay) terrainMap.removeLayer(stationOverlay);
-      stationOverlay = createStationLayer(leaflet, terrainMap, stations);
-      if (firstFix) fit();
-      hasCoordinates = Boolean(file.points.length || live.some((segment) => segment.length));
-      if (mapMode !== nextMode) {
-        mapMode = nextMode;
-        if (mapMode !== "plain") startTiles();
-        else {
-          removeTiles();
-          report("off", "\u55AE\u7D14\u8ECC\u8DE1\u6A21\u5F0F\uFF0C\u4E0D\u8F09\u5165\u5E95\u5716\u3002");
-        }
-      } else onStatus(status);
-      if (mode === "terrain")
-        report("error", "3D \u5730\u5F62\u76EE\u524D\u7121\u6CD5\u986F\u793A\uFF0C\u5DF2\u4FDD\u7559\u5E73\u9762\u8ECC\u8DE1\uFF1B\u53EF\u91CD\u8A66\u6216\u5207\u63DB\u6A19\u6E96\u5730\u5716\u3002");
-    }
-    function retry() {
-      if (usingOffline) {
-        offlineRenderer.retry();
-        return;
-      }
-      if (offlineFailed && lastContext) {
-        offlineFailed = false;
-        mount(
-          lastContext.slot,
-          lastContext.file,
-          lastContext.live,
-          "standard",
-          lastContext.stations,
-          lastContext.estimated
-        );
-        return;
-      }
-      if (requestedMode === "terrain") {
-        if (terrain3d.unavailable() && terrainContext) {
-          terrain3d.resetUnavailable();
-          mount(
-            terrainContext.slot,
-            terrainContext.file,
-            terrainContext.live,
-            "terrain",
-            terrainContext.stations,
-            terrainContext.estimated
-          );
-        } else terrain3d.retry();
-        return;
-      }
-      if (terrainMap && mapMode !== "plain") startTiles();
-    }
-    function destroy() {
-      resizeObserver?.disconnect();
-      resizeObserver = null;
-      releaseMap();
-      terrain3d.destroy();
-      offlineRenderer.destroy();
-      views.clear();
-    }
-    return {
-      beforeRender,
-      mount,
-      fit,
-      retry,
-      destroy,
-      pitch: terrain3d.pitch,
-      tilt: terrain3d.tilt,
-      rotate: terrain3d.rotate,
-      north: terrain3d.north
-    };
-  }
-
-  // src/features/map/presenter.js
-  function createMapPresenter({ document: document2 }) {
-    function updateCamera({ pitch }) {
-      const slider = document2.getElementById("map-pitch"), label = document2.getElementById("map-pitch-value");
-      if (slider) slider.value = String(Math.round(pitch));
-      if (label) label.textContent = `${Math.round(pitch)}\xB0`;
-    }
-    function updateStatus({ kind, message }) {
-      const status = document2.getElementById("map-status");
-      if (status) {
-        status.textContent = message;
-        status.dataset.kind = kind;
-      }
-      const retry = document2.getElementById("map-retry");
-      if (retry) retry.hidden = kind !== "error";
-    }
-    return { updateCamera, updateStatus };
+    return data ? gpxStationMarkers(data, arrival2) : [];
   }
 
   // src/features/map/view.js
@@ -8169,6 +8604,7 @@
       return `<section class="chart-wrap"><div class="chart-title"><span class="chart-heading">${icon("mountain")}${file === directMap ? "\u7D00\u9304\u7684" : "\u8DEF\u7DDA"}\u9AD8\u5EA6\u5256\u9762</span><span>\u6CBF\u9014\u7684\u9AD8\u5EA6\u8B8A\u5316</span></div>${heightProfile?.panel(plotted) ?? elevationSvg(plotted)}</section>`;
     }
     function mapPanel(file, position3 = null, live = [], { compact = false } = {}) {
+      const showNavigation = compact && ["requesting", "tracking", "paused", "error"].includes(state.gps.status);
       return `<section class="panel ${compact ? "compact-map" : ""}"><div class="panel-header"><div><h2>${file === directMap ? "\u6211\u7684\u8ECC\u8DE1" : "\u8DEF\u7DDA\u8207\u5730\u5F62"}</h2><p>${file === directMap ? "\u5BE6\u969B GPS \u4F4D\u7F6E" : file.processing ? "\u6821\u6B63\u5F8C GPX \u8DEF\u7DDA" : "GPX \u8DEF\u7DDA"} \xB7 ${state.mapMode === "terrain" ? "\u53EF\u65CB\u8F49\u8996\u89D2" : "\u5317\u65B9\u671D\u4E0A"}</p></div><span class="chip">${(file === directMap ? live : file.segments).filter((segment) => segment.length).length} \u6BB5\u8ECC\u8DE1</span></div>
     <div class="terrain-toolbar"><div class="tab-group" role="group" aria-label="\u5730\u5716\u6A21\u5F0F">${[
         ["standard", "\u6A19\u6E96"],
@@ -8182,7 +8618,9 @@
           "",
           `data-mode="${mode}" aria-pressed="${state.mapMode === mode}"`
         )
-      ).join("")}</div>${button("\u770B\u5168\u7A0B", "map-fit", "", "locate")}</div>
+      ).join(
+        ""
+      )}</div><div class="map-navigation-tools">${button("\u770B\u5168\u7A0B", "map-fit", "ghost")}${showNavigation ? button(`<span data-location-label>${currentMapPosition(state.gps) ? terrainMap.following() ? "\u8DDF\u96A8\u4E2D" : "\u6211\u7684\u4F4D\u7F6E" : "\u5C1A\u7121\u5B9A\u4F4D"}</span>`, "map-locate", "ghost", "locate", `aria-label="\u56DE\u5230\u6211\u7684\u4F4D\u7F6E\u4E26\u8DDF\u96A8 GPS" aria-pressed="${Boolean(currentMapPosition(state.gps) && terrainMap.following())}" ${currentMapPosition(state.gps) ? "" : "disabled"}`) + button(state.recordingMapExpandedId === state.gps.id ? "\u7E2E\u5C0F\u5730\u5716" : "\u5C55\u958B\u5730\u5716", "recording-map-toggle", "ghost", "", `aria-expanded="${state.recordingMapExpandedId === state.gps.id}" aria-controls="track-map"`) : ""}</div></div>
     ${state.mapMode === "terrain" ? `<div class="terrain-camera-controls" role="group" aria-label="3D \u8996\u89D2"><label for="map-pitch">\u50BE\u659C <span id="map-pitch-value">${Math.round(terrainMap.pitch())}\xB0</span></label><input id="map-pitch" type="range" min="0" max="75" step="5" value="${Math.round(terrainMap.pitch())}">${button("\u5DE6\u8F49", "map-rotate", "ghost", "", 'data-angle="-30"')}${button("\u53F3\u8F49", "map-rotate", "ghost", "", 'data-angle="30"')}${button("\u5317\u5411", "map-north", "ghost")}</div><p class="terrain-gesture-note">\u53F3\u9375\u62D6\u66F3\u53EF\u65CB\u8F49\u8207\u50BE\u659C\uFF1B\u624B\u6A5F\u53EF\u96D9\u6307\u65CB\u8F49\u3001\u4E0A\u4E0B\u6ED1\u52D5\uFF0C\u6216\u4F7F\u7528\u4E0A\u65B9\u8996\u89D2\u63A7\u5236\u3002</p>` : ""}
     ${stationEditor?.panel() ?? ""}
     <div class="actual-map" id="track-map">${mapSvg(file, position3, live, false, itineraryMarkers(itinerary?.snapshot()))}</div>
@@ -8422,17 +8860,26 @@
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => el.classList.remove("visible"), 4500);
     }
-    function modal(title, body, actions = "") {
+    function modal(title, body, actions = "", { cancelLabel = "\u95DC\u9589" } = {}) {
       const dialog = document2.querySelector("#dialog");
+      const opener = document2.activeElement, action = opener?.dataset?.action;
+      dialog.addEventListener?.(
+        "close",
+        () => {
+          const target = opener?.isConnected ? opener : action ? document2.querySelector(`[data-action="${action}"]`) : null;
+          target?.focus?.({ preventScroll: true });
+        },
+        { once: true }
+      );
       dialog.setAttribute("aria-labelledby", "dialog-title");
-      dialog.innerHTML = `<div class="dialog-content"><h2 id="dialog-title" tabindex="-1" autofocus>${title}</h2>${body}<div class="dialog-actions">${button("\u95DC\u9589", "dialog-close")}${actions}</div></div>`;
+      dialog.innerHTML = `<div class="dialog-content"><h2 id="dialog-title" tabindex="-1" autofocus>${title}</h2>${body}<div class="dialog-actions">${button(cancelLabel, "dialog-close")}${actions}</div></div>`;
       if (!dialog.open) dialog.showModal();
       dialog.scrollTop = 0;
     }
     function showHelp() {
       modal(
         "\u4F7F\u7528\u4F60\u7684 GPX",
-        "<p>1. \u6309\u300C\u76F4\u63A5\u958B\u59CB\u7D00\u9304\u300D\uFF0C\u4E0D\u9700\u8981\u532F\u5165\u8DEF\u7DDA\uFF1B\u4E5F\u53EF\u5148\u532F\u5165 GPX\uFF0C\u518D\u9078\u7528\u8DEF\u7DDA\u958B\u59CB\u7D00\u9304\u3002</p><p>2. \u5207\u63DB\u300C\u6A19\u6E96\u300D\u3001\u300C3D \u5730\u5F62\u300D\u6216\u300C\u55AE\u7D14\u8ECC\u8DE1\u300D\uFF1B\u62D6\u66F3\u3001\u6EFE\u8F2A\u3001\uFF0B\uFF0F\uFF0D\u6216\u96D9\u6307\u7E2E\u653E\uFF0C\u6309\u300C\u770B\u5168\u7A0B\u300D\u67E5\u770B\u5168\u90E8\u8ECC\u8DE1\u3002</p><p>3. \u65B0\u5EA7\u6A19\u6703\u81EA\u52D5\u4FDD\u7559\u70BA\u6062\u5FA9\u8349\u7A3F\u3002\u6309\u7D50\u675F\u6703\u5148\u505C\u6B62 GPS\uFF0C\u518D\u9078\u64C7\u300C\u4FDD\u5B58\u81F3\u6211\u7684 GPX\u300D\u6216\u300C\u4E0D\u4FDD\u5B58\uFF0C\u8FD4\u56DE\u300D\u3002\u6211\u7684\u8DEF\u7DDA\u53EA\u986F\u793A\u532F\u5165\u6A94\uFF1B\u6211\u7684 GPX \u53EA\u986F\u793A\u89AA\u81EA\u7D00\u9304\u4E14\u9078\u64C7\u4FDD\u5B58\u7684\u8ECC\u8DE1\u3002\u5DF2\u7D50\u675F\u7684\u8349\u7A3F\u91CD\u65B0\u958B\u555F\u5F8C\u4ECD\u505C\u5728\u4FDD\u5B58\u9078\u64C7\uFF0C\u4E0D\u6703\u555F\u52D5 GPS\u3002</p><p>4. \u4E0A\u6CB3 1.0 \u6709\u5411\u6642\u9593\u8207\u7AD9\u9EDE\u5DF2\u5167\u5EFA\u3002\u532F\u5165 GPX \u4E26\u8A2D\u5B9A\u81EA\u5DF1\u7684\u500D\u7387\u5F8C\uFF0C\u958B\u59CB\u7D00\u9304\u5373\u53EF\u67E5\u770B\u5404\u7AD9 ETA\uFF1BGPS \u5230\u7AD9\u5F8C\u5207\u63DB\u4E0B\u4E00\u7AD9\u4E26\u91CD\u65B0\u63A8\u7B97\u3002\u7F3A\u6F0F\u6216\u591A\u689D\u53EF\u80FD\u8DEF\u5F91\u6703\u6A19\u793A\u5F85\u88DC\u3002\u4E0D\u9700\u8981\u4E0A\u50B3\u7AD9\u9EDE\u6216\u6642\u9593\u8CC7\u6599\u3002\u81EA\u7531\u7D00\u9304\u53E6\u4FDD\u7559\u624B\u52D5\u57FA\u6E96\u5DE5\u5177\u3002</p><p>\u6A19\u6E96 2D \u5730\u5716\uFF1A\u5148\u5B8C\u6210\u300C\u4E0B\u8F09\u96E2\u7DDA\u5730\u5716\u300D\uFF0C\u5373\u53EF\u5728\u5DF2\u4E0B\u8F09\u7684\u53F0\u7063\u7BC4\u570D\u5167\u96E2\u7DDA\u4F7F\u7528\u3002\u540C\u4E00\u88DD\u7F6E\u3001\u540C\u4E00\u700F\u89BD\u5668\u4FDD\u7559\u5E95\u5716\uFF0C\u51FA\u767C\u524D\u8ACB\u8A66\u958B\uFF1B\u9996\u6B21\u4E0B\u8F09\u9700\u8981\u7DB2\u8DEF\uFF0C\u672A\u4E0B\u8F09\u6642\u4F7F\u7528\u7DDA\u4E0A\u5E95\u5716\u3002</p><p>3D \u5730\u5F62\u9700\u8981\u7DB2\u8DEF\uFF0C\u6703\u5411\u5716\u8CC7\u670D\u52D9\u8ACB\u6C42\u700F\u89BD\u5340\u57DF\uFF0C\u76EE\u524D\u4E0D\u63D0\u4F9B\u96E2\u7DDA 3D \u5730\u5716\u3002\u55AE\u7D14\u8ECC\u8DE1\u4E0D\u8ACB\u6C42\u5E95\u5716\uFF1BGPX \u4E0D\u6703\u4E0A\u50B3\u3002</p><p>\u8ACB\u7531 HTTPS \u6216 localhost \u958B\u555F\u4E26\u5141\u8A31\u5B9A\u4F4D\u3002\u8CC7\u6599\u53EA\u4FDD\u5B58\u5728\u540C\u4E00\u700F\u89BD\u5668\u3001\u540C\u4E00\u7DB2\u7AD9\u4F4D\u5740\uFF1B\u8ACB\u4E0B\u8F09\u5099\u4EFD\uFF0C\u6E05\u9664\u7DB2\u7AD9\u8CC7\u6599\u4E5F\u6703\u79FB\u9664\u96E2\u7DDA\u5730\u5716\u3002\u700F\u89BD\u5668\u80CC\u666F\u6216\u9396\u5C4F\u6642\u53EF\u80FD\u4E2D\u65B7\u5B9A\u4F4D\uFF0C\u7A81\u7136\u95DC\u9589\u53EF\u80FD\u907A\u5931\u5C1A\u672A\u63D0\u4EA4\u7684\u6700\u65B0\u8CC7\u6599\u3002</p>"
+        "<p>1. \u6309\u300C\u76F4\u63A5\u958B\u59CB\u7D00\u9304\u300D\uFF0C\u4E0D\u9700\u8981\u532F\u5165\u8DEF\u7DDA\uFF1B\u4E5F\u53EF\u5148\u532F\u5165 GPX\uFF0C\u518D\u9078\u7528\u8DEF\u7DDA\u958B\u59CB\u7D00\u9304\u3002</p><p>2. \u5207\u63DB\u300C\u6A19\u6E96\u300D\u3001\u300C3D \u5730\u5F62\u300D\u6216\u300C\u55AE\u7D14\u8ECC\u8DE1\u300D\uFF1B\u62D6\u66F3\u3001\u6EFE\u8F2A\u3001\uFF0B\uFF0F\uFF0D\u6216\u96D9\u6307\u7E2E\u653E\uFF0C\u6309\u300C\u770B\u5168\u7A0B\u300D\u67E5\u770B\u5168\u90E8\u8ECC\u8DE1\u3002</p><p>3. \u65B0\u5EA7\u6A19\u6703\u81EA\u52D5\u4FDD\u7559\u70BA\u6062\u5FA9\u8349\u7A3F\u3002\u6309\u7D50\u675F\u4E26\u78BA\u8A8D\u5F8C\u624D\u6703\u505C\u6B62 GPS\uFF0C\u518D\u9078\u64C7\u300C\u4FDD\u5B58\u81F3\u6211\u7684 GPX\u300D\u6216\u300C\u4E0D\u4FDD\u5B58\uFF0C\u8FD4\u56DE\u300D\u3002\u6211\u7684\u8DEF\u7DDA\u53EA\u986F\u793A\u532F\u5165\u6A94\uFF1B\u6211\u7684 GPX \u53EA\u986F\u793A\u89AA\u81EA\u7D00\u9304\u4E14\u9078\u64C7\u4FDD\u5B58\u7684\u8ECC\u8DE1\u3002\u5DF2\u7D50\u675F\u7684\u8349\u7A3F\u91CD\u65B0\u958B\u555F\u5F8C\u4ECD\u505C\u5728\u4FDD\u5B58\u9078\u64C7\uFF0C\u4E0D\u6703\u555F\u52D5 GPS\u3002</p><p>4. \u4E0A\u6CB3 1.0 \u6709\u5411\u6642\u9593\u8207\u7AD9\u9EDE\u5DF2\u5167\u5EFA\u3002\u532F\u5165 GPX \u4E26\u8A2D\u5B9A\u81EA\u5DF1\u7684\u500D\u7387\u5F8C\uFF0C\u958B\u59CB\u7D00\u9304\u5373\u53EF\u67E5\u770B\u5404\u7AD9 ETA\uFF1BGPS \u5230\u7AD9\u5F8C\u5207\u63DB\u4E0B\u4E00\u7AD9\u4E26\u91CD\u65B0\u63A8\u7B97\u3002\u7F3A\u6F0F\u6216\u591A\u689D\u53EF\u80FD\u8DEF\u5F91\u6703\u6A19\u793A\u5F85\u88DC\u3002\u4E0D\u9700\u8981\u4E0A\u50B3\u7AD9\u9EDE\u6216\u6642\u9593\u8CC7\u6599\u3002\u81EA\u7531\u7D00\u9304\u53E6\u4FDD\u7559\u624B\u52D5\u57FA\u6E96\u5DE5\u5177\u3002</p><p>\u6A19\u6E96 2D \u5730\u5716\uFF1A\u5148\u5B8C\u6210\u300C\u4E0B\u8F09\u96E2\u7DDA\u5730\u5716\u300D\uFF0C\u5373\u53EF\u5728\u5DF2\u4E0B\u8F09\u7684\u53F0\u7063\u7BC4\u570D\u5167\u96E2\u7DDA\u4F7F\u7528\u3002\u540C\u4E00\u88DD\u7F6E\u3001\u540C\u4E00\u700F\u89BD\u5668\u4FDD\u7559\u5E95\u5716\uFF0C\u51FA\u767C\u524D\u8ACB\u8A66\u958B\uFF1B\u9996\u6B21\u4E0B\u8F09\u9700\u8981\u7DB2\u8DEF\uFF0C\u672A\u4E0B\u8F09\u6642\u4F7F\u7528\u7DDA\u4E0A\u5E95\u5716\u3002</p><p>3D \u5730\u5F62\u9700\u8981\u7DB2\u8DEF\uFF0C\u6703\u5411\u5716\u8CC7\u670D\u52D9\u8ACB\u6C42\u700F\u89BD\u5340\u57DF\uFF0C\u76EE\u524D\u4E0D\u63D0\u4F9B\u96E2\u7DDA 3D \u5730\u5716\u3002\u55AE\u7D14\u8ECC\u8DE1\u4E0D\u8ACB\u6C42\u5E95\u5716\uFF1BGPX \u4E0D\u6703\u4E0A\u50B3\u3002</p><p>\u8ACB\u7531 HTTPS \u6216 localhost \u958B\u555F\u4E26\u5141\u8A31\u5B9A\u4F4D\u3002\u8CC7\u6599\u53EA\u4FDD\u5B58\u5728\u540C\u4E00\u700F\u89BD\u5668\u3001\u540C\u4E00\u7DB2\u7AD9\u4F4D\u5740\uFF1B\u8ACB\u4E0B\u8F09\u5099\u4EFD\uFF0C\u6E05\u9664\u7DB2\u7AD9\u8CC7\u6599\u4E5F\u6703\u79FB\u9664\u96E2\u7DDA\u5730\u5716\u3002\u700F\u89BD\u5668\u80CC\u666F\u6216\u9396\u5C4F\u6642\u53EF\u80FD\u4E2D\u65B7\u5B9A\u4F4D\uFF0C\u7A81\u7136\u95DC\u9589\u53EF\u80FD\u907A\u5931\u5C1A\u672A\u63D0\u4EA4\u7684\u6700\u65B0\u8CC7\u6599\u3002</p>"
       );
     }
     return {
@@ -8592,6 +9039,7 @@
       "offline-cancel": () => offlineMaps.cancel(),
       "offline-delete": () => offlineMaps.remove(),
       "map-fit": map.fit,
+      "map-locate": map.locate,
       "map-retry": map.retry,
       "map-rotate": (target) => map.rotate(Number(target.dataset.angle)),
       "map-north": map.north
@@ -8606,7 +9054,15 @@
       "gps-direct": () => recording.start(true),
       "gps-pause": recording.pause,
       "gps-resume": recording.resume,
-      "gps-finish": recording.finish,
+      "gps-finish": () => {
+        if (!["tracking", "requesting", "paused", "error"].includes(state.gps.status)) return;
+        modal(
+          "\u78BA\u5B9A\u8981\u7D50\u675F\u9019\u6B21\u767B\u5C71\u7D00\u9304\u55CE\uFF1F",
+          "<p>\u78BA\u8A8D\u5F8C\u624D\u6703\u505C\u6B62 GPS\uFF0C\u63A5\u8457\u9078\u64C7\u4FDD\u5B58\u6216\u4E0B\u8F09\u8ECC\u8DE1\u3002</p>",
+          button("\u78BA\u5B9A\u7D50\u675F", "gps-finish-confirm", "end-recording"),
+          { cancelLabel: "\u7E7C\u7E8C\u7D00\u9304" }
+        );
+      },
       "gps-finish-confirm": recording.finish,
       "gps-save": recording.save,
       "gps-no-save": recording.discard,
@@ -8861,7 +9317,11 @@
         state.view === "record" ? recordingSegments(state.gps) : [],
         state.mapMode,
         itineraryMarkers(itinerary?.snapshot()),
-        state.view === "record" && gpsPending2() ? estimatedGapSegments(recordingRoute2(), state.gps.itinerary) : []
+        state.view === "record" && gpsPending2() ? estimatedGapSegments(recordingRoute2(), state.gps.itinerary) : [],
+        {
+          position: state.view === "record" ? currentMapPosition(state.gps) : null,
+          recordingId: state.view === "record" && gpsPending2() ? state.gps.id : null
+        }
       );
       if (focusedMapControl?.isConnected) focusedMapControl.focus({ preventScroll: true });
       else if (focusId && focusId !== "main") {
@@ -9905,7 +10365,7 @@
   }
 
   // src/features/itinerary/rerouting.js
-  var stationKey = (row) => row.station.placeId ?? row.station.stationId;
+  var stationKey2 = (row) => row.station.placeId ?? row.station.stationId;
   var EPS2 = 1e-6;
   var wrap = (lon) => (lon + 540) % 360 - 180;
   function trustedRerouteFix(gps, fix, now = Date.now()) {
@@ -9918,16 +10378,16 @@
       if (!plan) continue;
       plan.rows.slice(1).forEach((to, i) => {
         const from = plan.rows[i];
-        destinations.set(stationKey(from), from.station);
-        destinations.set(stationKey(to), to.station);
+        destinations.set(stationKey2(from), from.station);
+        destinations.set(stationKey2(to), to.station);
         if (from.segmentIndex !== to.segmentIndex || to.routeProgressM <= from.routeProgressM) return;
         edges.push({
           source,
           plan,
           from,
           to,
-          fromKey: stationKey(from),
-          toKey: stationKey(to),
+          fromKey: stationKey2(from),
+          toKey: stationKey2(to),
           startM: from.routeProgressM,
           endM: to.routeProgressM,
           segment: from.segmentIndex
@@ -10384,18 +10844,18 @@
   function smartHome(source, plan, originalFile, originalPlan) {
     const row = originalPlan?.rows[0];
     if (!row) return null;
-    const result = { key: stationKey(row), name: row.station.name, sourceId: originalFile.id };
+    const result = { key: stationKey2(row), name: row.station.name, sourceId: originalFile.id };
     if (source.id === originalFile.id) {
       result.canonicalM = originalFile.direction === "reverse" ? source.stats.km * 1e3 - row.routeProgressM : row.routeProgressM;
     }
-    return plan.rows.some((r) => stationKey(r) === result.key) ? result : null;
+    return plan.rows.some((r) => stationKey2(r) === result.key) ? result : null;
   }
   function visitedStations(gps, plan) {
     const keys = /* @__PURE__ */ new Set();
     for (const version of [...gps.navigation?.revisions ?? [], { plan, journey: gps.itinerary }]) {
       for (const [index, time3] of Object.entries(version.journey?.arrivals ?? {})) {
         const row = version.plan?.rows?.[Number(index)];
-        if (row && Number.isFinite(time3)) keys.add(stationKey(row));
+        if (row && Number.isFinite(time3)) keys.add(stationKey2(row));
       }
     }
     return keys;
