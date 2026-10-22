@@ -29,7 +29,7 @@
       "imports": []
     },
     "src/styles/mobile.css": {
-      "bytes": 17410,
+      "bytes": 20401,
       "imports": []
     },
     "src/features/itinerary/live-factor.css": {
@@ -41,7 +41,7 @@
       "imports": []
     },
     "src/features/offline-map/offline-map.css": {
-      "bytes": 1601,
+      "bytes": 1596,
       "imports": []
     },
     "src/features/gpx/diagnostics.css": {
@@ -49,7 +49,7 @@
       "imports": []
     },
     "src/features/personal-factor/personal-factor.css": {
-      "bytes": 1064,
+      "bytes": 1151,
       "imports": []
     },
     "src/features/itinerary/smart-reroute.css": {
@@ -641,7 +641,7 @@
       "format": "esm"
     },
     "src/core/state.js": {
-      "bytes": 2188,
+      "bytes": 2217,
       "imports": [
         {
           "path": "src/features/routes/direction.js",
@@ -652,7 +652,7 @@
       "format": "esm"
     },
     "src/core/navigation.js": {
-      "bytes": 1180,
+      "bytes": 1196,
       "imports": [],
       "format": "esm"
     },
@@ -784,7 +784,7 @@
       "format": "esm"
     },
     "src/ui/empty-view.js": {
-      "bytes": 477,
+      "bytes": 1349,
       "imports": [
         {
           "path": "src/ui/html.js",
@@ -811,7 +811,7 @@
       "format": "esm"
     },
     "src/features/gpx/views.js": {
-      "bytes": 3811,
+      "bytes": 4366,
       "imports": [
         {
           "path": "src/ui/html.js",
@@ -848,7 +848,7 @@
       "format": "esm"
     },
     "src/features/recording/completion.js": {
-      "bytes": 4049,
+      "bytes": 4051,
       "imports": [
         {
           "path": "src/features/recording/analysis.js",
@@ -1121,7 +1121,7 @@
       "format": "esm"
     },
     "src/features/recording/completion-view.js": {
-      "bytes": 1718,
+      "bytes": 1722,
       "imports": [
         {
           "path": "src/features/recording/analysis.js",
@@ -1147,7 +1147,7 @@
       "format": "esm"
     },
     "src/features/recording/view.js": {
-      "bytes": 13822,
+      "bytes": 13835,
       "imports": [
         {
           "path": "src/features/map/position.js",
@@ -1550,7 +1550,7 @@
       "format": "esm"
     },
     "src/ui/feedback.js": {
-      "bytes": 3031,
+      "bytes": 4640,
       "imports": [
         {
           "path": "src/ui/html.js",
@@ -1666,7 +1666,7 @@
       "format": "esm"
     },
     "src/ui/renderer.js": {
-      "bytes": 4855,
+      "bytes": 5023,
       "imports": [
         {
           "path": "src/features/map/position.js",
@@ -2321,7 +2321,7 @@
       "format": "esm"
     },
     "src/features/personal-factor/view.js": {
-      "bytes": 6329,
+      "bytes": 6676,
       "imports": [
         {
           "path": "src/ui/html.js",
@@ -2342,7 +2342,7 @@
       "format": "esm"
     },
     "src/core/application.js": {
-      "bytes": 10479,
+      "bytes": 10590,
       "imports": [
         {
           "path": "src/features/gpx-stations/editor.js",
@@ -2534,7 +2534,7 @@
       "imports": [],
       "exports": [],
       "inputs": {},
-      "bytes": 5064746
+      "bytes": 5070958
     },
     "dist/app.bundle.js": {
       "imports": [],
@@ -2663,10 +2663,10 @@
           "bytesInOutput": 7100
         },
         "src/core/state.js": {
-          "bytesInOutput": 2202
+          "bytesInOutput": 2233
         },
         "src/core/navigation.js": {
-          "bytesInOutput": 1453
+          "bytesInOutput": 1481
         },
         "src/features/map/position.js": {
           "bytesInOutput": 509
@@ -2699,19 +2699,19 @@
           "bytesInOutput": 4655
         },
         "src/ui/empty-view.js": {
-          "bytesInOutput": 589
+          "bytesInOutput": 1746
         },
         "src/features/map/thumbnail.js": {
           "bytesInOutput": 2864
         },
         "src/features/gpx/views.js": {
-          "bytesInOutput": 3972
+          "bytesInOutput": 4746
         },
         "src/features/recording/persistence.js": {
           "bytesInOutput": 4440
         },
         "src/features/recording/completion.js": {
-          "bytesInOutput": 3640
+          "bytesInOutput": 3648
         },
         "src/features/location/provider.js": {
           "bytesInOutput": 636
@@ -2762,10 +2762,10 @@
           "bytesInOutput": 1686
         },
         "src/features/recording/completion-view.js": {
-          "bytesInOutput": 1854
+          "bytesInOutput": 1870
         },
         "src/features/recording/view.js": {
-          "bytesInOutput": 15660
+          "bytesInOutput": 15694
         },
         "src/features/map/navigation-overlay.js": {
           "bytesInOutput": 13005
@@ -2831,7 +2831,7 @@
           "bytesInOutput": 7012
         },
         "src/ui/feedback.js": {
-          "bytesInOutput": 4481
+          "bytesInOutput": 6897
         },
         "src/features/itinerary/actions.js": {
           "bytesInOutput": 2957
@@ -2855,7 +2855,7 @@
           "bytesInOutput": 707
         },
         "src/ui/renderer.js": {
-          "bytesInOutput": 4548
+          "bytesInOutput": 4712
         },
         "../packages/prediction-engine/internal/input.js": {
           "bytesInOutput": 2842
@@ -2948,25 +2948,25 @@
           "bytesInOutput": 760
         },
         "src/features/personal-factor/view.js": {
-          "bytesInOutput": 7981
+          "bytesInOutput": 8490
         },
         "src/integrations/web-mcp.js": {
           "bytesInOutput": 2276
         },
         "src/core/application.js": {
-          "bytesInOutput": 8698
+          "bytesInOutput": 8813
         },
         "src/app.js": {
           "bytesInOutput": 100
         }
       },
-      "bytes": 3285649
+      "bytes": 3290901
     },
     "dist/app.bundle.css.map": {
       "imports": [],
       "exports": [],
       "inputs": {},
-      "bytes": 130193
+      "bytes": 135719
     },
     "dist/app.bundle.css": {
       "imports": [],
@@ -2993,7 +2993,7 @@
           "bytesInOutput": 3259
         },
         "src/styles/mobile.css": {
-          "bytesInOutput": 17132
+          "bytesInOutput": 20037
         },
         "src/features/itinerary/live-factor.css": {
           "bytesInOutput": 2519
@@ -3002,13 +3002,13 @@
           "bytesInOutput": 1984
         },
         "src/features/offline-map/offline-map.css": {
-          "bytesInOutput": 1593
+          "bytesInOutput": 1588
         },
         "src/features/gpx/diagnostics.css": {
           "bytesInOutput": 2251
         },
         "src/features/personal-factor/personal-factor.css": {
-          "bytesInOutput": 1064
+          "bytesInOutput": 1151
         },
         "src/features/itinerary/smart-reroute.css": {
           "bytesInOutput": 1388
@@ -3020,7 +3020,7 @@
           "bytesInOutput": 0
         }
       },
-      "bytes": 77521
+      "bytes": 80508
     }
   }
 }

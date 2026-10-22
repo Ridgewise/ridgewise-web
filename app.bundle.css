@@ -3497,6 +3497,166 @@ dialog {
   color: #805100;
   background: #fff0ca;
 }
+.start-options {
+  display: grid;
+  gap: 24px;
+}
+.start-intro {
+  display: grid;
+  gap: 8px;
+}
+.start-intro h1,
+.start-intro h2 {
+  font-size: 24px;
+}
+.start-intro .eyebrow {
+  color: var(--muted);
+}
+.start-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+.start-option {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 24px;
+  min-width: 0;
+}
+.start-option h3 {
+  font-size: 20px;
+}
+.start-option .empty-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  margin: 0;
+}
+.start-option .empty-icon .icon {
+  width: 24px;
+  height: 24px;
+}
+.start-option .button,
+.saved-empty .button,
+.page-actions .button {
+  font-size: 16px;
+  white-space: normal;
+  scroll-margin-bottom: calc(96px + env(safe-area-inset-bottom));
+}
+.start-option p,
+.saved-empty p,
+.record-ready > .panel > p,
+.completion-sheet > p,
+.collection-note,
+.page-heading p {
+  color: #465b4e;
+  font-size: 15px;
+}
+.start-option .start-limit {
+  font-size: 14px;
+}
+.start-option p,
+.saved-empty p {
+  overflow-wrap: anywhere;
+}
+.saved-empty {
+  min-height: auto;
+  gap: 14px;
+  padding-block: 20px 32px;
+}
+.saved-empty .empty-art {
+  width: 120px;
+  height: 84px;
+}
+.saved-empty .empty-art .icon {
+  width: 76px;
+  height: 60px;
+}
+.saved-empty .empty-art .icon:last-child {
+  width: 32px;
+  height: 32px;
+}
+.record-ready > .panel > p.error-message,
+.completion-sheet > p.error-message {
+  color: #963b30;
+}
+.completion-sheet {
+  gap: 12px;
+}
+.help-dialog {
+  padding-top: 0;
+  padding-bottom: max(24px, env(safe-area-inset-bottom));
+}
+.help-dialog-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  position: sticky;
+  top: 0;
+  background: white;
+  padding-block: max(16px, env(safe-area-inset-top)) 12px;
+  z-index: 1;
+}
+.help-dialog-heading h2 {
+  margin: 0;
+}
+.help-dialog-heading .button {
+  flex-shrink: 0;
+}
+.quick-steps {
+  padding: 16px 16px 16px 36px;
+  margin: 0 0 20px;
+  border-radius: 12px;
+  background: var(--soft);
+  font-size: 16px;
+}
+.quick-steps li + li {
+  margin-top: 8px;
+}
+.help-topics details {
+  border-top: 1px solid var(--line);
+}
+.help-topics summary {
+  padding-block: 14px;
+  min-height: 48px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.help-dialog p {
+  font-size: 15px;
+  color: #465b4e;
+}
+@media (max-width: 600px) {
+  .start-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .start-option {
+    padding: 16px;
+    grid-template-columns: 36px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px 12px;
+  }
+  .start-option .empty-icon {
+    width: 36px;
+    height: 36px;
+  }
+  .start-option p,
+  .start-option .button {
+    grid-column: 1 / -1;
+  }
+  .page-heading p {
+    max-width: 32em;
+  }
+  .page-heading:has(.page-actions .button) {
+    flex-wrap: wrap;
+  }
+  .help-dialog {
+    padding-inline: max(20px, env(safe-area-inset-left)) max(20px, env(safe-area-inset-right));
+  }
+}
 
 /* src/features/itinerary/live-factor.css */
 .live-factors {
@@ -3760,13 +3920,13 @@ dialog {
   margin-top: 4px;
 }
 .offline-map-panel p {
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
   margin: 10px 0;
 }
 .offline-map-panel .offline-map-note {
-  font-size: 13px;
-  color: var(--muted);
+  font-size: 14px;
+  color: #465b4e;
   margin-bottom: 0;
 }
 .offline-map-actions {
@@ -3797,7 +3957,7 @@ dialog {
   height: 9px;
 }
 .offline-warning {
-  color: #976334;
+  color: #805025;
 }
 .offline-map-label {
   max-width: 130px;
@@ -3938,7 +4098,8 @@ dialog {
   .personal-factor-panel {
     --muted: #53655a;
     color: var(--ink);
-    margin-bottom: 20px;
+    margin-top: 24px;
+    gap: 10px;
     min-width: 0;
     overflow-wrap: anywhere;
   }
@@ -3959,6 +4120,10 @@ dialog {
     line-height: 1.4;
     font-variant-numeric: tabular-nums;
     color: var(--ink);
+  }
+  .personal-factor-pending {
+    display: inline;
+    font-size: 16px;
   }
   @media (prefers-color-scheme: dark) {
     .personal-factor-panel {
