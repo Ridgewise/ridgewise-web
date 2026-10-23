@@ -1,60 +1,48 @@
 {
   "schemaVersion": 1,
-  "version": "2026-10-22-pr43-ae1fc3c",
+  "version": "2026-10-23-pr44-pr45-f7d22cc",
   "sourceRepository": "Ridgewise/app",
-  "sourceSha": "ae1fc3cbb0cb8ce456ece9ab51d6f30ab2598fe1",
-  "pullRequest": 43,
-  "publishedAt": "2026-10-22T12:12:09.234Z",
-  "previousDeploymentSha": "6396c370c1b6f1863d30581473dd924a815c9e81",
-  "bundleSha256": "ba021d73c3e118893e0f6ad209589f46428945916399c07dfbb8d6ce262acd80",
-  "cssSha256": "8743709c537fc5be420cd7cb0e73cc8681c7dc4a407d064112e0e641d090c392",
-  "serviceWorkerSha256": "81c157dc445450ded281e8baff909a73c52e6cd977a27fc9d4617d3a3a7045de",
-  "serviceWorkerVersion": "b1b8487db57ebcbe",
-  "validationSourceSha": "b158038c731cbb718c856e54b6261e964183f3a0",
+  "sourceSha": "f7d22cc01af721863b1920c5b812a4636236ea37",
+  "pullRequest": 45,
+  "pullRequests": [
+    44,
+    45
+  ],
+  "publishedAt": "2026-10-23T04:47:18.361Z",
+  "previousDeploymentSha": "92ecf731ecd8c81ce313e45bb43f18226db381f7",
+  "bundleSha256": "a4e33574bc802eace071d68793ee3dd9573ed45207852095ca3df6dfdb8b7f48",
+  "cssSha256": "0c2c4d2d8e37890841d953e40012fdcb740f5446a2d102751c76885078d17e74",
+  "serviceWorkerSha256": "7766d050ac734925d91a8e6956de1257fff0dea73680267a407079052b6e94d2",
+  "serviceWorkerVersion": "d31af90292576a86",
+  "validationSourceSha": "587886f00e3a7c59f317bfe38db165c931e6ac92",
   "validation": {
     "localVerify": "passed",
     "unit": {
-      "passed": 394,
+      "passed": 403,
       "skipped": 1,
       "failed": 0
     },
     "chromium": {
-      "passed": 22,
-      "skipped": 0,
+      "passed": 152,
+      "skipped": 8,
       "failed": 0
     },
     "webkit": {
-      "passed": 22,
-      "skipped": 0,
+      "passed": 152,
+      "skipped": 8,
       "failed": 0
     },
-    "focusedSpecs": [
-      "onboarding.spec.mjs",
-      "recording.spec.mjs",
-      "personal-factor.spec.mjs",
-      "offline-map.spec.mjs",
-      "library.spec.mjs"
-    ],
-    "previousFullSuite": {
-      "sourceSha": "b158038c731cbb718c856e54b6261e964183f3a0",
-      "chromium": {
-        "passed": 149,
-        "skipped": 8
-      },
-      "webkit": {
-        "passed": 149,
-        "skipped": 8
-      }
+    "fullBrowserSuite": true,
+    "mobileMapAndFactorCards": true,
+    "evidenceSha256": {
+      "release-final-verify.log": "190eaae4d8a04ccab2a15357a7a734ff370dc88a7e6b0f5bb62cc0ec794dc22c",
+      "merged-main-verify.log": "7825db03573a9cac30de1765a0f924ce737b8c33005dcb17398e0c0afa4bc7e4",
+      "final-full-chromium.log": "b3728e23bac8dad9a4cd6341969ca91c138e34a51737d7b87f94920126cfb0f4",
+      "final-full-webkit.log": "0fa4e26d60e66f8f3f4a8a35243f4fe27129d7dedf293b45595eda4dd4c50d30"
     },
     "sourceTreeIdenticalToTestedHead": true,
     "mainProductionBuild": "passed",
-    "cloudCI": "not-executed-account-billing-limit-accepted-by-owner",
-    "cloudCIEvidence": {
-      "runId": 39770698486,
-      "automaticJobs": 9,
-      "executedSteps": 0,
-      "reason": "Recent account payments have failed or spending limit needs to be increased; runners did not start."
-    },
+    "cloudCI": "not-used-as-requested-by-owner",
     "iPhoneDeviceVerified": false
   },
   "offlineData": {
@@ -73,27 +61,27 @@
     "serviceWorkerUpdate": "Network-first; new worker activates after existing controlled tabs close; only old shell caches are removed."
   },
   "filesSha256": {
-    "app.bundle.css": "8743709c537fc5be420cd7cb0e73cc8681c7dc4a407d064112e0e641d090c392",
-    "app.bundle.css.map": "7df643215a148fd0b3df9b31e4a768f9f8a9a4ca9ebbf87842acc3a78d29c900",
-    "app.bundle.js": "ba021d73c3e118893e0f6ad209589f46428945916399c07dfbb8d6ce262acd80",
-    "app.bundle.js.map": "360b5021e8a016c37c56a32340341a4a4c1c63fb2bba69ca48b0de097f686d62",
+    "app.bundle.css": "0c2c4d2d8e37890841d953e40012fdcb740f5446a2d102751c76885078d17e74",
+    "app.bundle.css.map": "fc7b3babf4013eed6c5b04a8e2a42709956ccfa04c9f9a51e45cd4a35b957e9e",
+    "app.bundle.js": "a4e33574bc802eace071d68793ee3dd9573ed45207852095ca3df6dfdb8b7f48",
+    "app.bundle.js.map": "a73ee924d19ebec6c5115b71c7a0ba448dee6ed3f299e63ecc10b2277d1d3b72",
     "assets/mountains.png": "b39b4b8da65d92d248da71565406f512af606053e2111180fd892ebb787af28b",
-    "build-meta.json": "97f7e19d1049b548e409842a78e780850bb00dcf4b67232b1e7f5d7a90845d97",
+    "build-meta.json": "a175d7fe2a971fc430e2767562eaf178f785f3091eafcacebb6b114e33ba7950",
     "index.html": "8a7faa58c64ec1c36407c1c9fe0d9c3e385a84cd284e42d75286bb1b1610836d",
-    "sw.js": "81c157dc445450ded281e8baff909a73c52e6cd977a27fc9d4617d3a3a7045de",
-    "vendor/leaflet/LICENSE": "bbc959aaef7488b38942e7f05cfd1244351f8bce54261951ea17dd7cf60f894b",
-    "vendor/leaflet/README.md": "b231d387c63110832ce1a6c9dce36db1cb5bbefda5e848933ee54d2ebf345f0c",
+    "sw.js": "7766d050ac734925d91a8e6956de1257fff0dea73680267a407079052b6e94d2",
     "vendor/leaflet/leaflet.css": "337bfca5cabd03b39815b2700febe2b3b7edf55921c59cd49f88ecb328212303",
     "vendor/leaflet/leaflet.js": "db49d009c841f5ca34a888c96511ae936fd9f5533e90d8b2c4d57596f4e5641a",
+    "vendor/leaflet/LICENSE": "bbc959aaef7488b38942e7f05cfd1244351f8bce54261951ea17dd7cf60f894b",
+    "vendor/leaflet/README.md": "b231d387c63110832ce1a6c9dce36db1cb5bbefda5e848933ee54d2ebf345f0c",
     "vendor/maplibre/LICENSE.txt": "ee5fc05a0677eaf69601d2c7db0d9ecd6cc27c3abc1d0733bc9ed34707cf8ef2",
-    "vendor/maplibre/README.md": "8ae2ea1f712af4c610be1bdc1227d974c142b86f0557b8e99881536442691c9d",
     "vendor/maplibre/maplibre-gl-shared.mjs": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "vendor/maplibre/maplibre-gl-worker.mjs": "5f1e2f0e1624082b7e88a06e4c86085992b0f8c02929801e552f3f7a119856a9",
     "vendor/maplibre/maplibre-gl.css": "bacba6a85a867fcf602f2ff88331b8acf7edf3fbd063a519888cfbff39970193",
     "vendor/maplibre/maplibre-gl.mjs": "244d36122c1398da3a8259817cc6d71e04321afe6404f32606b4b6c6cc4f26fb",
-    "vendor/pmtiles/PMTiles-LICENSE.txt": "0371c38f338835f7fc13ed71176f3d92144e22c8b736a31cced57adbbeb647b3",
-    "vendor/pmtiles/README.md": "e787f1e19a7a9653d495280106268da11d0f6cbacb8e5aac31803b59e9f1249f",
+    "vendor/maplibre/README.md": "8ae2ea1f712af4c610be1bdc1227d974c142b86f0557b8e99881536442691c9d",
     "vendor/pmtiles/fflate-LICENSE.txt": "805f6cb28bb8b6d3a0badd83c93bccd9671fa01a3b4b92b7042b0743325ac243",
-    "vendor/pmtiles/pmtiles.mjs": "b79a61d09fe61038752419ba0764ac9506886ebd2a7fa9cd7edcdef5eb5e1942"
+    "vendor/pmtiles/PMTiles-LICENSE.txt": "0371c38f338835f7fc13ed71176f3d92144e22c8b736a31cced57adbbeb647b3",
+    "vendor/pmtiles/pmtiles.mjs": "b79a61d09fe61038752419ba0764ac9506886ebd2a7fa9cd7edcdef5eb5e1942",
+    "vendor/pmtiles/README.md": "e787f1e19a7a9653d495280106268da11d0f6cbacb8e5aac31803b59e9f1249f"
   }
 }

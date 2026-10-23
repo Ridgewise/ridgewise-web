@@ -21,7 +21,7 @@
       "imports": []
     },
     "src/features/map/map.css": {
-      "bytes": 7171,
+      "bytes": 7777,
       "imports": []
     },
     "src/features/itinerary/itinerary.css": {
@@ -33,7 +33,7 @@
       "imports": []
     },
     "src/features/itinerary/live-factor.css": {
-      "bytes": 2612,
+      "bytes": 2842,
       "imports": []
     },
     "src/features/daylight/daylight.css": {
@@ -1147,7 +1147,7 @@
       "format": "esm"
     },
     "src/features/recording/view.js": {
-      "bytes": 13835,
+      "bytes": 13882,
       "imports": [
         {
           "path": "src/features/map/position.js",
@@ -1197,13 +1197,28 @@
       ],
       "format": "esm"
     },
+    "src/features/map/station-label-layout.js": {
+      "bytes": 4128,
+      "imports": [],
+      "format": "esm"
+    },
     "src/features/map/navigation-overlay.js": {
-      "bytes": 13464,
+      "bytes": 18022,
       "imports": [
         {
           "path": "src/ui/html.js",
           "kind": "import-statement",
           "original": "../../ui/html.js"
+        },
+        {
+          "path": "src/features/map/station-label-layout.js",
+          "kind": "import-statement",
+          "original": "./station-label-layout.js"
+        },
+        {
+          "path": "src/features/map/station-label-layout.js",
+          "kind": "import-statement",
+          "original": "./station-label-layout.js"
         }
       ],
       "format": "esm"
@@ -1214,7 +1229,7 @@
       "format": "esm"
     },
     "src/features/map/terrain-3d.js": {
-      "bytes": 17987,
+      "bytes": 18117,
       "imports": [
         {
           "path": "src/features/map/navigation-overlay.js",
@@ -1246,7 +1261,7 @@
       "format": "esm"
     },
     "src/features/offline-map/map.js": {
-      "bytes": 10410,
+      "bytes": 10493,
       "imports": [
         {
           "path": "src/features/map/navigation-overlay.js",
@@ -1277,7 +1292,7 @@
       "format": "esm"
     },
     "src/features/map/controller.js": {
-      "bytes": 18264,
+      "bytes": 18315,
       "imports": [
         {
           "path": "src/features/offline-map/map.js",
@@ -1330,7 +1345,7 @@
       "format": "esm"
     },
     "src/features/itinerary/live-factor-view.js": {
-      "bytes": 11334,
+      "bytes": 12395,
       "imports": [
         {
           "path": "src/ui/html.js",
@@ -1389,7 +1404,7 @@
       "format": "esm"
     },
     "src/features/itinerary/views.js": {
-      "bytes": 16157,
+      "bytes": 16202,
       "imports": [
         {
           "path": "src/features/gpx-stations/editor.js",
@@ -2534,7 +2549,7 @@
       "imports": [],
       "exports": [],
       "inputs": {},
-      "bytes": 5070958
+      "bytes": 5088852
     },
     "dist/app.bundle.js": {
       "imports": [],
@@ -2651,7 +2666,7 @@
           "bytesInOutput": 1949
         },
         "src/features/elevation/stations.js": {
-          "bytesInOutput": 5774
+          "bytesInOutput": 5777
         },
         "src/features/elevation/station-view.js": {
           "bytesInOutput": 5407
@@ -2765,16 +2780,19 @@
           "bytesInOutput": 1870
         },
         "src/features/recording/view.js": {
-          "bytesInOutput": 15694
+          "bytesInOutput": 15741
+        },
+        "src/features/map/station-label-layout.js": {
+          "bytesInOutput": 3787
         },
         "src/features/map/navigation-overlay.js": {
-          "bytesInOutput": 13005
+          "bytesInOutput": 17591
         },
         "src/features/map/camera.js": {
           "bytesInOutput": 919
         },
         "src/features/map/terrain-3d.js": {
-          "bytesInOutput": 19016
+          "bytesInOutput": 19068
         },
         "src/features/offline-map/style.js": {
           "bytesInOutput": 2776
@@ -2783,10 +2801,10 @@
           "bytesInOutput": 2375
         },
         "src/features/offline-map/map.js": {
-          "bytesInOutput": 10733
+          "bytesInOutput": 10820
         },
         "src/features/map/controller.js": {
-          "bytesInOutput": 18936
+          "bytesInOutput": 18989
         },
         "src/features/map/presenter.js": {
           "bytesInOutput": 712
@@ -2798,7 +2816,7 @@
           "bytesInOutput": 717
         },
         "src/features/itinerary/live-factor-view.js": {
-          "bytesInOutput": 14841
+          "bytesInOutput": 15955
         },
         "src/features/itinerary/route-progress.js": {
           "bytesInOutput": 2407
@@ -2810,7 +2828,7 @@
           "bytesInOutput": 2699
         },
         "src/features/itinerary/views.js": {
-          "bytesInOutput": 19339
+          "bytesInOutput": 19386
         },
         "src/features/itinerary/markers.js": {
           "bytesInOutput": 98
@@ -2960,13 +2978,13 @@
           "bytesInOutput": 100
         }
       },
-      "bytes": 3290901
+      "bytes": 3300724
     },
     "dist/app.bundle.css.map": {
       "imports": [],
       "exports": [],
       "inputs": {},
-      "bytes": 135719
+      "bytes": 137098
     },
     "dist/app.bundle.css": {
       "imports": [],
@@ -2987,7 +3005,7 @@
           "bytesInOutput": 11335
         },
         "src/features/map/map.css": {
-          "bytesInOutput": 7082
+          "bytesInOutput": 7680
         },
         "src/features/itinerary/itinerary.css": {
           "bytesInOutput": 3259
@@ -2996,7 +3014,7 @@
           "bytesInOutput": 20037
         },
         "src/features/itinerary/live-factor.css": {
-          "bytesInOutput": 2519
+          "bytesInOutput": 2749
         },
         "src/features/daylight/daylight.css": {
           "bytesInOutput": 1984
@@ -3020,7 +3038,7 @@
           "bytesInOutput": 0
         }
       },
-      "bytes": 80508
+      "bytes": 81336
     }
   }
 }

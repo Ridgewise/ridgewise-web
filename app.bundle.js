@@ -3144,8 +3144,8 @@
   }
   function stationLabels(visits, distanceX, left, right) {
     const lanes = [[], []];
-    const priority = (v) => v.status === "next" ? 0 : { trailhead: 1, exit: 1, summit: 2, hut: 3, water: 4, camp: 5 }[v.row.station.type] ?? 6;
-    return visits.filter((v) => v.position).slice().sort((a, b) => priority(a) - priority(b) || a.row.index - b.row.index).flatMap((v) => {
+    const priority2 = (v) => v.status === "next" ? 0 : { trailhead: 1, exit: 1, summit: 2, hut: 3, water: 4, camp: 5 }[v.row.station.type] ?? 6;
+    return visits.filter((v) => v.position).slice().sort((a, b) => priority2(a) - priority2(b) || a.row.index - b.row.index).flatMap((v) => {
       const name = v.row.station.name;
       const label = name.length > 10 ? name.slice(0, 9) + "\u2026" : name;
       const width = label.length * 23 + 16;
@@ -6346,7 +6346,7 @@
       }[gps.status];
       const expanded = !stopped && state.recordingMapExpandedId === gps.id;
       const currentAccuracy = gps.status === "tracking" && Number.isFinite(gps.accuracy);
-      return `<section data-status="${esc(gps.status)}" class="recording-scene ${stopped ? "recording-stopped" : ""}"><header class="recording-heading"><div><span class="eyebrow">${stopped ? "YOUR WALK" : currentMapPosition(gps) ? "LIVE GPS" : "GPS STATUS"}${gps.sourceRouteId ? gps.sourceRouteDirection === "reverse" ? " \xB7 \u53CD\u5411\u8D70" : " \xB7 \u539F\u5411\u8D70" : ""}</span><h2>${esc(gps.name || file.name)}</h2></div><div class="recording-status-group"><span class="record-status" data-status="${esc(gps.status)}" role="status" aria-live="polite">${status}</span><span id="gps-clock" class="recording-elapsed" aria-label="\u7D00\u9304\u6642\u9593">${elapsedLabel(gpsElapsed())}</span></div></header><p id="gps-location-status" class="recording-location-status"${stopped || currentMapPosition(gps) ? " hidden" : ""}>${locationStatus}</p><div class="recording-map ${expanded ? "recording-map-expanded" : ""}" aria-describedby="gps-location-status">${mapPanel(file, null, recordingSegments(gps), { compact: true })}</div>${stopped ? completionView(gps, gpsElapsed()) : `<section class="recording-sheet"><div class="sheet-handle"></div>${itineraryViews && gps.sourceRouteId ? itineraryViews.nextCard() : '<div class="direct-next"><span class="eyebrow">\u8A18\u4E0B\u81EA\u5DF1\u7684\u8DEF</span><h2>\u81EA\u7531\u7D00\u9304</h2><p class="small muted">\u85CD\u7DDA\u662F\u5DF2\u8A18\u9304\u8ECC\u8DE1\uFF0C\u76EE\u524D\u672A\u4F7F\u7528\u9810\u5B9A\u8DEF\u7DDA\u3002</p></div>'}<div class="live-stats"><div><small>\u884C\u9032\u91CC\u7A0B</small><strong id="gps-distance">${stats.km.toFixed(2)} <small>km</small></strong></div><div><small>GPS \u7CBE\u5EA6</small><strong>${currentAccuracy ? `${Math.round(gps.accuracy)} <small>m</small>` : "\u2014"}</strong></div></div>${gps.error ? `<p class="error-message" role="status">${esc(gps.error)}</p>` : ""}${reroutePanel(state)}${itineraryViews?.departureNotice?.() ?? ""}<div class="live-controls">${button(["paused", "error"].includes(gps.status) ? "\u7E7C\u7E8C\u7D00\u9304" : "\u66AB\u505C\u7D00\u9304", ["paused", "error"].includes(gps.status) ? "gps-resume" : "gps-pause", "", ["paused", "error"].includes(gps.status) ? "play" : "pause")}${button("\u7D50\u675F\u7D00\u9304", "gps-finish", "end-recording", "stop")}</div><details class="recording-more" id="recording-more"><summary>\u7D00\u9304\u72C0\u614B\u8207\u66F4\u591A\u8CC7\u8A0A</summary><div class="stack">${itineraryViews?.liveFactorsPanel?.() ?? ""}${itineraryViews?.departurePanel?.() ?? ""}<p id="gps-save-status" class="small muted" role="status">${esc(saveStatus())}</p>${button("\u91CD\u8A66\u4FDD\u5B58", "gps-save-retry", "", "refresh", `id="gps-save-retry" ${gps.saveError ? "" : "hidden"}`)}<p class="small muted">\u8ACB\u4FDD\u6301\u5206\u9801\u958B\u555F\uFF1B\u9396\u5C4F\u8207\u80CC\u666F\u5B9A\u4F4D\u53EF\u80FD\u4E2D\u65B7\u3002\u8349\u7A3F\u53EA\u4F9B\u6062\u5FA9\uFF0C\u4E0D\u6703\u81EA\u52D5\u52A0\u5165\u300C\u6B77\u53F2\u7D00\u9304\u300D\u3002\u8DDD\u96E2\u8207\u9AD8\u5EA6\u6703\u96A8\u5F8C\u7E8C\u5B9A\u4F4D\u6821\u6B63\uFF0C\u539F\u59CB GPX \u4FDD\u7559\u3002</p>${button("\u4E0B\u8F09\u5099\u4EFD", "gps-download", "ghost", "download")}${button(stats.points ? "\u653E\u68C4\u9019\u6B21\u7D00\u9304" : "\u53D6\u6D88\u7A7A\u767D\u7D00\u9304", "gps-discard", "ghost", "close")}<p class="small muted">\u5DF2\u4FDD\u7559 ${stats.points} \u500B\u539F\u59CB\u9EDE \xB7 ${gps.segments.filter((segment) => segment.length).length} \u6BB5\u8ECC\u8DE1</p><p class="small muted">\u6821\u6B63\u722C\u5347 <span id="gps-ascent">${meters(stats.up)}</span> m \uFF0F\u4E0B\u964D <span id="gps-descent">${meters(stats.down)}</span> m \xB7 \u5E73\u5747\u901F\u5EA6 <span id="gps-average">\u2014</span></p></div></details></section>`}</section>${heightPanel ? `<details class="recording-height-profile" id="recording-height-profile"><summary>\u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762\u30FB\u65E5\u591C\u8DEF\u6BB5</summary>${heightPanel(file, recordingSegments(gps))}</details>` : ""}${!stopped && file === directMap ? `<details class="manual-reference" id="manual-reference"><summary>\u9032\u968E\uFF1A\u624B\u52D5\u4E0A\u6CB3\u8DEF\u6BB5\u8A08\u6642</summary>${shanghePanel()}</details>` : ""}`;
+      return `<section data-status="${esc(gps.status)}" class="recording-scene ${stopped ? "recording-stopped" : ""}"><header class="recording-heading"><div><span class="eyebrow">${stopped ? "YOUR WALK" : currentMapPosition(gps) ? "LIVE GPS" : "GPS STATUS"}${gps.sourceRouteId ? gps.sourceRouteDirection === "reverse" ? " \xB7 \u53CD\u5411\u8D70" : " \xB7 \u539F\u5411\u8D70" : ""}</span><h2>${esc(gps.name || file.name)}</h2></div><div class="recording-status-group"><span class="record-status" data-status="${esc(gps.status)}" role="status" aria-live="polite">${status}</span><span id="gps-clock" class="recording-elapsed" aria-label="\u7D00\u9304\u6642\u9593">${elapsedLabel(gpsElapsed())}</span></div></header><p id="gps-location-status" class="recording-location-status"${stopped || currentMapPosition(gps) ? " hidden" : ""}>${locationStatus}</p><div class="recording-map ${expanded ? "recording-map-expanded" : ""}" aria-describedby="gps-location-status">${mapPanel(file, null, recordingSegments(gps), { compact: true })}</div>${stopped ? completionView(gps, gpsElapsed()) : `<section class="recording-sheet"><div class="sheet-handle"></div>${itineraryViews && gps.sourceRouteId ? itineraryViews.nextCard() : '<div class="direct-next"><span class="eyebrow">\u8A18\u4E0B\u81EA\u5DF1\u7684\u8DEF</span><h2>\u81EA\u7531\u7D00\u9304</h2><p class="small muted">\u85CD\u7DDA\u662F\u5DF2\u8A18\u9304\u8ECC\u8DE1\uFF0C\u76EE\u524D\u672A\u4F7F\u7528\u9810\u5B9A\u8DEF\u7DDA\u3002</p></div>'}${itineraryViews?.liveFactorsPanel?.() ?? ""}<div class="live-stats"><div><small>\u884C\u9032\u91CC\u7A0B</small><strong id="gps-distance">${stats.km.toFixed(2)} <small>km</small></strong></div><div><small>GPS \u7CBE\u5EA6</small><strong>${currentAccuracy ? `${Math.round(gps.accuracy)} <small>m</small>` : "\u2014"}</strong></div></div>${gps.error ? `<p class="error-message" role="status">${esc(gps.error)}</p>` : ""}${reroutePanel(state)}${itineraryViews?.departureNotice?.() ?? ""}<div class="live-controls">${button(["paused", "error"].includes(gps.status) ? "\u7E7C\u7E8C\u7D00\u9304" : "\u66AB\u505C\u7D00\u9304", ["paused", "error"].includes(gps.status) ? "gps-resume" : "gps-pause", "", ["paused", "error"].includes(gps.status) ? "play" : "pause")}${button("\u7D50\u675F\u7D00\u9304", "gps-finish", "end-recording", "stop")}</div><details class="recording-more" id="recording-more"><summary>\u7D00\u9304\u72C0\u614B\u8207\u66F4\u591A\u8CC7\u8A0A</summary><div class="stack">${itineraryViews?.liveFactorsDetails?.() ?? ""}${itineraryViews?.departurePanel?.() ?? ""}<p id="gps-save-status" class="small muted" role="status">${esc(saveStatus())}</p>${button("\u91CD\u8A66\u4FDD\u5B58", "gps-save-retry", "", "refresh", `id="gps-save-retry" ${gps.saveError ? "" : "hidden"}`)}<p class="small muted">\u8ACB\u4FDD\u6301\u5206\u9801\u958B\u555F\uFF1B\u9396\u5C4F\u8207\u80CC\u666F\u5B9A\u4F4D\u53EF\u80FD\u4E2D\u65B7\u3002\u8349\u7A3F\u53EA\u4F9B\u6062\u5FA9\uFF0C\u4E0D\u6703\u81EA\u52D5\u52A0\u5165\u300C\u6B77\u53F2\u7D00\u9304\u300D\u3002\u8DDD\u96E2\u8207\u9AD8\u5EA6\u6703\u96A8\u5F8C\u7E8C\u5B9A\u4F4D\u6821\u6B63\uFF0C\u539F\u59CB GPX \u4FDD\u7559\u3002</p>${button("\u4E0B\u8F09\u5099\u4EFD", "gps-download", "ghost", "download")}${button(stats.points ? "\u653E\u68C4\u9019\u6B21\u7D00\u9304" : "\u53D6\u6D88\u7A7A\u767D\u7D00\u9304", "gps-discard", "ghost", "close")}<p class="small muted">\u5DF2\u4FDD\u7559 ${stats.points} \u500B\u539F\u59CB\u9EDE \xB7 ${gps.segments.filter((segment) => segment.length).length} \u6BB5\u8ECC\u8DE1</p><p class="small muted">\u6821\u6B63\u722C\u5347 <span id="gps-ascent">${meters(stats.up)}</span> m \uFF0F\u4E0B\u964D <span id="gps-descent">${meters(stats.down)}</span> m \xB7 \u5E73\u5747\u901F\u5EA6 <span id="gps-average">\u2014</span></p></div></details></section>`}</section>${heightPanel ? `<details class="recording-height-profile" id="recording-height-profile"><summary>\u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762\u30FB\u65E5\u591C\u8DEF\u6BB5</summary>${heightPanel(file, recordingSegments(gps))}</details>` : ""}${!stopped && file === directMap ? `<details class="manual-reference" id="manual-reference"><summary>\u9032\u968E\uFF1A\u624B\u52D5\u4E0A\u6CB3\u8DEF\u6BB5\u8A08\u6642</summary>${shanghePanel()}</details>` : ""}`;
     }
     function shanghePanel(readonly = false) {
       const gps = state.gps, calibration = gps.calibration || { completed: [] }, active = calibration.active, factor = shangheFactor(calibration.completed);
@@ -6428,8 +6428,95 @@
     return { recordView, updateNumbers: updateRecordingNumbers, updateSaveStatus };
   }
 
-  // src/features/map/navigation-overlay.js
+  // src/features/map/station-label-layout.js
+  var STATION_LABELS = Object.freeze({
+    nextZoom: 14,
+    importantZoom: 16,
+    allZoom: 17,
+    gap: 5,
+    edge: 6,
+    pinRadius: 22
+  });
   var stationKey = (station) => String(station.stationId ?? `${station.lat}:${station.lon}:${station.name}`);
+  function stationLabelLevel(zoom) {
+    if (!Number.isFinite(zoom) || zoom < STATION_LABELS.nextZoom) return 0;
+    if (zoom < STATION_LABELS.importantZoom) return 1;
+    return zoom < STATION_LABELS.allZoom ? 2 : 3;
+  }
+  var important = /* @__PURE__ */ new Set(["trailhead", "exit", "summit", "hut", "camp", "water"]);
+  var priority = (station, selected) => station.next ? 0 : stationKey(station) === selected ? 1 : important.has(station.type) ? 2 : 3;
+  var compare = (a, b) => a.priority - b.priority || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0);
+  function stationLabelCandidates(groups, zoom, selected) {
+    const level = stationLabelLevel(zoom);
+    if (!level) return [];
+    const candidates = groups.map((group) => {
+      const station = group.stations.map((station2) => ({
+        station: station2,
+        key: stationKey(station2),
+        priority: priority(station2, selected)
+      })).sort(compare)[0];
+      return { ...group, ...station };
+    }).sort(compare);
+    if (level === 1) return candidates.slice(0, 1);
+    if (level === 2) {
+      const preferred = candidates.filter((c) => c.priority <= 2);
+      return preferred.length ? preferred : candidates.slice(0, 1);
+    }
+    return candidates;
+  }
+  var boxesOverlap = (a, b, gap = STATION_LABELS.gap) => a.x < b.x + b.width + gap && a.x + a.width + gap > b.x && a.y < b.y + b.height + gap && a.y + a.height + gap > b.y;
+  function layoutStationLabels(candidates, obstacles, width, height, previous = /* @__PURE__ */ new Map()) {
+    const cells = /* @__PURE__ */ new Map(), cellSize = 64;
+    function keys(box) {
+      const result2 = [];
+      const gap = STATION_LABELS.gap;
+      for (let x = Math.floor((box.x - gap) / cellSize); x <= Math.floor((box.x + box.width + gap) / cellSize); x++)
+        for (let y = Math.floor((box.y - gap) / cellSize); y <= Math.floor((box.y + box.height + gap) / cellSize); y++)
+          result2.push(`${x}:${y}`);
+      return result2;
+    }
+    function add2(box) {
+      for (const key2 of keys(box)) {
+        if (!cells.has(key2)) cells.set(key2, []);
+        cells.get(key2).push(box);
+      }
+    }
+    function clear(box) {
+      return keys(box).every(
+        (key2) => !(cells.get(key2) ?? []).some((other) => boxesOverlap(box, other))
+      );
+    }
+    obstacles.filter(
+      (b) => b.width > 0 && b.height > 0 && b.x < width && b.y < height && b.x + b.width > 0 && b.y + b.height > 0
+    ).forEach(add2);
+    const result = [];
+    for (const candidate of candidates) {
+      const { x, y, size, key: key2 } = candidate;
+      if (![x, y, size.width, size.height].every(Number.isFinite)) continue;
+      const offset = STATION_LABELS.pinRadius + STATION_LABELS.gap;
+      const positions = {
+        right: { x: x + offset, y: y - size.height / 2 },
+        top: { x: x - size.width / 2, y: y - offset - size.height },
+        left: { x: x - offset - size.width, y: y - size.height / 2 },
+        bottom: { x: x - size.width / 2, y: y + offset }
+      };
+      const sides = [.../* @__PURE__ */ new Set([previous.get(key2), "right", "top", "left", "bottom"])].filter(
+        Boolean
+      );
+      for (const side of sides) {
+        const box = { ...positions[side], ...size };
+        const edge = STATION_LABELS.edge;
+        if (box.x < edge || box.y < edge || box.x + box.width > width - edge || box.y + box.height > height - edge || !clear(box))
+          continue;
+        result.push({ key: key2, side, ...box });
+        add2(box);
+        break;
+      }
+    }
+    return result;
+  }
+
+  // src/features/map/navigation-overlay.js
   function navigationPinLayout(entries, project2, width, height) {
     const pins = entries.map((entry) => {
       const anchor = project2(entry.point);
@@ -6509,20 +6596,41 @@
     }
     return groups;
   }
-  function createNavigationOverlay({ container, project: project2 }) {
+  function createNavigationOverlay({ container, project: project2, getZoom = () => null }) {
     const document2 = container.ownerDocument;
+    const window2 = document2.defaultView;
     const root = document2.createElement("div");
     root.className = "navigation-overlay";
     const tethers = document2.createElementNS("http://www.w3.org/2000/svg", "svg");
     tethers.classList.add("station-tethers");
     tethers.setAttribute("aria-hidden", "true");
     const pins = document2.createElement("div");
+    const labels = document2.createElement("div");
+    labels.className = "station-labels";
+    labels.setAttribute("aria-hidden", "true");
     const card = document2.createElement("section");
     card.className = "station-card";
     card.setAttribute("aria-label", "\u7AD9\u9EDE\u8CC7\u8A0A");
     card.hidden = true;
-    root.append(tethers, pins, card);
+    root.append(tethers, labels, pins, card);
     container.append(root);
+    const labelNodes = /* @__PURE__ */ new Map();
+    let previousPlacements = /* @__PURE__ */ new Map(), frame = null, destroyed = false;
+    function schedule() {
+      if (destroyed || frame !== null) return;
+      frame = window2.requestAnimationFrame(() => {
+        frame = null;
+        draw();
+      });
+    }
+    function invalidateLabels() {
+      for (const node of labelNodes.values()) node.measureKey = "";
+      drawingSignature = "";
+      schedule();
+    }
+    const sizeObserver = window2.ResizeObserver ? new window2.ResizeObserver(invalidateLabels) : null;
+    sizeObserver?.observe(container);
+    document2.fonts?.addEventListener("loadingdone", invalidateLabels);
     let data = {}, selected = null, selectedGroup = [], signature = "", drawingSignature = "", selectedButton, cardSignature = "", projectedGroups = [];
     const close = (restore = false) => {
       selected = null;
@@ -6530,6 +6638,8 @@
       cardSignature = "";
       pins.querySelectorAll("[aria-expanded]").forEach((el) => el.setAttribute("aria-expanded", "false"));
       if (restore) selectedButton?.focus({ preventScroll: true });
+      drawingSignature = "";
+      schedule();
     };
     function showCard() {
       const station = (data.stations ?? []).find((s) => stationKey(s) === selected);
@@ -6568,6 +6678,8 @@
       card.querySelectorAll("[data-station-key]").forEach((button2) => {
         button2.onclick = () => {
           selected = button2.dataset.stationKey;
+          drawingSignature = "";
+          schedule();
           showCard();
           card.querySelector(`[aria-pressed="true"]`)?.focus({ preventScroll: true });
         };
@@ -6582,7 +6694,84 @@
         close(true);
       }
     });
+    function drawLabels(groups, entries, width, height) {
+      const candidates = stationLabelCandidates(groups, getZoom(), selected);
+      const keys = new Set((data.stations ?? []).map(stationKey));
+      for (const [key2, node] of labelNodes) {
+        if (!keys.has(key2)) {
+          node.el.remove();
+          labelNodes.delete(key2);
+        }
+      }
+      const pending = [];
+      for (const candidate of candidates) {
+        const { key: key2, station } = candidate;
+        let node = labelNodes.get(key2);
+        if (!node) {
+          const el = document2.createElement("span");
+          el.className = "station-label";
+          el.dataset.stationKey = key2;
+          labels.append(el);
+          node = { el };
+          labelNodes.set(key2, node);
+        }
+        const measureKey = JSON.stringify([station.name, Boolean(station.next), width]);
+        if (node.measureKey !== measureKey) {
+          node.el.textContent = station.name;
+          node.el.classList.toggle("station-label-next", Boolean(station.next));
+          node.el.style.maxWidth = `${Math.max(0, Math.min(width <= 600 ? 156 : 192, width - 12))}px`;
+          node.el.hidden = false;
+          node.el.style.visibility = "hidden";
+          node.measureKey = measureKey;
+          pending.push(node);
+        }
+      }
+      for (const node of pending)
+        node.size = { width: node.el.offsetWidth, height: node.el.offsetHeight };
+      const box = (p, radius2) => ({
+        x: p.x - radius2,
+        y: p.y - radius2,
+        width: radius2 * 2,
+        height: radius2 * 2
+      });
+      const obstacles = [
+        ...groups.flatMap((g) => [box(g, 22), box(g.anchor, 10)]),
+        ...entries.flatMap((p) => [box(p, p.radius + 2), box(p.anchor, p.radius + 2)])
+      ];
+      const origin = root.getBoundingClientRect();
+      const controls = container.querySelectorAll(
+        ".leaflet-control, .maplibregl-ctrl, .offline-map-label"
+      );
+      for (const el of [...controls, ...!card.hidden ? [card] : []]) {
+        const rect = el.getBoundingClientRect();
+        obstacles.push({
+          x: rect.left - origin.left,
+          y: rect.top - origin.top,
+          width: rect.width,
+          height: rect.height
+        });
+      }
+      const placements = layoutStationLabels(
+        candidates.map((c) => ({ ...c, size: labelNodes.get(c.key).size })),
+        obstacles,
+        width,
+        height,
+        previousPlacements
+      );
+      previousPlacements = new Map(placements.map((p) => [p.key, p.side]));
+      const visible = new Map(placements.map((p) => [p.key, p]));
+      for (const [key2, node] of labelNodes) {
+        const placement = visible.get(key2);
+        if (node.el.hidden !== !placement) node.el.hidden = !placement;
+        if (!placement) continue;
+        if (node.el.style.visibility) node.el.style.visibility = "";
+        const left = `${placement.x}px`, top = `${placement.y}px`;
+        if (node.el.style.left !== left) node.el.style.left = left;
+        if (node.el.style.top !== top) node.el.style.top = top;
+      }
+    }
     function draw(next = data) {
+      if (destroyed) return;
       data = next;
       const width = container.clientWidth, height = container.clientHeight;
       const start = data.file?.points[0], end = data.file?.points.at(-1);
@@ -6600,9 +6789,15 @@
         height,
         entries.map((p) => [p.kind, p.x, p.y, p.anchor.x, p.anchor.y]),
         groups,
-        data.stations
+        data.stations,
+        stationLabelLevel(getZoom()),
+        selected,
+        cardSignature
       ]);
-      if (drawing === drawingSignature) return;
+      if (drawing === drawingSignature) {
+        drawLabels(groups, entries, width, height);
+        return;
+      }
       drawingSignature = drawing;
       tethers.setAttribute("viewBox", `0 0 ${width} ${height}`);
       tethers.innerHTML = groups.filter((g) => Math.abs(g.x - g.anchor.x) + Math.abs(g.y - g.anchor.y) > 2).map((g) => `<line x1="${g.anchor.x}" y1="${g.anchor.y}" x2="${g.x}" y2="${g.y}"/>`).join("") + entries.filter((p) => p.x !== p.anchor.x || p.y !== p.anchor.y).map(
@@ -6655,6 +6850,8 @@
             selectedGroup = group.stations.map(stationKey);
             el.setAttribute("aria-expanded", "true");
             showCard();
+            drawingSignature = "";
+            schedule();
           };
           pins.append(el);
           if (focusKey && group.stations.some((s) => stationKey(s) === focusKey))
@@ -6677,8 +6874,22 @@
         el.style.top = `${group.y}px`;
       });
       if (selected) showCard();
+      drawLabels(groups, entries, width, height);
     }
-    return { draw, close, destroy: () => root.remove() };
+    return {
+      draw,
+      schedule,
+      close,
+      destroy: () => {
+        destroyed = true;
+        if (frame !== null) window2.cancelAnimationFrame(frame);
+        sizeObserver?.disconnect();
+        document2.fonts?.removeEventListener("loadingdone", invalidateLabels);
+        labelNodes.clear();
+        previousPlacements.clear();
+        root.remove();
+      }
+    };
   }
 
   // src/features/map/camera.js
@@ -7021,9 +7232,10 @@
         if (map.project) {
           navigationOverlay = createNavigationOverlay({
             container: canvas,
-            project: (p) => map.project([p.lon, p.lat])
+            project: (p) => map.project([p.lon, p.lat]),
+            getZoom: () => map.getZoom() + 1
           });
-          map.on("move", () => navigationOverlay?.draw());
+          map.on("render", () => navigationOverlay?.schedule());
         }
         map.on("dragstart", onManualMove);
         map.on("zoomstart", (event) => {
@@ -7515,9 +7727,10 @@
         if (map.project) {
           navigationOverlay = createNavigationOverlay({
             container: canvas,
-            project: (p) => map.project([p.lon, p.lat])
+            project: (p) => map.project([p.lon, p.lat]),
+            getZoom: () => map.getZoom() + 1
           });
-          map.on("move", () => navigationOverlay?.draw());
+          map.on("move", () => navigationOverlay?.schedule());
         }
         map.on("dragstart", onManualMove);
         map.on("zoomstart", (event) => {
@@ -7546,6 +7759,7 @@
         map.on("idle", () => {
           if (generation !== version || !hasLoaded) return;
           labels.draw(stations, navigation.position);
+          navigationOverlay?.draw();
           if (!failed) {
             const bounds = map.getBounds(), b = pack.bounds;
             const outside = bounds.getWest() < b[0] || bounds.getSouth() < b[1] || bounds.getEast() > b[2] || bounds.getNorth() > b[3];
@@ -8025,9 +8239,10 @@
         if (terrainMap.latLngToContainerPoint) {
           navigationOverlay = createNavigationOverlay({
             container: canvas,
-            project: (p) => terrainMap.latLngToContainerPoint([p.lat, p.lon])
+            project: (p) => terrainMap.latLngToContainerPoint([p.lat, p.lon]),
+            getZoom: () => terrainMap.getZoom()
           });
-          terrainMap.on("move zoom resize", () => navigationOverlay?.draw());
+          terrainMap.on("move zoom resize", () => navigationOverlay?.schedule());
         }
         leaflet.control.zoom({
           position: "topright",
@@ -8212,6 +8427,7 @@
   };
   var unavailable = "\u4E0A\u6CB3\u57FA\u6E96\u6216\u8DEF\u7DDA\u9023\u7E8C\u6027\u8CC7\u6599\u4E0D\u8DB3\uFF0C\u66AB\u6642\u7121\u6CD5\u8A08\u7B97\u3002";
   var valid = (metric3) => Number.isFinite(metric3?.factor) && metric3.factor > 0;
+  var freshnessState = (text) => text.startsWith("\u4E0A\u6B21") ? "stale" : text === "\u66AB\u6642\u7121\u6CD5\u8A08\u7B97" ? "unavailable" : text.includes("\u63A8\u5B9A") ? "estimated" : "live";
   var span = (seconds) => {
     if (!Number.isFinite(seconds)) return "\u2014";
     const rounded = Math.round(seconds);
@@ -8250,12 +8466,18 @@
         const held = !valid(live) && live?.lastValid?.state === "stale" && valid(live.lastValid);
         const metric3 = held ? live.lastValid : live;
         const usable = valid(metric3);
-        values[`live-factor-${key2}-freshness`] = held ? "\u4E0A\u6B21\u6709\u6548\u503C\u30FB\u8CC7\u6599\u5DF2\u904E\u671F" : usable ? metric3.estimated ? "\u4F9D GPX \u9032\u5EA6\u4F30\u7B97\uFF08\u542B\u63A8\u5B9A\uFF09" : metric3.quality === "limited" ? "\u5373\u6642\u503C\u30FBGPS \u7CBE\u5EA6\u53D7\u9650" : "\u5373\u6642\u503C" : "";
+        values[`live-factor-${key2}-freshness`] = held ? "\u4E0A\u6B21\u6709\u6548\u503C\u30FB\u8CC7\u6599\u5DF2\u904E\u671F" : usable ? metric3.estimated ? "\u63A8\u4F30\u503C\uFF08\u542B\u63A8\u5B9A\uFF09" : metric3.quality === "limited" ? "\u5373\u6642\u503C\u30FBGPS \u7CBE\u5EA6\u53D7\u9650" : "\u5373\u6642\u503C" : "\u66AB\u6642\u7121\u6CD5\u8A08\u7B97";
         const delta = usable ? (metric3.factor - 1) * 100 : null;
         values[`live-factor-${key2}-value`] = usable ? metric3.factor.toFixed(2) + " \u500D" : "\u2014";
         values[`live-factor-${key2}-comparison`] = !usable ? "" : Math.abs(delta) < 0.05 ? `\u8207${basis()}\u57FA\u6E96\u8017\u6642\u76F8\u540C\uFF080.0%\uFF09` : `${held ? "\u4E0A\u6B21\uFF1A" : ""}\u8017\u6642\u8F03${basis()}${delta > 0 ? "\u591A" : "\u5C11"} ${Math.abs(delta).toFixed(1)}%\uFF08${delta > 0 ? "\u8F03\u6162" : "\u8F03\u5FEB"}\uFF09`;
         values[`live-factor-${key2}-reason`] = held ? `\u4E0A\u6B21\u6709\u6548\u5B9A\u4F4D\uFF1A${fixTime(metric3.asOf)}\uFF08\u53F0\u5317\u6642\u9593\uFF09\u3002\u8CC7\u6599\u5DF2\u904E\u671F\uFF0C\u975E\u5373\u6642\u503C\uFF1B${reasons[live.reason] ?? "\u7B49\u5F85\u65B0\u6709\u6548\u5B9A\u4F4D\u3002"}` : usable ? "" : !state.gps.sourceRouteId ? reasons["missing-reference"] : metric3?.reason === "gps-not-tracking" ? state.gps.status === "error" ? "\u5B9A\u4F4D\u5DF2\u4E2D\u65B7\uFF1B\u8ACB\u7E7C\u7E8C\u7D00\u9304\u4E26\u53D6\u5F97\u65B0\u6709\u6548\u5B9A\u4F4D\u3002" : state.gps.accuracy > 50 || state.gps.error ? reasons["gps-quality"] : "\u7B49\u5F85\u65B0\u6709\u6548\u5B9A\u4F4D\uFF1B\u6062\u5FA9\u7D00\u9304\u5F8C\u9808\u5148\u78BA\u8A8D\u4F4D\u7F6E\u3002" : reasonText(metric3?.reason);
         values[`live-factor-${key2}-duration`] = usable ? `${held ? "\u4E0A\u6B21\u6709\u6548\u503C\uFF1A" : ""}\u5BE6\u969B ${span(metric3.actualSeconds)} \uFF0F${basis()}\u57FA\u6E96 ${span(metric3.baselineSeconds)}` : "\u76EE\u524D\u7121\u6709\u6548\u500D\u7387";
+        if (key2 === "recent") {
+          const from = metric3?.source?.from?.time, to = metric3?.source?.to?.time;
+          const observed = Number.isFinite(from) && Number.isFinite(to) && to >= from ? (to - from) / 1e3 : metric3?.actualSeconds;
+          const observedLabel = Number.isFinite(observed) ? span(Math.floor(observed)) : "\u2014";
+          values["live-factor-recent-window"] = usable ? `${held ? "\u4E0A\u6B21" : ""}\u89C0\u6E2C ${observedLabel}${Number.isFinite(observed) && observed < 1800 ? "\u30FB\u672A\u6EFF 30 \u5206\u9418" : ""}` : "";
+        }
       }
       const sources = [
         data.total?.source ?? data.total?.lastValid?.source,
@@ -8277,13 +8499,16 @@
       const values = fields();
       const text = (id2) => esc(values[id2]);
       return `<section class="live-factors" aria-label="\u5373\u6642${basis()}\u8017\u6642\u500D\u7387"><div class="live-factor-grid">${[
-        ["total", "\u672C\u6B21\u5168\u7A0B\u5373\u6642\u500D\u7387"],
-        ["recent", "\u6700\u8FD1 30 \u5206\u9418\u500D\u7387"]
+        ["total", `\u8D77\u767B\u81F3\u4ECA${basis()}\u8017\u6642\u500D\u7387`],
+        ["recent", `\u6700\u8FD1 30 \u5206\u9418${basis()}\u8017\u6642\u500D\u7387`]
       ].map(
-        ([key2, title]) => `<section class="live-factor-card" aria-labelledby="live-factor-${key2}-title"><h3 id="live-factor-${key2}-title">${title}</h3><p class="live-factor-freshness" id="live-factor-${key2}-freshness" data-state="${values[`live-factor-${key2}-freshness`].startsWith("\u4E0A\u6B21") ? "stale" : "live"}">${text(`live-factor-${key2}-freshness`)}</p><p class="live-factor-value" id="live-factor-${key2}-value">${text(`live-factor-${key2}-value`)}</p><p class="live-factor-comparison" id="live-factor-${key2}-comparison">${text(`live-factor-${key2}-comparison`)}</p><p class="live-factor-reason" id="live-factor-${key2}-reason" role="status" aria-atomic="true">${text(`live-factor-${key2}-reason`)}</p></section>`
-      ).join(
-        ""
-      )}</div><p class="small">\u5169\u500B\u500D\u7387\u90FD\u7528\u76EE\u524D\u5DF2\u78BA\u8A8D\u7684\u8DEF\u7DDA\u9032\u5EA6\u4F30\u8A08\uFF1B\u4E0B\u4E00\u7AD9\u50C5\u986F\u793A\u4E00\u500B ETA\u3002</p><details id="live-factor-details" class="live-factor-details"><summary id="live-factor-summary">\u500D\u7387\u8A08\u7B97\u8207\u5B9A\u4F4D\u4F86\u6E90</summary><p>\u6700\u5F8C\u6709\u6548\u5B9A\u4F4D\uFF08\u53F0\u5317\u6642\u9593\uFF09\uFF1A<span id="live-factor-last-fix">${text("live-factor-last-fix")}</span></p><p>\u5168\u7A0B\uFF1A<span id="live-factor-total-duration">${text("live-factor-total-duration")}</span><br>\u6700\u8FD1\uFF1A<span id="live-factor-recent-duration">${text("live-factor-recent-duration")}</span></p><p>\u500D\u7387\uFF1D\u5BE6\u969B\u7D93\u904E\u6642\u9593 \xF7 \u5DF2\u8D70\u8DEF\u6BB5\u7684${basis()}\u57FA\u6E96\u3002\u5FEB\u6162\u767E\u5206\u6BD4\u6BD4\u8F03\u8017\u6642\uFF0C1.20 \u500D\u4EE3\u8868\u591A\u7528\u6642 20%\u3002\u5BE6\u6E2C\u500D\u7387\u5305\u542B\u4F11\u606F\u8207\u66AB\u505C\uFF1B\u63A8\u4F30\u500D\u7387\u6263\u9664\u660E\u78BA\u624B\u52D5\u66AB\u505C\uFF0C\u4FDD\u7559\u80CC\u666F\u7D93\u904E\u6642\u9593\u3002\u53EA\u5728\u6709\u6548\u5B9A\u4F4D\u6642\u66F4\u65B0\u3002</p><p>\u6700\u8FD1\u7A97\u4EE5\u6700\u8FD130\u5206\u9418\u5167\u7684 GPX \u9032\u5EA6\u4F30\u7B97\uFF1B\u8DE8 GPS \u4E2D\u65B7\u6642\u6CBF\u5DF2\u78BA\u8A8D\u8DEF\u6BB5\u5167\u63D2\uFF0C\u4E26\u6A19\u8A3B\u63A8\u5B9A\u3002\u539F\u59CB GPS \u4E0D\u88DC\u9020\u3002</p><p>${basis()}\u5206\u914D\uFF1A<span id="live-factor-distribution">${text("live-factor-distribution")}</span></p><p id="live-factor-provenance">${text("live-factor-provenance")}</p><p>\u5373\u6642\u500D\u7387\u4E0D\u6703\u81EA\u52D5\u8986\u5BEB\u8A2D\u5B9A\uFF1B\u4E0B\u4E00\u7AD9\u512A\u5148\u63A1\u6700\u8FD1\u6709\u6548\u6B65\u8ABF\uFF0C\u5176\u6B21\u5168\u7A0B\u8207\u8A2D\u5B9A\u500D\u7387\u3002</p></details></section>`;
+        ([key2, title]) => `<section class="live-factor-card" aria-labelledby="live-factor-${key2}-title"><h3 id="live-factor-${key2}-title">${title}</h3><p class="live-factor-freshness" id="live-factor-${key2}-freshness" data-state="${freshnessState(values[`live-factor-${key2}-freshness`])}">${text(`live-factor-${key2}-freshness`)}</p><p class="live-factor-value" id="live-factor-${key2}-value">${text(`live-factor-${key2}-value`)}</p><p class="live-factor-comparison" id="live-factor-${key2}-comparison">${text(`live-factor-${key2}-comparison`)}</p>${key2 === "recent" ? `<p class="live-factor-window" id="live-factor-recent-window">${text("live-factor-recent-window")}</p>` : ""}<p class="live-factor-reason" id="live-factor-${key2}-reason" role="status" aria-atomic="true">${text(`live-factor-${key2}-reason`)}</p></section>`
+      ).join("")}</div></section>`;
+    }
+    function details() {
+      const values = fields();
+      const text = (id2) => esc(values[id2]);
+      return `<details id="live-factor-details" class="live-factor-details"><summary id="live-factor-summary">\u500D\u7387\u8A08\u7B97\u8207\u5B9A\u4F4D\u4F86\u6E90</summary><p class="small">\u5169\u500B\u500D\u7387\u90FD\u7528\u76EE\u524D\u5DF2\u78BA\u8A8D\u7684\u8DEF\u7DDA\u9032\u5EA6\u4F30\u8A08\uFF1B\u4E0B\u4E00\u7AD9\u50C5\u986F\u793A\u4E00\u500B ETA\u3002</p><p>\u6700\u5F8C\u6709\u6548\u5B9A\u4F4D\uFF08\u53F0\u5317\u6642\u9593\uFF09\uFF1A<span id="live-factor-last-fix">${text("live-factor-last-fix")}</span></p><p>\u5168\u7A0B\uFF1A<span id="live-factor-total-duration">${text("live-factor-total-duration")}</span><br>\u6700\u8FD1\uFF1A<span id="live-factor-recent-duration">${text("live-factor-recent-duration")}</span></p><p>\u500D\u7387\uFF1D\u5BE6\u969B\u7D93\u904E\u6642\u9593 \xF7 \u5DF2\u8D70\u8DEF\u6BB5\u7684${basis()}\u57FA\u6E96\u3002\u5FEB\u6162\u767E\u5206\u6BD4\u6BD4\u8F03\u8017\u6642\uFF0C1.20 \u500D\u4EE3\u8868\u591A\u7528\u6642 20%\u3002\u5BE6\u6E2C\u500D\u7387\u5305\u542B\u4F11\u606F\u8207\u66AB\u505C\uFF1B\u63A8\u4F30\u500D\u7387\u6263\u9664\u660E\u78BA\u624B\u52D5\u66AB\u505C\uFF0C\u4FDD\u7559\u80CC\u666F\u7D93\u904E\u6642\u9593\u3002\u53EA\u5728\u6709\u6548\u5B9A\u4F4D\u6642\u66F4\u65B0\u3002</p><p>\u6700\u8FD1\u7A97\u4EE5\u6700\u8FD130\u5206\u9418\u5167\u7684 GPX \u9032\u5EA6\u4F30\u7B97\uFF1B\u672A\u6EFF 30 \u5206\u9418\u6642\uFF0C\u5361\u7247\u986F\u793A\u5BE6\u969B\u89C0\u6E2C\u671F\u9593\u53CA\u63A8\u4F30\u72C0\u614B\u3002\u8DE8 GPS \u4E2D\u65B7\u6642\u6CBF\u5DF2\u78BA\u8A8D\u8DEF\u6BB5\u5167\u63D2\uFF0C\u4E26\u6A19\u8A3B\u63A8\u5B9A\u3002\u539F\u59CB GPS \u4E0D\u88DC\u9020\u3002</p><p>${basis()}\u5206\u914D\uFF1A<span id="live-factor-distribution">${text("live-factor-distribution")}</span></p><p id="live-factor-provenance">${text("live-factor-provenance")}</p><p>\u5373\u6642\u500D\u7387\u4E0D\u6703\u81EA\u52D5\u8986\u5BEB\u8A2D\u5B9A\uFF1B\u4E0B\u4E00\u7AD9\u512A\u5148\u63A1\u6700\u8FD1\u6709\u6548\u6B65\u8ABF\uFF0C\u5176\u6B21\u5168\u7A0B\u8207\u8A2D\u5B9A\u500D\u7387\u3002</p></details>`;
     }
     function updateNumbers() {
       if (!document2.getElementById("live-factor-total-value")) return;
@@ -8291,12 +8516,12 @@
         const element = document2.getElementById(id2);
         if (element && element.textContent !== value2) element.textContent = value2;
         if (element && id2.endsWith("-freshness")) {
-          if (element.getAttribute("data-state") !== (value2.startsWith("\u4E0A\u6B21") ? "stale" : "live"))
-            element.setAttribute("data-state", value2.startsWith("\u4E0A\u6B21") ? "stale" : "live");
+          if (element.getAttribute("data-state") !== freshnessState(value2))
+            element.setAttribute("data-state", freshnessState(value2));
         }
       }
     }
-    return { panel, updateNumbers };
+    return { panel, details, updateNumbers };
   }
 
   // src/features/itinerary/route-progress.js
@@ -8568,6 +8793,7 @@
     }
     return {
       liveFactorsPanel: liveFactors.panel,
+      liveFactorsDetails: liveFactors.details,
       departureNotice,
       departurePanel,
       resourcesPanel,
