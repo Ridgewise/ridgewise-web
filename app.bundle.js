@@ -395,6 +395,8 @@
         reset();
         fileKey = key2;
       }
+      if (!picking && !editing && !candidates.length)
+        return `<section class="gpx-station-editor" id="gpx-station-editor" aria-label="GPX \u6CBF\u9014\u7AD9\u9EDE\u7DE8\u8F2F">${button("\u65B0\u589E\u6CBF\u9014\u7AD9\u9EDE", "gpx-stop-pick", "ghost", "", busy ? "disabled" : "")}</section>`;
       return `<section class="stack gpx-station-editor" id="gpx-station-editor" aria-label="GPX \u6CBF\u9014\u7AD9\u9EDE\u7DE8\u8F2F"><p class="small muted">GPX \u7AD9\u9EDE\uFF1A\u822A\u9EDE\u512A\u5148\uFF1B\u96E2\u7DDA\u5730\u6A19\u65BC 50m \u5167\u4E14\u4F4D\u7F6E\u7121\u6B67\u7FA9\u6642\u52A0\u5165\u3002\u5F80\u8FD4\u8A2A\u6B21\u5206\u958B\u4FDD\u5B58\u3002</p>${button("\u65B0\u589E\u6CBF\u9014\u7AD9\u9EDE", "gpx-stop-pick", "ghost", "", busy ? "disabled" : "")}${picking ? `<p role="status">\u9EDE\u9078\u5730\u5716\u6216\u9AD8\u5EA6\u5256\u9762\u4E0A\u7684\u4F4D\u7F6E\uFF1B\u5F80\u8FD4\u91CD\u758A\u6642\u8ACB\u9078\u64C7\u8A2A\u6B21\u3002</p>${button("\u53D6\u6D88\u9078\u9EDE", "gpx-stop-cancel", "ghost")}` : ""}${candidates.length || editing ? `<label for="gpx-stop-name">\u7AD9\u9EDE\u540D\u7A31</label><input id="gpx-stop-name" maxlength="300" type="text" value="${esc(editing?.station.name ?? "")}">${candidates.length ? `<label for="gpx-stop-position">\u884C\u9032\u4F4D\u7F6E</label><select id="gpx-stop-position">${candidates.map((p, i) => `<option value="${i}">\u7B2C ${p.segmentIndex + 1} \u6BB5 \xB7 GPX ${(p.routeProgressM / 1e3).toFixed(3)} km</option>`).join("")}</select>` : `<p class="small">\u6B64\u8A2A\u6B21\u4F4D\u65BC GPX ${(editing.routeProgressM / 1e3).toFixed(3)} km\uFF1B\u7DE8\u8F2F\u53EA\u5F71\u97FF\u9019\u4E00\u6B21\u3002</p>`}${button("\u4FDD\u5B58\u7AD9\u9EDE", "gpx-stop-save", "", "", busy ? "disabled" : "")}${editing ? button("\u522A\u9664\u6B64\u8A2A\u6B21", "gpx-stop-delete", "ghost", "", busy ? "disabled" : "") : ""}${button("\u53D6\u6D88\u7DE8\u8F2F", "gpx-stop-cancel", "ghost")}` : ""}<p class="small muted">\u50C5\u53E6\u5B58\u672C\u7AD9\u9EDE\u8A2D\u5B9A\uFF0C\u4E0D\u6539\u539F\u59CB GPX\u3002\u7D00\u9304\u958B\u59CB\u5F8C\u7AD9\u5E8F\u56FA\u5B9A\uFF1B\u6642\u9593\u4E0D\u8DB3\u4ECD\u986F\u793A\u7F3A\u5931\u3002</p></section>`;
     }
     async function persist() {
@@ -450,8 +452,10 @@
       point.x = event.clientX;
       point.y = event.clientY;
       const x = point.matrixTransform(matrix.inverse()).x;
-      if (x < 56 || x > 620) return true;
-      const distance2 = (x - 56) / (620 - 56) * current().stats.km * 1e3;
+      const left = Number(chart.dataset?.distanceStart ?? 56);
+      const right = Number(chart.dataset?.distanceEnd ?? 620);
+      if (x < left || x > right) return true;
+      const distance2 = (x - left) / (right - left) * current().stats.km * 1e3;
       candidates = positionsAtDistance(current(), distance2);
       if (!candidates.length) {
         feedback.toast("\u6B64\u4F4D\u7F6E\u4F4D\u65BC GPX \u4E2D\u65B7\uFF0C\u8ACB\u9078\u64C7\u6709\u8ECC\u8DE1\u7684\u5340\u6BB5\u3002");
@@ -1464,6 +1468,78 @@
     return {
       restore,
       set,
+      dispose: async () => {
+        disposed = true;
+        await saving;
+      }
+    };
+  }
+
+  // src/features/routes/selection-controller.js
+  function createRouteSelection({ state, repository, gpsPending: gpsPending2, render, temporaryStorage }) {
+    const pendingKey = "ridgewise-route-selection-pending";
+    function pendingPreference(value2) {
+      try {
+        const store = temporaryStorage?.();
+        if (value2 === void 0) return store?.getItem(pendingKey) != null;
+        if (value2) store?.setItem(pendingKey, "1");
+        else store?.removeItem(pendingKey);
+      } catch {
+      }
+      return false;
+    }
+    let revision = 0, disposed = false, saving = Promise.resolve();
+    async function restore() {
+      const ticket = revision;
+      if (!repository.getRouteSelection || gpsPending2()) return;
+      if (pendingPreference()) {
+        state.selected = null;
+        state.selectionNotice = "\u4E0A\u6B21\u8DEF\u7DDA\u9078\u64C7\u5C1A\u672A\u78BA\u8A8D\u4FDD\u5B58\uFF0C\u8ACB\u91CD\u65B0\u9078\u64C7\u8DEF\u7DDA\uFF1B\u4E5F\u53EF\u4EE5\u81EA\u7531\u7D00\u9304\u3002";
+        return;
+      }
+      try {
+        const saved = await repository.getRouteSelection();
+        if (disposed || ticket !== revision || gpsPending2()) return;
+        const id2 = saved?.selectedId;
+        if (id2 == null) return;
+        if (typeof id2 === "string" && state.library.some((file) => file.id === id2)) {
+          state.selected = id2;
+        } else {
+          state.selected = null;
+          state.selectionNotice = "\u5148\u524D\u9078\u7528\u7684\u8DEF\u7DDA\u5DF2\u4E0D\u5B58\u5728\u6216\u7121\u6CD5\u8B80\u53D6\uFF0C\u8ACB\u91CD\u65B0\u9078\u64C7\u8DEF\u7DDA\uFF1B\u4E5F\u53EF\u4EE5\u81EA\u7531\u7D00\u9304\u3002";
+        }
+      } catch {
+        if (!disposed && ticket === revision && !gpsPending2()) {
+          state.selected = null;
+          state.selectionNotice = "\u7121\u6CD5\u8B80\u53D6\u5148\u524D\u9078\u7528\u7684\u8DEF\u7DDA\uFF0C\u8ACB\u91CD\u65B0\u9078\u64C7\uFF1B\u4E5F\u53EF\u4EE5\u81EA\u7531\u7D00\u9304\u3002";
+        }
+      }
+    }
+    function choose(id2, notice = "") {
+      if (disposed || gpsPending2()) return Promise.resolve();
+      const ticket = ++revision;
+      state.selected = id2;
+      state.selectionNotice = notice;
+      state.selectionError = "";
+      if (!repository.saveRouteSelection) return Promise.resolve();
+      pendingPreference(true);
+      const value2 = { version: 1, selectedId: id2 };
+      const write = saving.then(async () => {
+        try {
+          await repository.saveRouteSelection(value2);
+          if (ticket === revision) pendingPreference(false);
+        } catch {
+          if (!disposed && ticket === revision)
+            state.selectionError = "\u9019\u6B21\u8DEF\u7DDA\u9078\u64C7\u672A\u80FD\u4FDD\u5B58\uFF1B\u91CD\u65B0\u958B\u555F\u6642\u8ACB\u518D\u6B21\u6838\u5C0D\u8DEF\u7DDA\u3002";
+        }
+        if (!disposed && ticket === revision) render();
+      });
+      saving = write;
+      return write;
+    }
+    return {
+      restore,
+      choose,
       dispose: async () => {
         disposed = true;
         await saving;
@@ -3142,13 +3218,14 @@
     ) : candidates.length === 1 ? candidates[0] : null;
     return selected ? profilePosition(file, selected.segmentIndex, selected.routeProgressM) : null;
   }
-  function stationLabels(visits, distanceX, left, right) {
+  function stationLabels(visits, distanceX, left, right, { fontSize = 23 } = {}) {
     const lanes = [[], []];
     const priority2 = (v) => v.status === "next" ? 0 : { trailhead: 1, exit: 1, summit: 2, hut: 3, water: 4, camp: 5 }[v.row.station.type] ?? 6;
     return visits.filter((v) => v.position).slice().sort((a, b) => priority2(a) - priority2(b) || a.row.index - b.row.index).flatMap((v) => {
       const name = v.row.station.name;
-      const label = name.length > 10 ? name.slice(0, 9) + "\u2026" : name;
-      const width = label.length * 23 + 16;
+      const maxChars = Math.max(2, Math.min(10, Math.floor((right - left - 16) / fontSize)));
+      const label = name.length > maxChars ? name.slice(0, maxChars - 1) + "\u2026" : name;
+      const width = label.length * fontSize + 16;
       const x = Math.max(left + width / 2, Math.min(right - width / 2, distanceX(v.position.km)));
       const from = x - width / 2, to = x + width / 2;
       const lane = lanes.findIndex(
@@ -3176,32 +3253,47 @@
     minute: "2-digit",
     hourCycle: "h23"
   }) : "\u6642\u9593\u8CC7\u6599\u4E0D\u8DB3";
-  function stationChart(model, { distanceX, y, left, right, bottom }) {
+  function stationChart(model, { distanceX, y, left, right, top = 72, bottom, selected }) {
     if (!model) return "";
     const visits = model.visits.filter((v) => v.position);
-    const labels = stationLabels(visits, distanceX, left, right).map((v) => {
-      const baseline = 22 + v.lane * 29;
-      return `<g class="profile-station-label" data-height-visit="${v.key}" role="button" tabindex="0" aria-label="${esc(v.row.station.name)}\uFF0C\u7B2C ${v.visit} \u6B21\u8A2A\u7D93"><path d="M${v.x} ${baseline + 5}L${distanceX(v.position.km)} ${y(v.position.elevation)}"/><text x="${v.x}" y="${baseline}" text-anchor="middle">${esc(v.label)}</text></g>`;
+    const labels = stationLabels(visits, distanceX, left, right, { fontSize: 13 }).map((v) => {
+      const baseline = 18 + v.lane * 26;
+      return `<g class="profile-station-label" data-height-visit="${v.key}" role="button" tabindex="0" aria-pressed="${v.key === selected}" aria-label="${esc(v.row.station.name)}\uFF0C\u7B2C ${v.visit} \u6B21\u8A2A\u7D93"><path d="M${v.x} ${baseline + 5}L${distanceX(v.position.km)} ${y(v.position.elevation)}"/><text x="${v.x}" y="${baseline}" text-anchor="middle">${esc(v.label)}</text></g>`;
     }).join("");
     const markers = visits.map(
-      (v) => `<g class="profile-station profile-${v.status}" data-height-visit="${v.key}" data-km="${v.position.km}" data-elevation="${v.position.elevation}" role="button" tabindex="0" aria-controls="profile-station-info" aria-label="${esc(v.row.station.name)}\uFF0C\u7B2C ${v.visit} \u6B21\u8A2A\u7D93\uFF0C${statuses2[v.status]}"><circle class="profile-station-hit" cx="${distanceX(v.position.km)}" cy="${y(v.position.elevation)}" r="22"/><circle class="profile-station-dot" cx="${distanceX(v.position.km)}" cy="${y(v.position.elevation)}" r="6"/><title>${esc(v.row.station.name)} \xB7 \u7B2C ${v.visit} \u6B21 \xB7 ${v.position.km.toFixed(2)} km</title></g>`
+      (v) => `<g class="profile-station profile-${v.status}" data-height-visit="${v.key}" data-km="${v.position.km}" data-elevation="${v.position.elevation}" role="button" tabindex="0" aria-controls="profile-station-info" aria-pressed="${v.key === selected}" aria-label="${esc(v.row.station.name)}\uFF0C\u7B2C ${v.visit} \u6B21\u8A2A\u7D93\uFF0C${statuses2[v.status]}"><circle class="profile-station-hit" cx="${distanceX(v.position.km)}" cy="${y(v.position.elevation)}" r="22"/><circle class="profile-station-dot" cx="${distanceX(v.position.km)}" cy="${y(v.position.elevation)}" r="6"/><title>${esc(v.row.station.name)} \xB7 \u7B2C ${v.visit} \u6B21 \xB7 ${v.position.km.toFixed(2)} km</title></g>`
     ).join("");
     const p = model.current;
-    return labels + markers + (p ? `<g class="profile-current" data-km="${p.km}" aria-label="\u76EE\u524D\u9032\u5EA6 ${p.km.toFixed(2)} \u516C\u91CC"><path d="M${distanceX(p.km)} 80V${bottom}"/><circle cx="${distanceX(p.km)}" cy="${y(p.elevation)}" r="7"/></g>` : "");
+    return labels + markers + (p ? `<g class="profile-current" data-km="${p.km}" aria-label="\u76EE\u524D\u9032\u5EA6 ${p.km.toFixed(2)} \u516C\u91CC"><path d="M${distanceX(p.km)} ${top}V${bottom}"/><circle cx="${distanceX(p.km)}" cy="${y(p.elevation)}" r="7"/></g>` : "");
   }
   function stationDetails(model, selected, cluster = false) {
     if (!model) return "";
     const v = model.visits.find((v2) => v2.key === selected);
     const plotted = model.visits.filter((v2) => v2.position);
-    const nearby = cluster && v?.position ? plotted.filter(
+    const nearby = Array.isArray(cluster) ? plotted.filter((p) => cluster.includes(p.key)) : cluster && v?.position ? plotted.filter(
       (p) => Math.abs(p.position.km - v.position.km) <= Math.max(0.025, model.totalKm * 0.13)
     ) : [];
     const visitButton = (item) => `<button type="button" class="profile-visit-choice" data-height-visit="${item.key}" aria-pressed="${item.key === selected}"><strong>${esc(item.row.station.name)}</strong><span>\u7B2C ${item.visit} \u6B21 \xB7 ${item.type} \xB7 ${statuses2[item.status]}</span><small>${item.position ? item.position.km.toFixed(2) + " km \xB7 " + Math.round(item.position.elevation) + " m" : "GPX \u9AD8\u5EA6\u6216\u4F4D\u7F6E\u7F3A\u6F0F\uFF0C\u672A\u6A19\u793A"}</small></button>`;
-    return `<div class="profile-stations"><p class="profile-station-legend">\u25CF \u6CBF\u9014\u7AD9\u9EDE\u3000<span>\u25CF \u5DF2\u901A\u904E</span>\u3000<b>\u25CF \u4E0B\u4E00\u7AD9</b> \xB7 \u9EDE\u9078\u5713\u9EDE\u67E5\u770B\uFF1B\u5BC6\u96C6\u8655\u53EF\u5C55\u958B\u8A2A\u6B21</p>${model.active && !model.current ? '<p class="small muted">\u76EE\u524D\u9032\u5EA6\u5F85\u6709\u6548 GPS \u8207\u9023\u7E8C GPX \u9AD8\u5EA6\u78BA\u8A8D\u3002</p>' : model.current ? `<p class="small">\u76EE\u524D\u9032\u5EA6 ${model.current.km.toFixed(2)} km \xB7 ${Math.round(model.current.elevation)} m</p>` : ""}<div id="profile-station-info" class="profile-station-info" role="status" aria-live="polite">${v ? `<strong>${esc(v.row.station.name)} \xB7 \u7B2C ${v.visit} \u6B21\u8A2A\u7D93</strong><p>${v.type} \xB7 ${statuses2[v.status]}</p><p>${v.position ? `GPX \u7D2F\u8A08 ${v.position.km.toFixed(2)} km \xB7 \u9AD8\u5EA6 ${Math.round(v.position.elevation)} m` : "GPX \u9AD8\u5EA6\u6216\u4F4D\u7F6E\u7F3A\u6F0F\uFF0C\u672A\u6A19\u793A"}</p><p>\u9810\u4F30\u62B5\u9054\uFF08\u53F0\u5317\u6642\u9593\uFF09\uFF1A${esc(time(v.eta))}${model.active ? "" : "\uFF08\u4EE5\u73FE\u5728\u51FA\u767C\u9810\u89BD\uFF09"}</p>` : "<p>\u9EDE\u9078\u7AD9\u9EDE\u67E5\u770B\u7AD9\u540D\u3001\u985E\u578B\u3001\u516C\u91CC\u6578\u3001\u9AD8\u5EA6\u3001\u9810\u4F30\u62B5\u9054\u8207\u5230\u7AD9\u72C0\u614B\u3002</p>"}</div>${nearby.length > 1 ? `<div class="profile-nearby" aria-label="\u9644\u8FD1\u5BC6\u96C6\u7AD9\u9EDE\u8A2A\u6B21"><strong>\u9644\u8FD1\u8A2A\u6B21 \xB7 ${nearby.length} \u6B21</strong>${nearby.map(visitButton).join("")}</div>` : ""}<details id="profile-all-visits"><summary>\u5C55\u958B\u6240\u6709\u7AD9\u9EDE \xB7 ${model.visits.length} \u6B21\u8A2A\u7D93${model.visits.length > plotted.length ? `\uFF08${model.visits.length - plotted.length} \u6B21\u4F4D\u7F6E\u6216\u9AD8\u5EA6\u7F3A\u6F0F\uFF09` : ""}</summary><div class="profile-visit-list">${model.visits.map(visitButton).join("") || "<p>\u5C1A\u7121\u53EF\u78BA\u8A8D\u7684 GPX \u7AD9\u9EDE\u8A2A\u6B21\u3002</p>"}</div></details><p class="small muted">\u4F9D\u5DF2\u5339\u914D GPX \u8A2A\u6B21\u6A19\u793A\uFF1B\u4F4D\u7F6E\u63A5\u8FD1\u4E0D\u4EE3\u8868\u5DF2\u9032\u5165\u5C71\u5C4B\uFF0C\u6C34\u6E90\u53EF\u7528\u6027\u8ACB\u53E6\u884C\u78BA\u8A8D\u3002</p></div>`;
+    return `<div class="profile-stations"><p class="profile-station-legend">\u25CF \u6CBF\u9014\u7AD9\u9EDE\u3000<span>\u25CF \u5DF2\u901A\u904E</span>\u3000<b>\u25CF \u4E0B\u4E00\u7AD9</b> \xB7 \u9EDE\u9078\u5713\u9EDE\u67E5\u770B\uFF1B\u5BC6\u96C6\u8655\u53EF\u5C55\u958B\u7D93\u904E\u6B21\u6578</p>${model.active && !model.current ? '<p class="small muted">\u76EE\u524D\u9032\u5EA6\u5F85\u6709\u6548 GPS \u8207\u9023\u7E8C GPX \u9AD8\u5EA6\u78BA\u8A8D\u3002</p>' : model.current ? `<p class="small">\u76EE\u524D\u9032\u5EA6 ${model.current.km.toFixed(2)} km \xB7 ${Math.round(model.current.elevation)} m</p>` : ""}<div id="profile-station-info" class="profile-station-info" role="status" aria-live="polite">${v ? `<strong>${esc(v.row.station.name)} \xB7 \u7B2C ${v.visit} \u6B21\u8A2A\u7D93</strong><p>${v.type} \xB7 ${statuses2[v.status]}</p><p>${v.position ? `GPX \u7D2F\u8A08 ${v.position.km.toFixed(2)} km \xB7 \u9AD8\u5EA6 ${Math.round(v.position.elevation)} m` : "GPX \u9AD8\u5EA6\u6216\u4F4D\u7F6E\u7F3A\u6F0F\uFF0C\u672A\u6A19\u793A"}</p><p>\u9810\u4F30\u62B5\u9054\uFF08\u53F0\u5317\u6642\u9593\uFF09\uFF1A${esc(time(v.eta))}${model.active ? "" : "\uFF08\u4EE5\u73FE\u5728\u51FA\u767C\u9810\u89BD\uFF09"}</p>` : Array.isArray(cluster) && nearby.length > 1 ? "<p>\u9644\u8FD1\u6709\u591A\u500B\u7AD9\u9EDE\u6216\u7D93\u904E\u6B21\u6578\uFF0C\u8ACB\u5F9E\u4E0B\u65B9\u6E05\u55AE\u9078\u64C7\uFF0C\u4E0D\u6703\u81EA\u52D5\u4EE3\u9078\u3002</p>" : "<p>\u9EDE\u9078\u7AD9\u9EDE\u67E5\u770B\u7AD9\u540D\u3001\u985E\u578B\u3001\u516C\u91CC\u6578\u3001\u9AD8\u5EA6\u3001\u9810\u4F30\u62B5\u9054\u8207\u5230\u7AD9\u72C0\u614B\u3002</p>"}</div>${nearby.length > 1 ? `<div class="profile-nearby" aria-label="\u9644\u8FD1\u5BC6\u96C6\u7AD9\u9EDE\u8A2A\u6B21"><strong>\u9644\u8FD1\u8A2A\u6B21 \xB7 ${nearby.length} \u6B21</strong>${nearby.map(visitButton).join("")}</div>` : ""}<details id="profile-all-visits"><summary>\u5C55\u958B\u6240\u6709\u7AD9\u9EDE \xB7 ${model.visits.length} \u6B21\u8A2A\u7D93${model.visits.length > plotted.length ? `\uFF08${model.visits.length - plotted.length} \u6B21\u4F4D\u7F6E\u6216\u9AD8\u5EA6\u7F3A\u6F0F\uFF09` : ""}</summary><div class="profile-visit-list">${model.visits.map(visitButton).join("") || "<p>\u5C1A\u7121\u53EF\u78BA\u8A8D\u7684 GPX \u7AD9\u9EDE\u8A2A\u6B21\u3002</p>"}</div></details><p class="small muted">\u4F9D\u5DF2\u5339\u914D GPX \u8A2A\u6B21\u6A19\u793A\uFF1B\u4F4D\u7F6E\u63A5\u8FD1\u4E0D\u4EE3\u8868\u5DF2\u9032\u5165\u5C71\u5C4B\uFF0C\u6C34\u6E90\u53EF\u7528\u6027\u8ACB\u53E6\u884C\u78BA\u8A8D\u3002</p></div>`;
+  }
+
+  // src/features/elevation/layout.js
+  function elevationLayout(availableWidth = 640) {
+    const width = Number.isFinite(availableWidth) && availableWidth > 0 ? Math.max(160, Math.floor(availableWidth)) : 640;
+    return {
+      width,
+      height: 312,
+      left: 52,
+      right: width - 24,
+      top: 72,
+      bottom: 272,
+      xTicks: width < 300 ? [0, 1] : [0, 0.5, 1],
+      yTicks: width < 480 ? [0, 0.5, 1] : [0, 1 / 3, 2 / 3, 1]
+    };
   }
 
   // src/features/elevation/view.js
-  function elevationSvg(file, profile = null, stations = null, selected = null, cluster = false) {
+  function elevationSvg(file, profile = null, stations = null, selected = null, cluster = false, availableWidth = 640) {
     if (!file.stats.withElevation)
       return stationDetails(stations, selected, cluster) + `<div class="elevation-empty">${icon("mountain")}<div><strong>\u5C1A\u7121\u9AD8\u5EA6\u8CC7\u6599</strong><p>\u53D6\u5F97 GPX \u9AD8\u5EA6\u8CC7\u6599\u5F8C\uFF0C\u5C31\u80FD\u67E5\u770B\u6CBF\u9014\u9AD8\u4F4E\u8D77\u4F0F\u3002</p></div></div>`;
     let low = Infinity, high = -Infinity, peak = null;
@@ -3214,7 +3306,8 @@
         }
       }
     const span2 = Math.max(high - low, 20), floor = Math.floor(low - span2 * 0.12), ceiling = Math.ceil(high + span2 * 0.12);
-    const left = 56, right = 620, top = 86, bottom = 222;
+    const layout = elevationLayout(availableWidth);
+    const { left, right, top, bottom } = layout;
     const y = (value2) => bottom - (value2 - floor) / (ceiling - floor) * (bottom - top);
     const distanceX = (km2) => left + km2 / Math.max(file.stats.km, 1e-6) * (right - left);
     const x = (point) => distanceX(point.km);
@@ -3276,17 +3369,17 @@
     }).join("");
     const labels = (profile?.bands ?? []).map((band) => {
       const start = distanceX(band.fromM / 1e3), end = distanceX(band.toM / 1e3);
-      return end - start >= 70 ? `<text class="height-phase-label" x="${((start + end) / 2).toFixed(2)}" y="97" text-anchor="middle">${phaseLabels[band.phase]}</text>` : "";
+      return end - start >= 70 ? `<text class="height-phase-label" x="${((start + end) / 2).toFixed(2)}" y="${top + 16}" text-anchor="middle">${phaseLabels[band.phase]}</text>` : "";
     }).join("");
-    const grid = [0, 1 / 3, 2 / 3, 1].map((ratio) => {
+    const grid = layout.yTicks.map((ratio) => {
       const value2 = ceiling - (ceiling - floor) * ratio, position3 = top + (bottom - top) * ratio;
-      return `<path d="M${left} ${position3}H${right}" stroke="#afc4a1" stroke-opacity=".55" stroke-dasharray="3 5"/><text x="43" y="${position3 + 4}" text-anchor="end">${Math.round(value2).toLocaleString()}</text>`;
+      return `<path d="M${left} ${position3}H${right}" stroke="#afc4a1" stroke-opacity=".55" stroke-dasharray="3 5"/><text class="elevation-y-tick" x="${left - 8}" y="${position3 + 4}" text-anchor="end">${Math.round(value2).toLocaleString()}</text>`;
     }).join("");
-    const ticks = [0, 0.5, 1].map((ratio) => {
+    const ticks = layout.xTicks.map((ratio) => {
       const position3 = left + ratio * (right - left), label = ratio === 0 ? "0" : (file.stats.km * ratio).toFixed(ratio === 1 || file.stats.km < 10 ? 2 : 1);
-      return `<path d="M${position3} ${bottom}v5" stroke="#a3b998"/><text x="${position3}" y="249" text-anchor="${ratio === 0 ? "start" : ratio === 1 ? "end" : "middle"}">${label} km</text>`;
+      return `<path d="M${position3} ${bottom}v5" stroke="#a3b998"/><text class="elevation-x-tick" x="${position3}" y="${bottom + 26}" text-anchor="${ratio === 0 ? "start" : ratio === 1 ? "end" : "middle"}">${label} km</text>`;
     }).join("");
-    return `<div class="elevation-summary"><span>\u6700\u4F4E\u9AD8\u5EA6 <strong>${Math.round(low).toLocaleString()}<small>m</small></strong></span><span>\u6700\u9AD8\u9AD8\u5EA6 <strong>${Math.round(high).toLocaleString()}<small>m</small></strong></span><span class="elevation-distance">\u5168\u7A0B <strong>${file.stats.km.toFixed(2)}<small>km</small></strong></span></div><svg class="elevation-chart" viewBox="0 0 640 262" role="group" aria-label="GPX \u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762${profile ? "\uFF0C\u767D\u5929\u6696\u8272\u3001\u591C\u9593\u6DF1\u85CD\uFF0C\u672A\u77E5\u6642\u9593\u7070\u8272" : ""}\uFF1B\u7F3A\u5C11\u9AD8\u5EA6\u8207\u5206\u6BB5\u8655\u4E0D\u9023\u7DDA"><defs><linearGradient id="elevation-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#5f8c58" stop-opacity=".55"/><stop offset="100%" stop-color="#99b67c" stop-opacity=".12"/></linearGradient><clipPath id="height-profile-clip">${clip}</clipPath></defs><g font-size="11" fill="#61785a">${grid}${ticks}<text class="elevation-axis-unit" x="43" y="73" text-anchor="end">\u9AD8\u5EA6 m</text></g>${areas}<g clip-path="url(#height-profile-clip)">${colors}</g>${shapes.map((shape) => shape.line).join("")}${transitions}${labels}<circle cx="${x(peak)}" cy="${y(high)}" r="4.5" fill="#326753" stroke="#eef4e6" stroke-width="2"><title>\u6700\u9AD8\u9AD8\u5EA6 ${Math.round(high)} m \xB7 ${peak.km.toFixed(2)} km</title></circle>${stationChart(stations, { distanceX, y, left, right, bottom })}</svg>${stationDetails(stations, selected, cluster)}<p class="elevation-caption">${file.processing ? "\u9AD8\u5EA6\u8207\u8DDD\u96E2\u5DF2\u6821\u6B63 GPS \u6296\u52D5" : "\u9AD8\u5EA6\u8207\u8DDD\u96E2\u4F9D GPX \u8CC7\u6599\u986F\u793A"} \xB7 \u7F3A\u6F0F\u8655\u4FDD\u7559\u7A7A\u767D</p>`;
+    return `<div class="elevation-summary"><span>\u6700\u4F4E\u9AD8\u5EA6 <strong>${Math.round(low).toLocaleString()}<small>m</small></strong></span><span>\u6700\u9AD8\u9AD8\u5EA6 <strong>${Math.round(high).toLocaleString()}<small>m</small></strong></span><span class="elevation-distance">\u5168\u7A0B <strong>${file.stats.km.toFixed(2)}<small>km</small></strong></span></div><svg class="elevation-chart" viewBox="0 0 ${layout.width} ${layout.height}" data-distance-start="${left}" data-distance-end="${right}" data-plot-top="${top}" data-plot-bottom="${bottom}" role="group" aria-label="GPX \u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762${profile ? "\uFF0C\u767D\u5929\u6696\u8272\u3001\u591C\u9593\u6DF1\u85CD\uFF0C\u672A\u77E5\u6642\u9593\u7070\u8272" : ""}\uFF1B\u7F3A\u5C11\u9AD8\u5EA6\u8207\u5206\u6BB5\u8655\u4E0D\u9023\u7DDA"><defs><linearGradient id="elevation-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#5f8c58" stop-opacity=".55"/><stop offset="100%" stop-color="#99b67c" stop-opacity=".12"/></linearGradient><clipPath id="height-profile-clip">${clip}</clipPath></defs><g font-size="13" fill="#3f583e">${grid}${ticks}<text class="elevation-axis-unit" x="${left - 8}" y="${top - 12}" text-anchor="end">\u9AD8\u5EA6 m</text></g>${areas}<g clip-path="url(#height-profile-clip)">${colors}</g>${shapes.map((shape) => shape.line).join("")}${transitions}${labels}<circle cx="${x(peak)}" cy="${y(high)}" r="4.5" fill="#326753" stroke="#eef4e6" stroke-width="2"><title>\u6700\u9AD8\u9AD8\u5EA6 ${Math.round(high)} m \xB7 ${peak.km.toFixed(2)} km</title></circle>${stationChart(stations, { distanceX, y, left, right, top, bottom, selected })}</svg>${stationDetails(stations, selected, cluster)}<p class="elevation-caption">${file.processing ? "\u9AD8\u5EA6\u8207\u8DDD\u96E2\u5DF2\u6821\u6B63 GPS \u6296\u52D5" : "\u9AD8\u5EA6\u8207\u8DDD\u96E2\u4F9D GPX \u8CC7\u6599\u986F\u793A"} \xB7 \u7F3A\u6F0F\u8655\u4FDD\u7559\u7A7A\u767D</p>`;
   }
 
   // src/features/daylight/view.js
@@ -3302,7 +3395,7 @@
     state,
     document: document2 = globalThis.document
   }) {
-    let displayedFile = null, lastHtml = "", selected = null, cluster = false, cachedProfile = null, profileKey = "";
+    let displayedFile = null, lastHtml = "", selected = null, cluster = false, pointer = null, cachedProfile = null, profileKey = "";
     function body(file) {
       const data = itinerary?.snapshot();
       const key2 = JSON.stringify([
@@ -3318,8 +3411,10 @@
       const stations = profileStations(file, data, state?.gps);
       stations.active = data?.active;
       stations.totalKm = file.stats.km;
+      const container = document2.getElementById("height-profile-body");
+      const width = container?.getBoundingClientRect?.().width || (document2.defaultView?.innerWidth ? Math.min(640, document2.defaultView.innerWidth - 88) : 640);
       const notice = !profile.county ? "\u76EE\u524D GPX \u9644\u8FD1\u5C1A\u7121\u53EF\u7528\u7684\u653F\u5E9C\u65E5\u7167\u53C3\u8003\u3002" : !profile.hasTiming ? profile.mode === "recorded" ? "\u5C1A\u7121\u53EF\u5C0D\u61C9\u6642\u9593\u7684\u8ECC\u8DE1\u5340\u6BB5\uFF0C\u66AB\u4E0D\u5224\u5B9A\u65E5\u591C\u3002" : "\u5C1A\u7121\u6709\u6548\u7AD9\u9593 ETA\uFF0C\u7070\u8272\u8DEF\u6BB5\u66AB\u4E0D\u5224\u5B9A\u65E5\u591C\u3002" : profile.hasUnknownDays ? "\u90E8\u5206\u65E5\u671F\u5C1A\u672A\u53D6\u5F97\u5B98\u65B9\u6642\u523B\uFF0C\u5C0D\u61C9\u8DEF\u6BB5\u4FDD\u7559\u7070\u8272\u3002" : profile.mode === "recorded" ? "\u4F9D\u81EA\u5DF1\u7D00\u9304\u7684\u5BE6\u969B\u6642\u523B\u986F\u793A\u65E5\u591C\u3002" : profile.mode === "forecast" ? "\u4F9D\u672C\u6B21\u51FA\u767C\u8207\u5230\u7AD9 ETA \u52D5\u614B\u66F4\u65B0\u3002" : "\u4EE5\u73FE\u5728\u51FA\u767C\u9810\u89BD\uFF1B\u958B\u59CB\u7D00\u9304\u5F8C\u4F9D\u5BE6\u969B\u51FA\u767C\u8207\u5230\u7AD9 ETA \u66F4\u65B0\u3002";
-      return `<div class="daylight-reference" data-county="${esc(profile.county)}"><span>\u65E5\u591C\u81EA\u52D5\u53C3\u8003</span><strong>${profile.nearby ? esc(profile.nearby.name) : "\u9644\u8FD1\u53C3\u8003\u5C1A\u672A\u63D0\u4F9B"}</strong>${profile.nearby ? `<small>\u8DEF\u7DDA\u4E2D\u6BB5\u9644\u8FD1 ${profile.nearby.distanceKm.toFixed(1)} km \xB7 \u63A1${esc(profile.countyName)}\u5B98\u65B9\u6642\u523B</small>` : ""}</div>${elevationSvg(file, profile, stations, selected, cluster)}<div class="daylight-legend" aria-label="\u65E5\u591C\u5857\u8272\u5716\u4F8B"><span><i class="phase-day"></i>\u767D\u5929\uFF08\u65E5\u51FA\u81F3\u65E5\u843D\uFF09</span><span><i class="phase-night"></i>\u591C\u9593</span>${profile.hasUnknownSegments || profile.hasUnknownDays || !profile.hasTiming || !profile.county ? '<span><i class="phase-unknown"></i>\u6642\u9593\u5F85\u88DC</span>' : ""}</div><p class="daylight-notice" role="status">${notice}${profile.hasTiming && profile.hasUnknownSegments ? " \u7070\u8272\u8DEF\u6BB5\u5C1A\u7121\u53EF\u78BA\u8A8D\u7684\u7D93\u904E\u6642\u523B\u3002" : ""}</p>${profile.county ? `<div class="solar-days">${profile.days.slice(0, 3).map(
+      return `<div class="daylight-reference" data-county="${esc(profile.county)}"><span>\u65E5\u591C\u81EA\u52D5\u53C3\u8003</span><strong>${profile.nearby ? esc(profile.nearby.name) : "\u9644\u8FD1\u53C3\u8003\u5C1A\u672A\u63D0\u4F9B"}</strong>${profile.nearby ? `<small>\u8DEF\u7DDA\u4E2D\u6BB5\u9644\u8FD1 ${profile.nearby.distanceKm.toFixed(1)} km \xB7 \u63A1${esc(profile.countyName)}\u5B98\u65B9\u6642\u523B</small>` : ""}</div>${elevationSvg(file, profile, stations, selected, cluster, width)}<div class="daylight-legend" aria-label="\u65E5\u591C\u5857\u8272\u5716\u4F8B"><span><i class="phase-day"></i>\u767D\u5929\uFF08\u65E5\u51FA\u81F3\u65E5\u843D\uFF09</span><span><i class="phase-night"></i>\u591C\u9593</span>${profile.hasUnknownSegments || profile.hasUnknownDays || !profile.hasTiming || !profile.county ? '<span><i class="phase-unknown"></i>\u6642\u9593\u5F85\u88DC</span>' : ""}</div><p class="daylight-notice" role="status">${notice}${profile.hasTiming && profile.hasUnknownSegments ? " \u7070\u8272\u8DEF\u6BB5\u5C1A\u7121\u53EF\u78BA\u8A8D\u7684\u7D93\u904E\u6642\u523B\u3002" : ""}</p>${profile.county ? `<div class="solar-days">${profile.days.slice(0, 3).map(
         (day) => `<div><strong>${esc(day.date)}</strong><span>\u65E5\u51FA ${day.sun ? hhmm(day.sun.sunrise) : "\u5F85\u88DC"}</span><span>\u65E5\u843D ${day.sun ? hhmm(day.sun.sunset) : "\u5F85\u88DC"}</span></div>`
       ).join("")}${profile.days.length > 3 ? `<details class="solar-extra" id="solar-extra"><summary>\u66F4\u591A\u65E5\u671F</summary>${profile.days.slice(3).map(
         (day) => `<div><strong>${esc(day.date)}</strong><span>\u65E5\u51FA ${day.sun ? hhmm(day.sun.sunrise) : "\u5F85\u88DC"}</span><span>\u65E5\u843D ${day.sun ? hhmm(day.sun.sunset) : "\u5F85\u88DC"}</span></div>`
@@ -3360,18 +3455,27 @@
     function select(event) {
       let target = event.target.closest?.("[data-height-visit]");
       const chart = event.target.closest?.(".elevation-chart");
-      if (!target && chart && Number.isFinite(event.clientX) && Number.isFinite(event.clientY)) {
+      const point = event.type === "click" && pointer?.chart === chart ? pointer : event;
+      pointer = null;
+      if (chart && !target?.classList.contains("profile-station-label") && Number.isFinite(point.clientX) && Number.isFinite(point.clientY)) {
         const nearby = [...chart.querySelectorAll(".profile-station")].map((element) => {
           const rect = element.querySelector(".profile-station-dot").getBoundingClientRect();
           return {
             element,
             distance: Math.hypot(
-              event.clientX - (rect.x + rect.width / 2),
-              event.clientY - (rect.y + rect.height / 2)
+              point.clientX - (rect.x + rect.width / 2),
+              point.clientY - (rect.y + rect.height / 2)
             )
           };
         }).filter((item) => item.distance <= 28).sort((a, b) => a.distance - b.distance);
-        target = nearby[0]?.element;
+        const precise = nearby.filter((item) => item.distance <= 7);
+        if (nearby.length > 1 && precise.length !== 1) {
+          selected = null;
+          cluster = nearby.map((item) => item.element.dataset.heightVisit);
+          update();
+          return true;
+        }
+        target = precise[0]?.element ?? nearby[0]?.element;
       }
       if (!target || !target.closest?.("#height-profile-body")) return false;
       selected = target.dataset.heightVisit;
@@ -3379,7 +3483,11 @@
       update();
       return true;
     }
-    return { panel, update, select };
+    function rememberPointer(event) {
+      const chart = event.target.closest?.(".elevation-chart");
+      pointer = chart ? { chart, clientX: event.clientX, clientY: event.clientY } : null;
+    }
+    return { panel, update, select, rememberPointer };
   }
 
   // src/core/state.js
@@ -3408,6 +3516,10 @@
       library: [],
       libraryReadError: false,
       selected: null,
+      routeQuery: "",
+      routeSort: "original",
+      selectionNotice: "",
+      selectionError: "",
       routeDirections: {},
       directionError: "",
       correctionPage: null,
@@ -3422,6 +3534,7 @@
       libraryFilter: "all",
       recordingName: "",
       recordingBlocked: "",
+      recordingRouteWarning: "",
       starting: false,
       date,
       itinerary: {
@@ -3511,6 +3624,15 @@
     return fix;
   }
 
+  // src/features/itinerary/factor.js
+  var factorMessage = "\u8ACB\u8F38\u5165\u5927\u65BC 0\u3001\u81F3\u591A 10 \u7684\u6642\u9593\u500D\u7387\u3002";
+  function timeFactor(value2) {
+    if (typeof value2 !== "string" && typeof value2 !== "number" || String(value2).trim() === "")
+      return null;
+    const number = Number(value2);
+    return Number.isFinite(number) && number > 0 && number <= 10 ? number : null;
+  }
+
   // src/core/browser-events.js
   function bindBrowserEvents({
     state,
@@ -3534,6 +3656,13 @@
       target.addEventListener(type, handler);
       cleanups.push(() => target.removeEventListener(type, handler));
     }
+    function commitFactor(input) {
+      const factor = timeFactor(input.value);
+      if (factor !== null && factor === itinerary?.snapshot?.()?.factor && !state.itinerary.factorError)
+        return;
+      itinerary?.setFactor(input.value).catch(actions.onError);
+    }
+    listen(document2, "pointerup", (event) => heightProfile?.rememberPointer?.(event));
     listen(document2, "keydown", (event) => {
       if (["Enter", " "].includes(event.key) && event.target.closest?.("[data-height-visit]") && event.target.tagName !== "BUTTON") {
         event.preventDefault();
@@ -3561,6 +3690,14 @@
     });
     listen(document2, "input", (event) => {
       const input = event.target;
+      if (input.id === "route-search") {
+        library.search(input.value);
+        return;
+      }
+      if (input.id === "itinerary-factor") {
+        input.setCustomValidity(timeFactor(input.value) === null ? factorMessage : "");
+        return;
+      }
       if (input.id === "map-pitch") {
         map.tilt(Number(input.value));
         return;
@@ -3586,13 +3723,16 @@
       library.importFiles(files).catch(actions.onError);
     });
     listen(document2, "change", (event) => {
+      if (event.target.id === "route-sort") library.sort(event.target.value);
       if (event.target.id.startsWith("reroute-")) {
         state.itinerary.rerouteForm ??= {};
         state.itinerary.rerouteForm[event.target.id] = event.target.value;
         itinerary?.invalidateReroute?.();
       }
-      if (event.target.id === "itinerary-factor")
-        itinerary?.setFactor(event.target.value).catch(actions.onError);
+      if (event.target.id === "itinerary-factor") commitFactor(event.target);
+    });
+    listen(document2, "focusout", (event) => {
+      if (event.target.id === "itinerary-factor") commitFactor(event.target);
     });
     for (const type of ["dragover", "dragleave", "drop"])
       listen(document2, type, (event) => {
@@ -3611,6 +3751,7 @@
       });
     listen(window2, "hashchange", navigation.onHashChange);
     listen(window2, "focus", () => personalFactorView?.refresh());
+    listen(window2, "resize", () => heightProfile?.update());
     listen(window2, "beforeunload", (event) => {
       if (gpsActive2() || state.importing) {
         event.preventDefault();
@@ -3728,8 +3869,11 @@
         database = await openGpxStore();
       },
       listFiles: () => gpxStoreAction(requireDatabase(), "getAll"),
+      getFile: (id2) => gpxStoreAction(requireDatabase(), "get", id2),
       putFile: (file) => gpxStoreAction(requireDatabase(), "put", file),
       removeFile: (id2) => gpxStoreAction(requireDatabase(), "delete", id2),
+      getRouteSelection: () => draftAction(requireDatabase(), "get", "route-selection"),
+      saveRouteSelection: (value2) => draftAction(requireDatabase(), "put", { ...value2, slot: "route-selection" }),
       getRouteDirections: () => draftAction(requireDatabase(), "get", "route-directions"),
       saveRouteDirections: (value2) => draftAction(requireDatabase(), "put", { ...value2, slot: "route-directions" }),
       getGpxStations: () => draftAction(requireDatabase(), "get", "gpx-stations"),
@@ -4104,6 +4248,12 @@
     };
   }
 
+  // src/features/gpx/import-results.js
+  function importSummary(results) {
+    const count = (status) => results.filter((result) => result.status === status).length;
+    return `\u65B0\u589E ${count("added")} \u689D\u30FB\u5DF2\u5B58\u5728 ${count("duplicate")} \u689D\u30FB\u5931\u6557 ${count("failed")} \u689D${results.some((result) => result.saved === false) ? "\uFF08\u90E8\u5206\u50C5\u6B64\u5206\u9801\u53EF\u7528\uFF09" : ""}`;
+  }
+
   // src/features/gpx/controller.js
   function createLibraryController({
     state,
@@ -4111,7 +4261,8 @@
     gpsPending: gpsPending2,
     render,
     navigate,
-    feedback
+    feedback,
+    selection
   }) {
     const { toast } = feedback;
     async function importFiles(files) {
@@ -4123,10 +4274,15 @@
       navigate("routes");
       if (batch.length > 20) {
         state.results = [
-          { ok: false, name: "\u672A\u532F\u5165", message: "\u4E00\u6B21\u6700\u591A\u52A0\u5165 20 \u500B\u6A94\u6848\uFF0C\u8ACB\u5206\u6279\u532F\u5165\u3002" }
+          {
+            status: "failed",
+            name: "\u672A\u532F\u5165",
+            message: `\u5171\u9078\u4E86 ${batch.length} \u500B\u6A94\u6848\uFF0C\u4E00\u6B21\u6700\u591A\u52A0\u5165 20 \u500B\uFF0C\u8ACB\u6E1B\u5C11\u6578\u91CF\u5F8C\u5206\u6279\u532F\u5165\u3002`
+          }
         ];
         state.importing = false;
         render();
+        toast(state.results[0].message);
         return;
       }
       for (const file of batch) {
@@ -4136,7 +4292,7 @@
           const raw = await file.text();
           if (state.library.some((entry2) => entry2.kind !== "recording" && entry2.raw === raw)) {
             state.results.push({
-              ok: true,
+              status: "duplicate",
               name: file.name,
               message: "\u76F8\u540C\u5167\u5BB9\u5DF2\u532F\u5165\uFF0C\u4FDD\u7559\u539F\u6709\u6A94\u6848\u3002"
             });
@@ -4156,13 +4312,14 @@
           state.library.push(entry);
           if (!state.selected) state.selected = entry.id;
           state.results.push({
-            ok: true,
+            status: "added",
+            saved: entry.saved,
             name: file.name,
             message: entry.saved ? "\u532F\u5165\u5B8C\u6210\uFF0C\u5DF2\u4FDD\u5B58\u5728\u6B64\u700F\u89BD\u5668\u3002" : "\u532F\u5165\u5B8C\u6210\uFF0C\u50C5\u6B64\u5206\u9801\u53EF\u7528\u3002"
           });
         } catch (error) {
           state.results.push({
-            ok: false,
+            status: "failed",
             name: file.name,
             message: error.message || "\u6A94\u6848\u7121\u6CD5\u8B80\u53D6\u3002"
           });
@@ -4171,7 +4328,7 @@
       }
       state.importing = false;
       render();
-      toast("\u532F\u5165\u8655\u7406\u5B8C\u6210\uFF0C\u8ACB\u67E5\u770B\u5404\u6A94\u6848\u7684\u7D50\u679C\u3002");
+      toast(`\u532F\u5165\u8655\u7406\u5B8C\u6210\uFF1A${importSummary(state.results)}\u3002\u8ACB\u67E5\u770B\u5404\u6A94\u6848\u7684\u7D50\u679C\u3002`);
     }
     async function removeFile(id2) {
       if (state.timeSourceBusy) {
@@ -4190,8 +4347,10 @@
         }
       }
       state.library = state.library.filter((entry) => entry.id !== id2);
-      if (id2 === state.selected)
-        state.selected = state.library.find((entry) => entry.kind !== "recording")?.id ?? null;
+      if (id2 === state.selected) {
+        state.selected = null;
+        await selection?.choose(null, "\u5DF2\u79FB\u9664\u9078\u7528\u7684\u8DEF\u7DDA\uFF0C\u8ACB\u91CD\u65B0\u9078\u64C7\u8DEF\u7DDA\uFF1B\u4E5F\u53EF\u4EE5\u81EA\u7531\u7D00\u9304\u3002");
+      }
       feedback.close();
       render();
       toast(
@@ -4199,6 +4358,7 @@
       );
     }
     function selectFile(id2) {
+      if (state.loading || state.starting) return;
       if (gpsPending2()) {
         toast("\u8ACB\u5148\u5B8C\u6210\u4E26\u95DC\u9589 GPS \u7D00\u9304\uFF0C\u518D\u66F4\u63DB\u8DEF\u7DDA\u3002");
         return;
@@ -4206,10 +4366,21 @@
       if (!state.library.some((entry) => entry.id === id2)) return;
       state.correctionPage = null;
       state.timeSourceError = "";
+      state.recordingBlocked = "";
       state.selected = id2;
+      const saving = selection?.choose(id2);
       navigate("plan");
+      return saving;
     }
     return {
+      search: (value2) => {
+        state.routeQuery = String(value2);
+        render();
+      },
+      sort: (value2) => {
+        state.routeSort = ["original", "recent", "name"].includes(value2) ? value2 : "original";
+        render();
+      },
       importFiles,
       removeFile,
       selectFile,
@@ -4292,12 +4463,25 @@
     }
     function libraryView() {
       const files = state.library.filter((file) => file.kind === "recording");
-      return (state.libraryReadError && files.length ? '<p class="error-message" role="status">\u76EE\u524D\u7121\u6CD5\u6838\u5C0D\u6B77\u53F2\u8CC7\u6599\uFF1B\u4EE5\u4E0B\u50C5\u986F\u793A\u5DF2\u6210\u529F\u8B80\u53D6\u7684\u7D00\u9304\u3002</p>' : "") + (files.length ? `<div class="collection-heading"><span>${files.length} \u6B21\u7559\u4E0B\u7684\u5C71\u884C</span><span>\u4FDD\u5B58\u5728\u6B64\u88DD\u7F6E</span></div><div class="library-list">${files.slice().reverse().map((file) => fileCard(file, true)).join("")}</div>` : state.libraryReadError ? '<section class="panel panel-body stack" role="status"><h2>\u76EE\u524D\u7121\u6CD5\u6838\u5C0D\u6B77\u53F2\u8CC7\u6599</h2><p>\u8ACB\u7A0D\u5F8C\u91CD\u65B0\u958B\u555F\u518D\u8A66\uFF1B\u76EE\u524D\u7121\u6CD5\u78BA\u8A8D\u5DF2\u4FDD\u5B58\u7684\u7D00\u9304\u6578\u91CF\u3002\u8ACB\u4FDD\u7559\u5DF2\u4E0B\u8F09\u7684 GPX \u5099\u4EFD\u3002</p></section>' : `<section class="saved-empty"><div class="empty-art">${icon("mountain")}${icon("route")}</div><span class="eyebrow">YOUR TRAIL STORIES</span><h2>\u9084\u6C92\u6709\u4FDD\u5B58\u7684\u767B\u5C71\u7D00\u9304</h2><p>\u5B8C\u6210\u4E00\u6B21\u767B\u5C71\u7D00\u9304\u4E26\u9078\u64C7\u4FDD\u5B58\u5F8C\uFF0C\u5C31\u80FD\u5728\u9019\u88E1\u67E5\u770B\u53CA\u4E0B\u8F09\u8ECC\u8DE1\u3002</p>${button(gpsPending2() ? "\u56DE\u5230\u672A\u5B8C\u6210\u7D00\u9304" : "\u524D\u5F80\u958B\u59CB\u7D00\u9304", "view-record", "primary", "locate", state.loading || state.starting ? "disabled" : "")}<span class="small muted">\u53EA\u6536\u85CF\u4F60\u89AA\u81EA\u8D70\u904E\u7684\u8DEF</span></section>`) + personalFactorPanel();
+      return (state.libraryReadError && files.length ? '<p class="error-message" role="status">\u76EE\u524D\u7121\u6CD5\u6838\u5C0D\u6B77\u53F2\u8CC7\u6599\uFF1B\u4EE5\u4E0B\u50C5\u986F\u793A\u5DF2\u6210\u529F\u8B80\u53D6\u7684\u7D00\u9304\u3002</p>' : "") + (files.length ? `<div class="collection-heading"><span>${files.length} \u6B21\u7559\u4E0B\u7684\u5C71\u884C</span><span>\u4FDD\u5B58\u5728\u6B64\u88DD\u7F6E</span></div><div class="library-list">${files.slice().reverse().map((file) => fileCard(file, true)).join("")}</div>` : state.libraryReadError ? '<section class="panel panel-body stack" role="status"><h2>\u76EE\u524D\u7121\u6CD5\u6838\u5C0D\u6B77\u53F2\u8CC7\u6599</h2><p>\u8ACB\u7A0D\u5F8C\u91CD\u65B0\u958B\u555F\u518D\u8A66\uFF1B\u76EE\u524D\u7121\u6CD5\u78BA\u8A8D\u5DF2\u4FDD\u5B58\u7684\u7D00\u9304\u6578\u91CF\u3002\u8ACB\u4FDD\u7559\u5DF2\u4E0B\u8F09\u7684 GPX \u5099\u4EFD\u3002</p></section>' : `<section class="saved-empty"><div class="empty-art">${icon("mountain")}${icon("route")}</div><span class="eyebrow">YOUR TRAIL STORIES</span><h2>\u9084\u6C92\u6709\u4FDD\u5B58\u7684\u767B\u5C71\u7D00\u9304</h2><p>\u5B8C\u6210\u4E00\u6B21\u767B\u5C71\u7D00\u9304\u4E26\u9078\u64C7\u4FDD\u5B58\u5F8C\uFF0C\u5C31\u80FD\u5728\u9019\u88E1\u67E5\u770B\u53CA\u4E0B\u8F09\u8ECC\u8DE1\u3002</p>${button(gpsPending2() ? "\u56DE\u5230\u672A\u5B8C\u6210\u7D00\u9304" : "\u524D\u5F80\u958B\u59CB\u7D00\u9304", "view-record", "primary", "locate", state.loading || state.starting ? "disabled" : "")}<span class="small muted">\u53EA\u6536\u85CF\u4F60\u89AA\u81EA\u8D70\u904E\u7684\u8DEF</span></section>`) + personalFactorPanel({ empty: !files.length && !state.libraryReadError });
     }
     function routesView() {
-      const files = state.library.filter((file) => file.kind !== "recording");
-      const results = state.results.length ? `<details class="import-results"><summary>\u672C\u6B21\u532F\u5165\u7D50\u679C \xB7 ${state.results.filter((r) => r.ok).length} \u500B\u6210\u529F</summary><ul>${state.results.map((r) => `<li class="${r.ok ? "result-ok" : "result-error"}"><strong>${esc(r.name)}</strong><span>${esc(r.message)}</span></li>`).join("")}</ul></details>` : "";
-      return `${results}${state.storageError ? `<p class="error-message">${esc(state.storageError)}</p>` : ""}${files.length ? `<div class="collection-heading"><span>${files.length} \u689D\u532F\u5165\u8DEF\u7DDA</span><span>\u9078\u4E00\u689D\uFF0C\u6E96\u5099\u51FA\u767C</span></div><div class="route-grid">${files.map((file) => fileCard(file)).join("")}</div>` : emptyView({ pending: gpsPending2(), importing: state.importing, primaryHeading: true })}<p class="collection-note">${icon("shield")}GPX \u4FDD\u7559\u5728\u6B64\u88DD\u7F6E\uFF0C\u4E0D\u6703\u4E0A\u50B3\u96F2\u7AEF\u3002</p>`;
+      const allFiles = state.library.filter((file) => file.kind !== "recording");
+      const query = (state.routeQuery ?? "").trim().toLocaleLowerCase("zh-TW");
+      const files = allFiles.filter(
+        (file) => (file.name + " " + (file.fileName ?? "")).toLocaleLowerCase("zh-TW").includes(query)
+      );
+      if (state.routeSort === "recent") files.reverse().sort((a, b) => b.addedAt - a.addedAt);
+      if (state.routeSort === "name") files.sort((a, b) => a.name.localeCompare(b.name, "zh-TW"));
+      const tools = allFiles.length > 1 ? `<div class="route-collection-tools"><label for="route-search">\u641C\u5C0B\u8DEF\u7DDA<input id="route-search" type="search" value="${esc(state.routeQuery ?? "")}" placeholder="\u8DEF\u7DDA\u540D\u7A31\u6216\u6A94\u540D"></label><label for="route-sort">\u6392\u5E8F<select id="route-sort">${[
+        ["original", "\u532F\u5165\u9806\u5E8F"],
+        ["recent", "\u6700\u8FD1\u532F\u5165"],
+        ["name", "\u8DEF\u7DDA\u540D\u7A31"]
+      ].map(
+        ([value2, label]) => `<option value="${value2}" ${state.routeSort === value2 ? "selected" : ""}>${label}</option>`
+      ).join("")}</select></label></div>` : "";
+      const results = state.results.length ? `<details class="import-results" ${state.results.some((r) => r.status === "failed" || r.saved === false) ? "open" : ""}><summary><span role="status" aria-live="polite">\u672C\u6B21\u532F\u5165\u7D50\u679C \xB7 ${importSummary(state.results)}</span></summary><ul>${state.results.map((r) => `<li class="${r.status === "failed" || r.saved === false ? "result-error" : "result-ok"}" data-import-status="${r.status}"><strong>${esc(r.name)}</strong><span>${esc(r.message)}${r.status === "failed" ? " \u8ACB\u4F9D\u539F\u56E0\u4FEE\u6B63\u6216\u91CD\u65B0\u532F\u51FA GPX \u5F8C\u518D\u8A66\u3002" : ""}</span></li>`).join("")}</ul></details>` : "";
+      return `${results}${state.storageError ? `<p class="error-message">${esc(state.storageError)}</p>` : ""}${tools}${allFiles.length ? `<div class="collection-heading"><span>${files.length} \u689D\u532F\u5165\u8DEF\u7DDA${query ? `\uFF08\u5171 ${allFiles.length} \u689D\uFF09` : ""}</span><span>\u9078\u4E00\u689D\uFF0C\u6E96\u5099\u51FA\u767C</span></div>${files.length ? `<div class="route-grid">${files.map((file) => fileCard(file)).join("")}</div>` : `<section class="panel panel-body stack" role="status"><p>\u627E\u4E0D\u5230\u7B26\u5408\u7684\u8DEF\u7DDA\uFF0C\u539F\u6709 GPX \u4ECD\u4FDD\u5B58\u5728\u6B64\u88DD\u7F6E\u3002</p>${button("\u6E05\u9664\u641C\u5C0B", "route-clear-search")}</section>`}` : emptyView({ pending: gpsPending2(), importing: state.importing, primaryHeading: true })}<p class="collection-note">${icon("shield")}GPX \u4FDD\u7559\u5728\u6B64\u88DD\u7F6E\uFF0C\u4E0D\u6703\u4E0A\u50B3\u96F2\u7AEF\u3002</p>`;
     }
     return { libraryView, routesView };
   }
@@ -5278,11 +5462,17 @@
         historyInterruption(state.gps, "unobserved-reload-interval");
       state.directMap.id = `direct-${snapshot3.id}`;
       if (snapshot3.sourceRouteId) state.selected = snapshot3.sourceRouteId;
+      state.recordingRouteWarning = snapshot3.sourceRouteId && !state.library.some((file) => file.id === snapshot3.sourceRouteId) ? "\u672C\u6B21\u7D00\u9304\u539F\u7D81\u5B9A\u7684 GPX \u5DF2\u4E0D\u5728\u8DEF\u7DDA\u6E05\u55AE\u6216\u7121\u6CD5\u8B80\u53D6\u3002\u539F\u8DEF\u7DDA ID\u3001\u65B9\u5411\u8207\u5DF2\u8A18\u9304\u8ECC\u8DE1\u4ECD\u4FDD\u7559\uFF1B\u8ACB\u6838\u5C0D\u8349\u7A3F\u4E2D\u53EF\u7528\u7684\u8DEF\u7DDA\u8CC7\u6599\uFF0C\u672A\u80FD\u78BA\u8A8D\u7684 ETA \u4FDD\u6301\u672A\u77E5\uFF0C\u4E0D\u6703\u6539\u7528\u5176\u4ED6\u8DEF\u7DDA\u3002" : "";
       await onJourneyRestore(state.gps);
       if (!disposed) navigate("record");
     }
     async function startGps(direct = false) {
       if (disposed || state.loading || state.starting || state.timeSourceBusy || gpsPending2()) return;
+      if (!direct && (!current() || current().kind === "recording")) {
+        state.recordingBlocked = "\u8ACB\u5148\u78BA\u8A8D\u4E26\u9078\u7528\u8DEF\u7DDA\uFF0C\u518D\u958B\u59CB\u8DEF\u7DDA\u7D00\u9304\uFF1B\u4E5F\u53EF\u4EE5\u76F4\u63A5\u81EA\u7531\u7D00\u9304\u3002";
+        navigate("record");
+        return;
+      }
       if (!repository.available) {
         state.recordingBlocked = "\u672C\u6A5F\u8CC7\u6599\u5EAB\u7121\u6CD5\u4F7F\u7528\uFF0C\u7121\u6CD5\u5EFA\u7ACB\u81EA\u52D5\u4FDD\u5B58\u7D00\u9304\u3002\u8ACB\u7531\u672C\u6A5F\u9810\u89BD\u7DB2\u7AD9\u958B\u555F\uFF0C\u4E26\u5141\u8A31\u700F\u89BD\u5668\u5132\u5B58\u8CC7\u6599\u3002";
         navigate("record");
@@ -5306,6 +5496,24 @@
           return;
         }
         const now = Date.now(), route = direct || current()?.kind === "recording" ? null : current();
+        if (route?.saved === false) {
+          state.recordingBlocked = "\u9078\u7528\u8DEF\u7DDA\u5C1A\u672A\u4FDD\u5B58\u81F3\u6B64\u88DD\u7F6E\u3002\u8ACB\u91CD\u65B0\u532F\u5165\u4E26\u78BA\u8A8D\u4FDD\u5B58\uFF0C\u6216\u6539\u7528\u81EA\u7531\u7D00\u9304\u3002";
+          releaseWriter();
+          navigate("record");
+          return;
+        }
+        if (route && repository.getFile) {
+          const stored = await repository.getFile(route.id);
+          if (disposed) return;
+          if (!stored || stored.raw !== route.raw) {
+            state.selected = null;
+            state.recordingBlocked = "\u9078\u7528\u8DEF\u7DDA\u5DF2\u4E0D\u5B58\u5728\u6216\u5167\u5BB9\u5DF2\u8B8A\u66F4\uFF0C\u8ACB\u91CD\u65B0\u9078\u64C7\u8DEF\u7DDA\uFF1B\u4E5F\u53EF\u4EE5\u81EA\u7531\u7D00\u9304\u3002";
+            releaseWriter();
+            navigate("record");
+            return;
+          }
+        }
+        state.recordingRouteWarning = "";
         state.gps = {
           id: crypto.randomUUID(),
           name: state.recordingName.trim() || `${route?.name || "\u6211\u7684\u8ECC\u8DE1"} ${state.date}`,
@@ -5410,6 +5618,7 @@
       persistence.cancelScheduled();
       state.gps = createIdleRecording();
       state.recordingName = "";
+      state.recordingRouteWarning = "";
       releaseWriter();
     }
     const completion = createRecordingCompletion({
@@ -6269,10 +6478,10 @@
   }
 
   // src/features/routes/direction-view.js
-  function directionPanel(file, { locked = false, error = "" } = {}) {
+  function directionPanel(file, { locked = false, error = "", compact = false } = {}) {
     if (!file || file.kind === "recording" || file.recording) return "";
     const direction = file.direction === "reverse" ? "reverse" : "forward";
-    return `<section class="panel panel-body stack route-direction"><span class="eyebrow">YOUR DIRECTION</span><h2>\u884C\u8D70\u65B9\u5411</h2>
+    return `<section class="${compact ? "departure-direction stack route-direction" : "panel panel-body stack route-direction"}">${compact ? "" : '<span class="eyebrow">YOUR DIRECTION</span>'}<h2>\u884C\u8D70\u65B9\u5411</h2>
     <div class="tab-group" role="group" aria-label="\u884C\u8D70\u65B9\u5411">${[
       ["forward", "\u539F\u5411\u8D70"],
       ["reverse", "\u53CD\u5411\u8D70"]
@@ -6285,8 +6494,9 @@
         `data-direction="${value2}" aria-pressed="${direction === value2}" ${locked ? "disabled" : ""}`
       )
     ).join("")}</div>
-    <p class="small muted">${direction === "reverse" ? "\u5F9E GPX \u7D42\u9EDE\u51FA\u767C\uFF0C\u6CBF\u539F\u8DEF\u7DDA\u53CD\u5411\u8D70\u3002" : "\u5F9E GPX \u8D77\u9EDE\u51FA\u767C\uFF0C\u4F9D\u539F\u59CB\u8ECC\u8DE1\u9806\u5E8F\u8D70\u3002"}\u7AD9\u5E8F\u3001\u8D77\u7D42\u9EDE\u3001\u4E0A\u6CB3\u6642\u9593\u8207\u65E5\u591C\u9810\u4F30\u4E00\u8D77\u66F4\u65B0\uFF1B\u539F\u59CB GPX \u4FDD\u7559\u3002</p>
+    ${compact ? '<details id="direction-method"><summary>\u65B9\u5411\u8AAA\u660E</summary>' : ""}<p class="small muted">${direction === "reverse" ? "\u5F9E GPX \u7D42\u9EDE\u51FA\u767C\uFF0C\u6CBF\u539F\u8DEF\u7DDA\u53CD\u5411\u8D70\u3002" : "\u5F9E GPX \u8D77\u9EDE\u51FA\u767C\uFF0C\u4F9D\u539F\u59CB\u8ECC\u8DE1\u9806\u5E8F\u8D70\u3002"}\u7AD9\u5E8F\u3001\u8D77\u7D42\u9EDE\u3001\u4E0A\u6CB3\u6642\u9593\u8207\u65E5\u591C\u9810\u4F30\u4E00\u8D77\u66F4\u65B0\uFF1B\u539F\u59CB GPX \u4FDD\u7559\u3002</p>
     <p class="small muted">${locked ? "\u6B64\u8D9F\u4F7F\u7528\u51FA\u767C\u6642\u7684\u65B9\u5411\uFF0C\u7D50\u675F\u7D00\u9304\u5F8C\u624D\u53EF\u66F4\u6539\u3002" : "\u53CD\u5411\u4F7F\u7528\u4E0A\u6CB3\u53CD\u5411\u8DEF\u6BB5\u6642\u9593\uFF0C\u7F3A\u8CC7\u6599\u4FDD\u7559\u5F85\u88DC\u3002\u74B0\u72C0\u8DEF\u7DDA\u7684\u9806\uFF0F\u9006\u6642\u91DD\u4F9D GPX \u5E7E\u4F55\u6C7A\u5B9A\u3002"}</p>
+    ${compact ? "</details>" : ""}
     ${error ? `<p class="error-message" role="status">${esc(error)}</p>` : ""}</section>`;
   }
 
@@ -6301,6 +6511,12 @@
     return `<section class="completion-sheet" aria-labelledby="completion-title"><div class="sheet-handle"></div><span class="eyebrow">\u9019\u6B21\u5C71\u884C\u5DF2\u7D50\u675F</span><h2 id="completion-title">\u8981\u4FDD\u5B58\u9019\u6B21\u7D00\u9304\u55CE\uFF1F</h2><p>GPS \u5DF2\u505C\u6B62\u3002\u4F60\u53EF\u4EE5\u6C7A\u5B9A\u662F\u5426\u7559\u4E0B\u9019\u6BB5\u8ECC\u8DE1\u3002</p><div class="completion-stats"><div><small>\u7D00\u9304\u6642\u9593</small><strong>${elapsedLabel(elapsed)}</strong></div><div><small>\u6821\u6B63\u8DDD\u96E2</small><strong>${stats.km.toFixed(2)} <small>km</small></strong></div></div>${gps.saveError ? `<p id="gps-save-status" class="error-message" role="status">${esc(gps.saveError)}</p>` : '<p id="gps-save-status" class="small muted">\u5C1A\u672A\u52A0\u5165\u300C\u6B77\u53F2\u7D00\u9304\u300D</p>'}${button(busy ? "\u8655\u7406\u4E2D\u2026" : "\u4FDD\u5B58\u81F3\u6B77\u53F2\u7D00\u9304", "gps-save", "primary", "folder", busy || !stats.points ? "disabled" : "")}${button("\u4E0D\u4FDD\u5B58\uFF0C\u8FD4\u56DE", "gps-no-save", "", "", busy ? "disabled" : "")}${stats.points ? button("\u4E0B\u8F09 GPX \u5099\u4EFD", "gps-download", "ghost", "download", busy ? "disabled" : "") : '<p class="small muted">\u672A\u53D6\u5F97\u5EA7\u6A19\uFF0C\u6C92\u6709\u53EF\u4EE5\u4FDD\u5B58\u7684\u8ECC\u8DE1\u3002</p>'}<p class="small muted">\u4E0D\u4FDD\u5B58\u53EA\u6703\u79FB\u9664\u9019\u6B21\u7D00\u9304\uFF0C\u5DF2\u532F\u5165\u8207\u5DF2\u4FDD\u5B58\u7684\u8CC7\u6599\u6703\u4FDD\u7559\u3002</p></section>`;
   }
 
+  // src/features/recording/limitations-view.js
+  function recordingLimitations(sourceType = "web-geolocation") {
+    const native = sourceType === "ios-core-location";
+    return `<p class="recording-limitations" role="note">${native ? "\u8ACB\u4FDD\u6301 Ridgewise \u5728\u524D\u666F\u3002\u6B64\u7248 iOS App \u53EA\u5728\u524D\u666F\u5B9A\u4F4D\uFF0C\u9396\u5B9A\u87A2\u5E55\u6216\u5207\u63DB App \u6703\u505C\u6B62 GPS \u5B9A\u4F4D\uFF1B\u8FD4\u56DE\u5F8C\u8ACB\u6838\u5C0D\u72C0\u614B\u4E26\u7E7C\u7E8C\u7D00\u9304\u3002" : "\u8ACB\u4FDD\u6301 Ridgewise \u5728\u524D\u666F\u3002\u9396\u5B9A\u87A2\u5E55\u6216\u5207\u63DB App \u53EF\u80FD\u4E2D\u65B7 GPS \u7D00\u9304\u3002"}\u4E0D\u4FDD\u8B49\u80CC\u666F\u6301\u7E8C\u5B9A\u4F4D\u3002</p>`;
+  }
+
   // src/features/recording/view.js
   function createRecordingView({
     state,
@@ -6312,13 +6528,14 @@
     heightPanel,
     itineraryViews,
     persistence,
+    locationSource,
     document: document2 = globalThis.document
   }) {
     const directMap = state.directMap, saveStatus = persistence.status;
     function recordView() {
       if (gpsPending2()) return gpsView(recordingRoute2());
       const candidate = current(), file = candidate?.kind === "recording" ? null : candidate;
-      return `<div class="record-ready"><section class="panel panel-body stack"><span class="eyebrow">YOUR NEXT WALK</span><h2>${file ? esc(file.name) : "\u4E0D\u532F\u5165\u8DEF\u7DDA\u4E5F\u80FD\u958B\u59CB\u7D00\u9304"}</h2><p class="muted">${file ? "\u53C3\u7167\u9019\u689D\u8DEF\u7DDA\uFF0C\u8A18\u9304\u4F60\u771F\u6B63\u8D70\u904E\u7684\u8ECC\u8DE1\u3002" : "\u5141\u8A31 GPS \u5B9A\u4F4D\uFF0C\u958B\u59CB\u4ECA\u5929\u7684\u5C71\u884C\u3002"}</p><label for="recording-name">\u7D00\u9304\u540D\u7A31\uFF08\u9078\u586B\uFF09</label><input id="recording-name" maxlength="120" placeholder="\u4F8B\u5982\uFF1A\u4ECA\u5929\u7684\u767B\u5C71\u7D00\u9304" value="${esc(state.recordingName)}">${file ? button("\u958B\u59CB\u767B\u5C71\u7D00\u9304", "gps-start", "primary", "locate", state.starting ? "disabled" : "") : button(state.starting ? "\u6E96\u5099\u7D00\u9304\u2026" : "\u76F4\u63A5\u958B\u59CB\u7D00\u9304", "gps-direct", "primary", "locate", state.starting ? "disabled" : "")}${file ? button("\u4E0D\u4F7F\u7528\u8DEF\u7DDA\uFF0C\u76F4\u63A5\u958B\u59CB\u7D00\u9304", "gps-direct", "ghost") : '<button class="button" data-view="routes">\u9078\u64C7\u8DEF\u7DDA\u5F8C\u958B\u59CB</button>'}<p class="small muted">\u7D50\u675F\u6642\u518D\u9078\u64C7\u662F\u5426\u4FDD\u5B58\u81F3\u300C\u6B77\u53F2\u7D00\u9304\u300D\u3002</p>${state.recordingBlocked || state.storageError ? `<p class="error-message">${esc(state.recordingBlocked || state.storageError)}</p>` : ""}</section>${file ? `${directionPanel(file, { locked: state.starting, error: state.directionError })}${itineraryViews?.resourcesPanel() ?? ""}${mapPanel(file)}` : ""}</div>`;
+      return `<div class="record-ready"><section class="panel panel-body stack"><span class="eyebrow">YOUR NEXT WALK</span><h2>${file ? esc(file.name) : "\u4E0D\u532F\u5165\u8DEF\u7DDA\u4E5F\u80FD\u958B\u59CB\u7D00\u9304"}</h2><p class="muted">${file ? "\u53C3\u7167\u9019\u689D\u8DEF\u7DDA\uFF0C\u8A18\u9304\u4F60\u771F\u6B63\u8D70\u904E\u7684\u8ECC\u8DE1\u3002" : "\u5141\u8A31 GPS \u5B9A\u4F4D\uFF0C\u958B\u59CB\u4ECA\u5929\u7684\u5C71\u884C\u3002"}</p><label for="recording-name">\u7D00\u9304\u540D\u7A31\uFF08\u9078\u586B\uFF09</label><input id="recording-name" maxlength="120" placeholder="\u4F8B\u5982\uFF1A\u4ECA\u5929\u7684\u767B\u5C71\u7D00\u9304" value="${esc(state.recordingName)}">${file ? (itineraryViews?.departureSummary?.(file) ?? "") + (itineraryViews?.etaNotice?.(file) ?? "") : ""}${recordingLimitations(locationSource)}${file ? button("\u958B\u59CB\u767B\u5C71\u7D00\u9304", "gps-start", "primary", "locate", state.starting ? "disabled" : "") : button(state.starting ? "\u6E96\u5099\u7D00\u9304\u2026" : "\u76F4\u63A5\u958B\u59CB\u7D00\u9304", "gps-direct", "primary", "locate", state.starting ? "disabled" : "")}${file ? button("\u4E0D\u4F7F\u7528\u8DEF\u7DDA\uFF0C\u76F4\u63A5\u958B\u59CB\u7D00\u9304", "gps-direct", "ghost") : '<button class="button" data-view="routes">\u9078\u64C7\u8DEF\u7DDA\u5F8C\u958B\u59CB</button>'}<p class="small muted">\u7D50\u675F\u6642\u518D\u9078\u64C7\u662F\u5426\u4FDD\u5B58\u81F3\u300C\u6B77\u53F2\u7D00\u9304\u300D\u3002</p>${state.recordingBlocked || state.storageError ? `<p class="error-message">${esc(state.recordingBlocked || state.storageError)}</p>` : ""}</section>${file ? `${directionPanel(file, { locked: state.starting, error: state.directionError })}${itineraryViews?.resourcesPanel() ?? ""}${mapPanel(file)}` : ""}</div>`;
     }
     function gpsView(file) {
       const gps = state.gps, stats = recordingStats(gps);
@@ -6346,7 +6563,7 @@
       }[gps.status];
       const expanded = !stopped && state.recordingMapExpandedId === gps.id;
       const currentAccuracy = gps.status === "tracking" && Number.isFinite(gps.accuracy);
-      return `<section data-status="${esc(gps.status)}" class="recording-scene ${stopped ? "recording-stopped" : ""}"><header class="recording-heading"><div><span class="eyebrow">${stopped ? "YOUR WALK" : currentMapPosition(gps) ? "LIVE GPS" : "GPS STATUS"}${gps.sourceRouteId ? gps.sourceRouteDirection === "reverse" ? " \xB7 \u53CD\u5411\u8D70" : " \xB7 \u539F\u5411\u8D70" : ""}</span><h2>${esc(gps.name || file.name)}</h2></div><div class="recording-status-group"><span class="record-status" data-status="${esc(gps.status)}" role="status" aria-live="polite">${status}</span><span id="gps-clock" class="recording-elapsed" aria-label="\u7D00\u9304\u6642\u9593">${elapsedLabel(gpsElapsed())}</span></div></header><p id="gps-location-status" class="recording-location-status"${stopped || currentMapPosition(gps) ? " hidden" : ""}>${locationStatus}</p><div class="recording-map ${expanded ? "recording-map-expanded" : ""}" aria-describedby="gps-location-status">${mapPanel(file, null, recordingSegments(gps), { compact: true })}</div>${stopped ? completionView(gps, gpsElapsed()) : `<section class="recording-sheet"><div class="sheet-handle"></div>${itineraryViews && gps.sourceRouteId ? itineraryViews.nextCard() : '<div class="direct-next"><span class="eyebrow">\u8A18\u4E0B\u81EA\u5DF1\u7684\u8DEF</span><h2>\u81EA\u7531\u7D00\u9304</h2><p class="small muted">\u85CD\u7DDA\u662F\u5DF2\u8A18\u9304\u8ECC\u8DE1\uFF0C\u76EE\u524D\u672A\u4F7F\u7528\u9810\u5B9A\u8DEF\u7DDA\u3002</p></div>'}${itineraryViews?.liveFactorsPanel?.() ?? ""}<div class="live-stats"><div><small>\u884C\u9032\u91CC\u7A0B</small><strong id="gps-distance">${stats.km.toFixed(2)} <small>km</small></strong></div><div><small>GPS \u7CBE\u5EA6</small><strong>${currentAccuracy ? `${Math.round(gps.accuracy)} <small>m</small>` : "\u2014"}</strong></div></div>${gps.error ? `<p class="error-message" role="status">${esc(gps.error)}</p>` : ""}${reroutePanel(state)}${itineraryViews?.departureNotice?.() ?? ""}<div class="live-controls">${button(["paused", "error"].includes(gps.status) ? "\u7E7C\u7E8C\u7D00\u9304" : "\u66AB\u505C\u7D00\u9304", ["paused", "error"].includes(gps.status) ? "gps-resume" : "gps-pause", "", ["paused", "error"].includes(gps.status) ? "play" : "pause")}${button("\u7D50\u675F\u7D00\u9304", "gps-finish", "end-recording", "stop")}</div><details class="recording-more" id="recording-more"><summary>\u7D00\u9304\u72C0\u614B\u8207\u66F4\u591A\u8CC7\u8A0A</summary><div class="stack">${itineraryViews?.liveFactorsDetails?.() ?? ""}${itineraryViews?.departurePanel?.() ?? ""}<p id="gps-save-status" class="small muted" role="status">${esc(saveStatus())}</p>${button("\u91CD\u8A66\u4FDD\u5B58", "gps-save-retry", "", "refresh", `id="gps-save-retry" ${gps.saveError ? "" : "hidden"}`)}<p class="small muted">\u8ACB\u4FDD\u6301\u5206\u9801\u958B\u555F\uFF1B\u9396\u5C4F\u8207\u80CC\u666F\u5B9A\u4F4D\u53EF\u80FD\u4E2D\u65B7\u3002\u8349\u7A3F\u53EA\u4F9B\u6062\u5FA9\uFF0C\u4E0D\u6703\u81EA\u52D5\u52A0\u5165\u300C\u6B77\u53F2\u7D00\u9304\u300D\u3002\u8DDD\u96E2\u8207\u9AD8\u5EA6\u6703\u96A8\u5F8C\u7E8C\u5B9A\u4F4D\u6821\u6B63\uFF0C\u539F\u59CB GPX \u4FDD\u7559\u3002</p>${button("\u4E0B\u8F09\u5099\u4EFD", "gps-download", "ghost", "download")}${button(stats.points ? "\u653E\u68C4\u9019\u6B21\u7D00\u9304" : "\u53D6\u6D88\u7A7A\u767D\u7D00\u9304", "gps-discard", "ghost", "close")}<p class="small muted">\u5DF2\u4FDD\u7559 ${stats.points} \u500B\u539F\u59CB\u9EDE \xB7 ${gps.segments.filter((segment) => segment.length).length} \u6BB5\u8ECC\u8DE1</p><p class="small muted">\u6821\u6B63\u722C\u5347 <span id="gps-ascent">${meters(stats.up)}</span> m \uFF0F\u4E0B\u964D <span id="gps-descent">${meters(stats.down)}</span> m \xB7 \u5E73\u5747\u901F\u5EA6 <span id="gps-average">\u2014</span></p></div></details></section>`}</section>${heightPanel ? `<details class="recording-height-profile" id="recording-height-profile"><summary>\u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762\u30FB\u65E5\u591C\u8DEF\u6BB5</summary>${heightPanel(file, recordingSegments(gps))}</details>` : ""}${!stopped && file === directMap ? `<details class="manual-reference" id="manual-reference"><summary>\u9032\u968E\uFF1A\u624B\u52D5\u4E0A\u6CB3\u8DEF\u6BB5\u8A08\u6642</summary>${shanghePanel()}</details>` : ""}`;
+      return `<section data-status="${esc(gps.status)}" class="recording-scene ${stopped ? "recording-stopped" : ""}"><header class="recording-heading"><div><span class="eyebrow">${stopped ? "YOUR WALK" : currentMapPosition(gps) ? "LIVE GPS" : "GPS STATUS"}${gps.sourceRouteId ? gps.sourceRouteDirection === "reverse" ? " \xB7 \u53CD\u5411\u8D70" : " \xB7 \u539F\u5411\u8D70" : ""}</span><h2>${esc(gps.name || file.name)}</h2></div><div class="recording-status-group"><span class="record-status" data-status="${esc(gps.status)}" role="status" aria-live="polite">${status}</span><span id="gps-clock" class="recording-elapsed" aria-label="\u7D00\u9304\u6642\u9593">${elapsedLabel(gpsElapsed())}</span></div></header>${state.recordingRouteWarning ? `<p class="recording-route-warning error-message" role="status">${esc(state.recordingRouteWarning)}</p>` : ""}<p id="gps-location-status" class="recording-location-status"${stopped || currentMapPosition(gps) ? " hidden" : ""}>${locationStatus}</p><div class="recording-map ${expanded ? "recording-map-expanded" : ""}" aria-describedby="gps-location-status">${mapPanel(file, null, recordingSegments(gps), { compact: true })}</div>${stopped ? completionView(gps, gpsElapsed()) : `<section class="recording-sheet"><div class="sheet-handle"></div>${itineraryViews && gps.sourceRouteId ? itineraryViews.nextCard() : '<div class="direct-next"><span class="eyebrow">\u8A18\u4E0B\u81EA\u5DF1\u7684\u8DEF</span><h2>\u81EA\u7531\u7D00\u9304</h2><p class="small muted">\u85CD\u7DDA\u662F\u5DF2\u8A18\u9304\u8ECC\u8DE1\uFF0C\u76EE\u524D\u672A\u4F7F\u7528\u9810\u5B9A\u8DEF\u7DDA\u3002</p></div>'}${itineraryViews?.liveFactorsPanel?.() ?? ""}<div class="live-stats"><div><small>\u884C\u9032\u91CC\u7A0B</small><strong id="gps-distance">${stats.km.toFixed(2)} <small>km</small></strong></div><div><small>GPS \u7CBE\u5EA6</small><strong>${currentAccuracy ? `${Math.round(gps.accuracy)} <small>m</small>` : "\u2014"}</strong></div></div>${gps.error ? `<p class="error-message" role="status">${esc(gps.error)}</p>` : ""}${reroutePanel(state)}${itineraryViews?.departureNotice?.() ?? ""}<div class="live-controls">${button(["paused", "error"].includes(gps.status) ? "\u7E7C\u7E8C\u7D00\u9304" : "\u66AB\u505C\u7D00\u9304", ["paused", "error"].includes(gps.status) ? "gps-resume" : "gps-pause", "", ["paused", "error"].includes(gps.status) ? "play" : "pause")}${button("\u7D50\u675F\u7D00\u9304", "gps-finish", "end-recording", "stop")}</div><details class="recording-more" id="recording-more"><summary>\u7D00\u9304\u72C0\u614B\u8207\u66F4\u591A\u8CC7\u8A0A</summary><div class="stack">${itineraryViews?.liveFactorsDetails?.() ?? ""}${itineraryViews?.departurePanel?.() ?? ""}<p id="gps-save-status" class="small muted" role="status">${esc(saveStatus())}</p>${button("\u91CD\u8A66\u4FDD\u5B58", "gps-save-retry", "", "refresh", `id="gps-save-retry" ${gps.saveError ? "" : "hidden"}`)}${recordingLimitations(locationSource)}<p class="small muted">\u8349\u7A3F\u53EA\u4F9B\u6062\u5FA9\uFF0C\u4E0D\u6703\u81EA\u52D5\u52A0\u5165\u300C\u6B77\u53F2\u7D00\u9304\u300D\u3002\u8DDD\u96E2\u8207\u9AD8\u5EA6\u6703\u96A8\u5F8C\u7E8C\u5B9A\u4F4D\u6821\u6B63\uFF0C\u539F\u59CB GPX \u4FDD\u7559\u3002</p>${button("\u4E0B\u8F09\u5099\u4EFD", "gps-download", "ghost", "download")}${button(stats.points ? "\u653E\u68C4\u9019\u6B21\u7D00\u9304" : "\u53D6\u6D88\u7A7A\u767D\u7D00\u9304", "gps-discard", "ghost", "close")}<p class="small muted">\u5DF2\u4FDD\u7559 ${stats.points} \u500B\u539F\u59CB\u9EDE \xB7 ${gps.segments.filter((segment) => segment.length).length} \u6BB5\u8ECC\u8DE1</p><p class="small muted">\u6821\u6B63\u722C\u5347 <span id="gps-ascent">${meters(stats.up)}</span> m \uFF0F\u4E0B\u964D <span id="gps-descent">${meters(stats.down)}</span> m \xB7 \u5E73\u5747\u901F\u5EA6 <span id="gps-average">\u2014</span></p></div></details></section>`}</section>${heightPanel ? `<details class="recording-height-profile" id="recording-height-profile"><summary>\u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762\u30FB\u65E5\u591C\u8DEF\u6BB5</summary>${heightPanel(file, recordingSegments(gps))}</details>` : ""}${!stopped && file === directMap ? `<details class="manual-reference" id="manual-reference"><summary>\u9032\u968E\uFF1A\u624B\u52D5\u4E0A\u6CB3\u8DEF\u6BB5\u8A08\u6642</summary>${shanghePanel()}</details>` : ""}`;
     }
     function shanghePanel(readonly = false) {
       const gps = state.gps, calibration = gps.calibration || { completed: [] }, active = calibration.active, factor = shangheFactor(calibration.completed);
@@ -8672,6 +8889,54 @@
     };
   }
 
+  // src/features/itinerary/availability.js
+  function etaAvailability(data, { file, status, error } = {}) {
+    if (data?.compatible === false)
+      return {
+        code: "version-mismatch",
+        message: "\u8DEF\u7DDA\u6216\u6642\u9593\u8CC7\u6599\u7248\u672C\u5DF2\u8B8A\u66F4\uFF0C\u76EE\u524D\u7D00\u9304\u7121\u6CD5\u5957\u7528\u65B0\u7684 ETA\u3002"
+      };
+    if (Number.isFinite(data?.totalSeconds)) return null;
+    if (!data || data.timeBasisReason === "shanghe-source-unavailable")
+      return {
+        code: "reference-unavailable",
+        message: error || status === "error" ? "\u6642\u9593\u53C3\u8003\u8CC7\u6599\u7121\u6CD5\u8B80\u53D6\uFF0C\u66AB\u6642\u4E0D\u80FD\u8A08\u7B97\u5168\u7A0B ETA\u3002" : "\u5C1A\u672A\u53D6\u5F97\u9019\u689D\u8DEF\u7DDA\u53EF\u7528\u7684\u6642\u9593\u53C3\u8003\u8CC7\u6599\u3002"
+      };
+    if (data.timeBasis === "gpx-moving-time") {
+      const reason = file ? timeOriginFor(file).reason : null;
+      const sources = {
+        "gpx-time-direction-mismatch": "\u53CD\u5411\u7F3A\u5C11\u7368\u7ACB\u6709\u6548\u6642\u9593\u8CC7\u6599\uFF0C\u4E0D\u80FD\u501F\u7528\u539F\u5411\u6642\u9593\u8A08\u7B97 ETA\u3002",
+        "nonrecorded-gpx-time": "GPX \u542B\u898F\u5283\u3001\u5408\u6210\u6216\u88DC\u5BEB\u7684\u6642\u9593\uFF0C\u4E0D\u80FD\u4F5C\u70BA\u5BE6\u6E2C\u6642\u9593\u57FA\u6E96\u3002",
+        "missing-gpx-time": "GPX \u6C92\u6709\u53EF\u7528\u7684\u6642\u9593\u6233\uFF0C\u76EE\u524D\u4E0D\u80FD\u8A08\u7B97\u5168\u7A0B ETA\u3002",
+        "time-source-content-mismatch": "GPX \u5167\u5BB9\u8207\u539F\u6709\u6642\u9593\u4F86\u6E90\u8A2D\u5B9A\u4E0D\u4E00\u81F4\uFF0C\u8ACB\u6838\u5C0D\u539F\u59CB\u6A94\u6848\u3002",
+        "recording-time-range-mismatch": "\u9304\u88FD\u6642\u9593\u7BC4\u570D\u8207 GPX \u4E0D\u4E00\u81F4\uFF0C\u4E0D\u80FD\u4F5C\u70BA\u6709\u6548\u6642\u9593\u57FA\u6E96\u3002"
+      };
+      if (sources[reason]) return { code: reason, message: sources[reason] };
+    }
+    if (data.startCovered === false || data.endCovered === false)
+      return {
+        code: "endpoint-coverage",
+        message: "GPX \u8D77\u9EDE\u6216\u7D42\u9EDE\u7F3A\u5C11\u5C0D\u61C9\u6642\u9593\u7AD9\u9EDE\uFF1B\u76EE\u524D\u53EA\u80FD\u986F\u793A\u6709\u57FA\u6E96\u7684\u90E8\u5206\u8DEF\u6BB5\u3002"
+      };
+    if ((data.rows?.length ?? 0) < 2)
+      return {
+        code: "stations-unavailable",
+        message: "\u5C1A\u672A\u627E\u5230\u8DB3\u5920\u7684\u53EF\u7528\u6642\u9593\u7AD9\u9EDE\uFF0C\u7121\u6CD5\u8A08\u7B97\u5168\u7A0B ETA\u3002"
+      };
+    if (data.rows.some((row) => /多條|歧義|衝突|不一致|複雜/.test(row.reason ?? "")))
+      return {
+        code: "ambiguous-time-path",
+        message: "\u7AD9\u9593\u6642\u9593\u8DEF\u5F91\u6709\u591A\u7A2E\u53EF\u80FD\u6216\u5C1A\u5F85\u6838\u5C0D\uFF0C\u7121\u6CD5\u78BA\u8A8D\u5168\u7A0B ETA\u3002"
+      };
+    return data.timeBasis === "gpx-moving-time" ? {
+      code: "gpx-time-incomplete",
+      message: "GPX \u90E8\u5206\u6642\u9593\u6233\u7F3A\u5931\u3001\u7570\u5E38\u6216\u5340\u6BB5\u7121\u6CD5\u9023\u63A5\uFF0C\u7121\u6CD5\u8A08\u7B97\u5168\u7A0B ETA\u3002"
+    } : {
+      code: "missing-directed-time",
+      message: "\u7F3A\u5C11\u90E8\u5206\u7AD9\u9593\u7684\u4E0A\u6CB3\u6709\u5411\u57FA\u6E96\u6642\u9593\uFF0C\u7121\u6CD5\u8A08\u7B97\u5168\u7A0B ETA\u3002"
+    };
+  }
+
   // src/features/itinerary/views.js
   var duration3 = (seconds) => {
     if (seconds === null || !Number.isFinite(seconds)) return "\u5C1A\u672A\u63D0\u4F9B";
@@ -8705,6 +8970,22 @@
     const gpxBasis = () => itinerary.snapshot()?.timeBasis === "gpx-moving-time";
     const basis = () => gpxBasis() ? "GPX \u53C3\u8003\u6642\u9593" : "\u4E0A\u6CB3";
     const liveFactors = createLiveFactorView({ state, itinerary, document: document2 });
+    const estimatedDuration = () => `${itinerary.snapshot()?.timeModel?.reference && Number.isFinite(itinerary.snapshot()?.totalSeconds) ? "\u53C3\u8003 ETA \xB7 " : ""}${duration3(itinerary.snapshot()?.totalSeconds)}`;
+    function departureSummary(file) {
+      const data = itinerary.snapshot();
+      return `<dl class="departure-checks" aria-label="\u51FA\u767C\u524D\u8DEF\u7DDA\u78BA\u8A8D"><div><dt>\u8DEF\u7DDA</dt><dd>${esc(file.name)}</dd></div><div><dt>\u65B9\u5411</dt><dd>${file.direction === "reverse" ? "\u53CD\u5411\u8D70" : "\u539F\u5411\u8D70"}</dd></div><div><dt>\u6642\u9593\u57FA\u6E96</dt><dd>${basis() === "\u4E0A\u6CB3" ? "\u4E0A\u6CB3 1.0" : basis()}</dd></div><div><dt>\u8A2D\u5B9A\u500D\u7387</dt><dd>${(data?.factor ?? 1).toFixed(2)} \u500D</dd></div><div><dt>\u5168\u7A0B\u9810\u4F30\u8017\u6642</dt><dd>${Number.isFinite(data?.totalSeconds) ? estimatedDuration() : "\u4E0D\u53EF\u7528\uFF0C\u6642\u9593\u8CC7\u6599\u4E0D\u8DB3"}</dd></div></dl>`;
+    }
+    function etaNotice(file) {
+      const data = itinerary.snapshot();
+      const unavailable2 = etaAvailability(data, {
+        file,
+        status: state.itinerary.status,
+        error: state.itinerary.error
+      });
+      if (!unavailable2) return "";
+      const canExplain = data?.rows?.some((row, index) => index > 0 && row.reason);
+      return `<div class="eta-unavailable" role="status" data-eta-unavailable="${unavailable2.code}"><p>${esc(unavailable2.message)}</p><p>\u8ABF\u6574\u500D\u7387\u4E0D\u6703\u88DC\u8DB3\u7F3A\u5931\u8CC7\u6599\uFF0C\u4ECD\u53EF\u67E5\u770B\u8DEF\u7DDA\u6216\u958B\u59CB GPS \u7D00\u9304\u3002</p>${canExplain ? button("\u67E5\u770B\u7F3A\u5C11\u7684\u6642\u9593\u4F9D\u64DA", "eta-unavailable-details", "ghost") : ""}</div>`;
+    }
     function departureNotice() {
       return itinerary.departureStatus?.().canConfirm ? `<p class="soft-notice">\u51FA\u767C\u4F4D\u7F6E\u8207\u9996\u500B\u5B9A\u4F4D\u524D\u7684\u8DEF\u7A0B\u5C1A\u5F85\u6838\u5C0D\u3002${button("\u6838\u5C0D\u51FA\u767C\u4F4D\u7F6E", "live-departure-show", "ghost")}</p>` : "";
     }
@@ -8713,9 +8994,10 @@
       if (!info?.canConfirm && !info?.confirmed) return "";
       return info.confirmed ? '<p class="small muted">\u51FA\u767C\u4F4D\u7F6E\u7531\u4F7F\u7528\u8005\u78BA\u8A8D\uFF08\u672A\u7368\u7ACB\u9A57\u8B49\uFF09\uFF1B\u500D\u7387\u50C5\u4F7F\u7528\u8A72 GPS \u9328\u9EDE\u4E4B\u5F8C\u7684\u5DF2\u77E5\u57FA\u6E96\u3002</p>' : `<section class="stack" aria-label="\u78BA\u8A8D\u500D\u7387\u51FA\u767C\u4F4D\u7F6E"><strong>\u6838\u5C0D\u500D\u7387\u51FA\u767C\u4F4D\u7F6E</strong><p class="small muted">\u7B2C\u4E00\u500B\u6642\u9593\u7AD9\u9EDE\uFF1A${esc(info.stationName ?? "\u672A\u547D\u540D")}\uFF1B\u5DEE\u8DDD\u7D04 ${Math.round(info.distanceM)}m\uFF0CGPS \u7CBE\u5EA6 ${Math.round(info.gpsAccuracyM)}m\u3002\u7AD9\u9EDE\u5EA7\u6A19\u4F86\u6E90\uFF1A${esc(info.coordinateSource?.provider ?? "\u672A\u63D0\u4F9B")}\uFF1B\u5EA7\u6A19\u8AA4\u5DEE\u672A\u77E5\uFF0C\u63A5\u8FD1\u4E0D\u4EE3\u8868\u540C\u4E00\u51FA\u767C\u9EDE\u3002</p><label class="small"><input type="checkbox" id="live-departed-here"> \u6309\u958B\u59CB\u7D00\u9304\u6642\u6211\u5C31\u5728\u9019\u500B\u51FA\u767C\u4F4D\u7F6E</label><label class="small"><input type="checkbox" id="live-no-earlier-travel"> \u5B9A\u4F4D\u524D\u6C92\u6709\u8D70\u904E\u672A\u8A18\u9304\u8DEF\u7A0B\uFF0C\u4E14\u6B64\u4F4D\u7F6E\u78BA\u5728\u540C\u4E00 GPX \u8DEF\u5F91</label>${button("\u78BA\u8A8D GPS \u51FA\u767C\u9328\u9EDE", "live-departure-confirm")}<p class="small muted">\u53EA\u63A1\u7528\u771F\u5BE6 GPS \u9328\u9EDE\u4EE5\u5F8C\u7684\u5DF2\u77E5${gpxBasis() ? "GPX \u79FB\u52D5\u6642\u9593" : "\u4E0A\u6CB3"}\u5DEE\u503C\uFF0C\u4E0D\u88DC\u672A\u77E5\u524D\u7DB4\u3001\u4E0D\u6539\u51FA\u767C\u6642\u9593\uFF1B\u78BA\u8A8D\u662F\u4F60\u7684\u8072\u660E\uFF0C\u4E26\u975E\u5B9A\u4F4D\u6216\u7AD9\u9EDE\u4F86\u6E90\u5DF2\u9A57\u8B49\u3002</p>${state.itinerary.liveDepartureError ? '<p class="error-message" role="status">' + esc(state.itinerary.liveDepartureError) + "</p>" : ""}</section>`;
     }
-    function resourcesPanel() {
+    function resourcesPanel({ compact = false } = {}) {
       const data = state.itinerary, locked = gpsPending2();
-      return `<section class="panel panel-body stack itinerary-resources"><span class="eyebrow">YOUR PACE</span><h2>\u8A2D\u5B9A\u500D\u7387</h2><p class="small muted">${gpxBasis() ? "\u6642\u9593\u57FA\u6E96\uFF1AGPX \u53C3\u8003\u6642\u9593\u30021.0 \u500D\uFF1D\u539F GPX \u6709\u6548\u6642\u9593\u6233\u7684\u7D93\u904E\u6642\u9593\uFF0C\u6263\u9664\u660E\u78BA\u9577\u505C\u7559\uFF1B\u77ED\u66AB\u4F4E\u901F\u53CA\u505C\u7559\u4FDD\u7559\uFF0C\u7F3A\u5931\u5340\u6BB5\u4E0D\u88DC\u79D2\u6578\uFF0C\u53CD\u5411\u9700\u53E6\u6709\u5BE6\u6E2C\u3002" : "\u5F71\u97FF ETA\uFF1B\u4EE5\u4E0A\u6CB3 1.0 \u6709\u5411\u6642\u9593\u70BA\u57FA\u6E96\uFF0C\u4F9D GPX \u6BD4\u5C0D\u6709\u4F86\u6E90\u5EA7\u6A19\u7684\u7AD9\u9EDE\u3002"}</p><label for="itinerary-factor">${basis()}\u6642\u9593\u500D\u7387</label><input id="itinerary-factor" type="number" min="0.01" max="10" step="0.05" value="${gpxBasis() ? itinerary.snapshot()?.factor ?? 1 : data.factor}" ${locked ? "disabled" : ""}><p class="small muted">1.2 \u500D\uFF1D\u57FA\u6E96\u6642\u9593\u589E\u52A0 20%\uFF1B\u4E0D\u53E6\u5916\u52A0\u4F11\u606F\u6642\u9593\u3002</p>${locked ? '<p class="small muted">\u6B64\u8D9F\u4F7F\u7528\u51FA\u767C\u6642\u8A2D\u5B9A\u7684\u500D\u7387\u3002</p>' : ""}${data.error ? `<p class="error-message" role="status">${esc(data.error)}</p>` : ""}</section>`;
+      const explanation = gpxBasis() ? "1.0 \u500D\uFF1D\u539F GPX \u6709\u6548\u6642\u9593\u6233\u7684\u7D93\u904E\u6642\u9593\uFF0C\u6263\u9664\u660E\u78BA\u9577\u505C\u7559\uFF1B\u77ED\u66AB\u4F4E\u901F\u53CA\u505C\u7559\u4FDD\u7559\uFF0C\u7F3A\u5931\u5340\u6BB5\u4E0D\u88DC\u79D2\u6578\uFF0C\u53CD\u5411\u9700\u53E6\u6709\u5BE6\u6E2C\u3002" : "\u4EE5\u4E0A\u6CB3 1.0 \u6709\u5411\u6642\u9593\u70BA\u57FA\u6E96\uFF0C\u4F9D GPX \u6BD4\u5C0D\u6709\u4F86\u6E90\u5EA7\u6A19\u7684\u7AD9\u9EDE\uFF1B\u7F3A\u5931\u6642\u9593\u4E0D\u88DC\u4F30\u3002";
+      return `<section class="${compact ? "departure-factor itinerary-resources stack" : "panel panel-body stack itinerary-resources"}">${compact ? "" : '<span class="eyebrow">YOUR PACE</span>'}<h2>\u8A2D\u5B9A\u500D\u7387</h2><label for="itinerary-factor">${basis()}\u6642\u9593\u500D\u7387 \xB7 \u5F71\u97FF ETA</label><input id="itinerary-factor" type="number" min="0" max="10" step="any" inputmode="decimal" aria-describedby="factor-guidance" value="${itinerary.snapshot()?.factor ?? data.factor}" ${locked ? "disabled" : ""}><div class="factor-presets" role="group" aria-label="\u5E38\u7528\u6642\u9593\u500D\u7387">${[0.8, 1, 1.2, 1.5].map((value2) => button(value2.toFixed(1) + "\xD7", "itinerary-factor-preset", "ghost", "", `data-factor="${value2}" aria-pressed="${value2 === (itinerary.snapshot()?.factor ?? data.factor)}" ${locked ? "disabled" : ""}`)).join("")}</div><p id="factor-guidance" class="small muted">1.2 \u500D\uFF1D\u57FA\u6E96\u6642\u9593\u589E\u52A0 20%\uFF1B\u4E0D\u53E6\u5916\u52A0\u4F11\u606F\u6642\u9593\u3002</p><details id="factor-method"><summary>\u500D\u7387\u8207\u6642\u9593\u57FA\u6E96\u8AAA\u660E</summary><p class="small muted">${explanation}</p><p class="small muted">${gpxBasis() ? "\u6B64\u88DD\u7F6E\u7684 GPX \u6642\u9593\u500D\u7387\u6703\u6CBF\u7528\u81F3\u5176\u4ED6 GPX \u6642\u9593\u8DEF\u7DDA\uFF0C\u8207\u4E0A\u6CB3\u500D\u7387\u5206\u958B\u4FDD\u5B58\u3002" : "\u6B64\u88DD\u7F6E\u7684\u4E0A\u6CB3\u500D\u7387\u6703\u6CBF\u7528\u81F3\u5176\u4ED6\u4E0A\u6CB3\u57FA\u6E96\u8DEF\u7DDA\uFF0C\u8207 GPX \u6642\u9593\u500D\u7387\u5206\u958B\u4FDD\u5B58\u3002"}</p></details>${locked ? '<p class="small muted">\u6B64\u8D9F\u4F7F\u7528\u51FA\u767C\u6642\u8A2D\u5B9A\u7684\u500D\u7387\u3002</p>' : ""}${data.factorError || data.error ? `<p class="error-message" role="status">${esc(data.factorError || data.error)}</p>` : ""}</section>`;
     }
     function stationRow(row, data, number) {
       const passed = data.active && row.index < data.nextIndex;
@@ -8803,7 +9085,9 @@
       updateNumbers,
       timeBasisLabel: basis,
       referenceDuration,
-      estimatedDuration: () => `${itinerary.snapshot()?.timeModel?.reference && Number.isFinite(itinerary.snapshot()?.totalSeconds) ? "\u53C3\u8003 ETA \xB7 " : ""}${duration3(itinerary.snapshot()?.totalSeconds)}`
+      estimatedDuration,
+      departureSummary,
+      etaNotice
     };
   }
 
@@ -8830,7 +9114,7 @@
       } : file;
       return `<section class="chart-wrap"><div class="chart-title"><span class="chart-heading">${icon("mountain")}${file === directMap ? "\u7D00\u9304\u7684" : "\u8DEF\u7DDA"}\u9AD8\u5EA6\u5256\u9762</span><span>\u6CBF\u9014\u7684\u9AD8\u5EA6\u8B8A\u5316</span></div>${heightProfile?.panel(plotted) ?? elevationSvg(plotted)}</section>`;
     }
-    function mapPanel(file, position3 = null, live = [], { compact = false } = {}) {
+    function mapPanel(file, position3 = null, live = [], { compact = false, includeHeight = true } = {}) {
       const showNavigation = compact && ["requesting", "tracking", "paused", "error"].includes(state.gps.status);
       return `<section class="panel ${compact ? "compact-map" : ""}"><div class="panel-header"><div><h2>${file === directMap ? "\u6211\u7684\u8ECC\u8DE1" : "\u8DEF\u7DDA\u8207\u5730\u5F62"}</h2><p>${file === directMap ? "\u5BE6\u969B GPS \u4F4D\u7F6E" : file.processing ? "\u6821\u6B63\u5F8C GPX \u8DEF\u7DDA" : "GPX \u8DEF\u7DDA"} \xB7 ${state.mapMode === "terrain" ? "\u53EF\u65CB\u8F49\u8996\u89D2" : "\u5317\u65B9\u671D\u4E0A"}</p></div><span class="chip">${(file === directMap ? live : file.segments).filter((segment) => segment.length).length} \u6BB5\u8ECC\u8DE1</span></div>
     <div class="terrain-toolbar"><div class="tab-group" role="group" aria-label="\u5730\u5716\u6A21\u5F0F">${[
@@ -8849,13 +9133,13 @@
         ""
       )}</div><div class="map-navigation-tools">${button("\u770B\u5168\u7A0B", "map-fit", "ghost")}${showNavigation ? button(`<span data-location-label>${currentMapPosition(state.gps) ? terrainMap.following() ? "\u8DDF\u96A8\u4E2D" : "\u6211\u7684\u4F4D\u7F6E" : "\u5C1A\u7121\u5B9A\u4F4D"}</span>`, "map-locate", "ghost", "locate", `aria-label="\u56DE\u5230\u6211\u7684\u4F4D\u7F6E\u4E26\u8DDF\u96A8 GPS" aria-pressed="${Boolean(currentMapPosition(state.gps) && terrainMap.following())}" ${currentMapPosition(state.gps) ? "" : "disabled"}`) + button(state.recordingMapExpandedId === state.gps.id ? "\u7E2E\u5C0F\u5730\u5716" : "\u5C55\u958B\u5730\u5716", "recording-map-toggle", "ghost", "", `aria-expanded="${state.recordingMapExpandedId === state.gps.id}" aria-controls="track-map"`) : ""}</div></div>
     ${state.mapMode === "terrain" ? `<div class="terrain-camera-controls" role="group" aria-label="3D \u8996\u89D2"><label for="map-pitch">\u50BE\u659C <span id="map-pitch-value">${Math.round(terrainMap.pitch())}\xB0</span></label><input id="map-pitch" type="range" min="0" max="75" step="5" value="${Math.round(terrainMap.pitch())}">${button("\u5DE6\u8F49", "map-rotate", "ghost", "", 'data-angle="-30"')}${button("\u53F3\u8F49", "map-rotate", "ghost", "", 'data-angle="30"')}${button("\u5317\u5411", "map-north", "ghost")}</div><p class="terrain-gesture-note">\u53F3\u9375\u62D6\u66F3\u53EF\u65CB\u8F49\u8207\u50BE\u659C\uFF1B\u624B\u6A5F\u53EF\u96D9\u6307\u65CB\u8F49\u3001\u4E0A\u4E0B\u6ED1\u52D5\uFF0C\u6216\u4F7F\u7528\u4E0A\u65B9\u8996\u89D2\u63A7\u5236\u3002</p>` : ""}
-    ${stationEditor?.panel() ?? ""}
     <div class="actual-map" id="track-map">${mapSvg(file, position3, live, false, itineraryMarkers(itinerary?.snapshot()))}</div>
+    ${stationEditor?.panel() ?? ""}
     <div class="terrain-status-row"><p id="map-status" class="terrain-status" role="status" aria-live="polite">${state.mapMode === "plain" ? "\u55AE\u7D14\u8ECC\u8DE1\u6A21\u5F0F\uFF0C\u4E0D\u8F09\u5165\u5E95\u5716\u3002" : "\u6B63\u5728\u8F09\u5165\u5E95\u5716\u2026"}</p>${button("\u91CD\u8A66\u5E95\u5716", "map-retry", "ghost", "refresh", 'id="map-retry" hidden')}</div>
     <div class="legend">${file === directMap ? "" : `<span><i style="background:#326753"></i>${file.kind === "recording" ? "\u4FDD\u5B58\u7684 GPS \u8ECC\u8DE1" : "\u61C9\u8D70\u8DEF\u7DDA"}</span>`}${live.length ? '<span><i style="background:#4388b7"></i>\u5BE6\u969B GPS \u7D00\u9304</span>' : ""}<span class="legend-note">\u4E2D\u65B7\u8655\u4E0D\u9023\u7DDA \xB7 \u62D6\u66F3\u79FB\u52D5\u3001\u6EFE\u8F2A\u6216\u96D9\u6307\u7E2E\u653E</span></div>
     <p class="terrain-note">${state.mapMode === "plain" ? "\u55AE\u7D14\u8ECC\u8DE1\u6A21\u5F0F\u4E0D\u8ACB\u6C42\u5E95\u5716\uFF0C\u4ECD\u53EF\u7E2E\u653E\u8207\u79FB\u52D5 GPX \u8DEF\u7DDA\u3002" : state.mapMode === "terrain" ? "\u767B\u5C71\u5E95\u5716\uFF1AOpenTopoMap\uFF1B\u7ACB\u9AD4\u9AD8\u7A0B\uFF1AMapterhorn\uFF0C\u539F\u6BD4\u4F8B 1\xD7\u3002\u958B\u555F\u6642\u6703\u5411\u5169\u500B\u5716\u8CC7\u670D\u52D9\u8ACB\u6C42\u700F\u89BD\u5340\u57DF\uFF0CGPX \u4E0D\u6703\u4E0A\u50B3\u3002\u5C1A\u672A\u63D0\u4F9B\u96E2\u7DDA 3D \u5730\u5716\u3002" : "\u5DF2\u4E0B\u8F09\u6642\u4F7F\u7528\u672C\u6A5F\u53F0\u7063\u6A19\u6E96\u5E95\u5716\uFF08OSM\uFF0FProtomaps\uFF09\uFF1B\u5426\u5247\u4F7F\u7528 OSM \u7DDA\u4E0A\u5E95\u5716\u3002\u5169\u7A2E\u5E95\u5716\u6A23\u5F0F\u7565\u6709\u4E0D\u540C\uFF0CGPX \u6A94\u6848\u4E0D\u6703\u4E0A\u50B3\u3002"}</p>
     ${state.mapMode === "standard" && !compact ? offlineMapPanel(offlineMaps, file) : ""}
-    ${compact ? "" : heightPanel(file, live)}</section>`;
+    ${compact || !includeHeight ? "" : heightPanel(file, live)}</section>`;
     }
     return { mapPanel, heightPanel };
   }
@@ -9044,32 +9328,42 @@
   }
 
   // src/features/routes/views.js
-  function createRouteViews({ current, gpsPending: gpsPending2, mapPanel, itineraryViews, state }) {
+  function createRouteViews({
+    current,
+    gpsPending: gpsPending2,
+    mapPanel,
+    heightPanel,
+    itineraryViews,
+    state,
+    locationSource
+  }) {
     const correctionPanel = createCorrectionView({ state });
     function routeStats(file) {
-      return `<div class="stats">${metric("\u8ECC\u8DE1\u8DDD\u96E2", file.stats.km.toFixed(2), "km", "distance")}${metric("\u5168\u7A0B\u9810\u4F30\u6642\u9593", itineraryViews?.estimatedDuration?.() ?? "\u5C1A\u672A\u63D0\u4F9B", "", "clock")}${metric("\u7D2F\u7A4D\u722C\u5347", meters(file.stats.up), "m", "up")}${metric("\u7D2F\u7A4D\u4E0B\u964D", meters(file.stats.down), "m", "down")}</div>`;
+      const estimate = itineraryViews?.estimatedDuration?.() ?? "\u5C1A\u672A\u63D0\u4F9B";
+      return `<div class="stats">${metric("\u8ECC\u8DE1\u8DDD\u96E2", file.stats.km.toFixed(2), "km", "distance")}${metric(estimate.startsWith("\u53C3\u8003 ETA") ? "\u5168\u7A0B\u53C3\u8003\u8017\u6642" : "\u5168\u7A0B\u9810\u4F30\u6642\u9593", estimate.replace(/^參考 ETA · /, ""), "", "clock")}${metric("\u7D2F\u7A4D\u722C\u5347", meters(file.stats.up), "m", "up")}${metric("\u7D2F\u7A4D\u4E0B\u964D", meters(file.stats.down), "m", "down")}</div>`;
     }
     function planView() {
       const file = current();
-      if (!file) return emptyView();
-      return `<div class="content-grid route-plan ${itineraryViews ? "itinerary-layout" : ""}"><section class="panel route-summary"><div class="route-heading"><span class="eyebrow">YOUR GPX \xB7 ${file.stats.points.toLocaleString()} POINTS</span><h2>${esc(file.name)}</h2><p>${esc(file.fileName)} \xB7 ${file.direction === "reverse" ? "\u53CD\u5411\u8D70\uFF08GPX \u7D42\u9EDE\u51FA\u767C\uFF09" : "\u539F\u5411\u8D70\uFF08GPX \u8D77\u9EDE\u51FA\u767C\uFF09"}</p></div>${routeStats(file)}${file.warnings.length ? `<div class="panel-body stack">${file.warnings.map((warning) => `<p class="soft-notice">${esc(warning)}</p>`).join("")}</div>` : ""}</section><div class="route-departure">${departurePanel(file)}</div><div class="main-column">${mapPanel(file)}${file.kind === "recording" ? "" : itineraryViews?.nextCard() ?? nextCard(file)}${itineraryViews?.stationsPanel() ?? ""}
+      if (!file)
+        return state?.library?.length ? `<section class="panel panel-body stack"><h2>\u8ACB\u5148\u9078\u64C7\u8DEF\u7DDA</h2><p>\u8ACB\u78BA\u8A8D\u9019\u6B21\u8981\u4F7F\u7528\u7684 GPX\uFF1B\u4E0D\u6703\u81EA\u52D5\u6539\u7528\u5176\u4ED6\u8DEF\u7DDA\u3002</p><button class="button primary" data-view="routes">\u67E5\u770B\u5DF2\u532F\u5165\u8DEF\u7DDA</button><button class="button" data-view="record">\u81EA\u7531\u7D00\u9304</button></section>` : emptyView();
+      return `<div class="content-grid route-plan ${itineraryViews ? "itinerary-layout" : ""}"><section class="panel route-summary"><div class="route-heading"><span class="eyebrow">YOUR GPX \xB7 ${file.stats.points.toLocaleString()} POINTS</span><h2>${esc(file.name)}</h2><p>${esc(file.fileName)} \xB7 ${file.direction === "reverse" ? "\u53CD\u5411\u8D70\uFF08GPX \u7D42\u9EDE\u51FA\u767C\uFF09" : "\u539F\u5411\u8D70\uFF08GPX \u8D77\u9EDE\u51FA\u767C\uFF09"}</p></div>${routeStats(file)}${itineraryViews?.etaNotice?.(file) ?? ""}${file.warnings.length ? `<div class="panel-body stack">${file.warnings.map((warning) => `<p class="soft-notice">${esc(warning)}</p>`).join("")}</div>` : ""}</section><div class="route-departure">${departurePanel(file)}</div><div class="main-column">${mapPanel(file, null, [], { includeHeight: false })}${file.kind === "recording" ? "" : itineraryViews?.nextCard() ?? nextCard(file)}${itineraryViews?.stationsPanel() ?? ""}${heightPanel ? `<section class="panel route-height">${heightPanel(file)}</section>` : ""}
     ${timeSourcePanel(file, { locked: gpsPending2() || state?.starting || state?.timeSourceBusy, error: state?.timeSourceError, timeBasis: itineraryViews?.timeBasisLabel?.() === "GPX \u53C3\u8003\u6642\u9593" ? "gpx-moving-time" : "shanghe" })}${correctionPanel(file)}<section class="panel panel-body"><details id="route-data-details"><summary>\u8CC7\u6599\u5B8C\u6574\u5EA6\u8207\u8A08\u7B97\u9650\u5236</summary><div class="stack"><div class="data-checks">
       <div><strong>\u6642\u9593\u4F9D\u64DA</strong><span>${itineraryViews?.timeBasisLabel?.() === "GPX \u53C3\u8003\u6642\u9593" ? "\u6642\u9593\u57FA\u6E96\uFF1AGPX \u53C3\u8003\u6642\u9593\uFF1B\u6709\u6548\u905E\u589E\u6642\u9593\u6233\u9810\u8A2D\u53EF\u4F5C\u70BA\u53C3\u8003\uFF0C\u660E\u78BA\u5408\u6210\u6642\u9593\u6392\u9664" : "\u4E0A\u6CB3 1.0 \u6709\u5411\u6642\u9593\uFF1B\u7F3A\u6F0F\u8207\u591A\u8DEF\u5F91\u539F\u56E0\u5217\u5728\u7AD9\u9EDE\u6E05\u55AE"}</span></div>
       <div><strong>\u6D77\u62D4\u8CC7\u6599</strong><span>${file.stats.withElevation.toLocaleString()} / ${file.stats.points.toLocaleString()} \u9EDE</span></div>
       <div><strong>\u8ECC\u8DE1\u5206\u6BB5</strong><span>${file.segments.length} \u6BB5 \xB7 \u4E2D\u65B7\u8655\u4E0D\u9023\u7DDA</span></div>
     </div><p class="small muted">${itineraryViews?.timeBasisLabel?.() === "GPX \u53C3\u8003\u6642\u9593" ? "GPX \u53C3\u8003\u6642\u9593" : "\u4E0A\u6CB3 1.0 \u6642\u9593"}\uFF1A${itineraryViews?.referenceDuration() ?? "\u5C1A\u672A\u63D0\u4F9B"}\uFF1B\u5168\u7A0B\u9810\u4F30\u6642\u9593\u4F9D\u8A2D\u5B9A\u500D\u7387\uFF0C\u4E0D\u542B\u984D\u5916\u4F11\u606F\u3002</p>
     <p class="small muted">${file.processing ? "\u8DEF\u7DDA\u8DDD\u96E2\u8207\u6D77\u62D4\u5DF2\u6821\u6B63 GPS \u6296\u52D5\uFF0C\u722C\u5347\uFF0F\u4E0B\u964D\u8207\u9AD8\u5EA6\u5256\u9762\u4F7F\u7528\u76F8\u540C\u8CC7\u6599\uFF1B\u539F\u59CB GPX \u4FDD\u6301\u4E0D\u8B8A\u3002" : "\u9AD8\u5EA6\u76F4\u63A5\u53D6\u81EA GPX\uFF0C\u722C\u5347\u8207\u4E0B\u964D\u70BA\u76F8\u9130\u9EDE\u52A0\u7E3D\uFF0C\u672A\u7D93\u53BB\u566A\u3002"}${itineraryViews?.timeBasisLabel?.() === "GPX \u53C3\u8003\u6642\u9593" ? "GPX \u8D77\u7D42\u9EDE\u8207\u822A\u9EDE\u63D0\u4F9B\u9032\u5EA6\uFF1B\u77ED\u66AB\u4F4E\u901F\u6216\u505C\u7559\u4FDD\u7559\u5BE6\u969B\u79D2\u6578\uFF0C\u771F\u6B63\u7F3A\u6642\u9593\u6216\u7121\u6CD5\u9023\u63A5\u624D\u4FDD\u7559\u5F85\u88DC\u3002" : "\u7AD9\u9EDE\u8207\u4E0A\u6CB3\u6642\u9593\u5DF2\u5167\u5EFA\uFF1B\u6709\u57FA\u6E96\u7684\u76F8\u9130\u8DEF\u6BB5\u6703\u986F\u793A ETA\uFF0C\u7121\u6CD5\u78BA\u8A8D\u7684\u8DEF\u6BB5\u4FDD\u7559\u5F85\u88DC\u3002"}\u65E5\u591C\u5857\u8272\u4F9D\u53C3\u8003\u7E23\u5E02\u5B98\u65B9\u65E5\u51FA\uFF0F\u65E5\u843D\u8207\u8DEF\u6BB5 ETA \u986F\u793A\uFF1B\u8CC7\u6599\u4E0D\u8DB3\u4FDD\u7559\u7070\u8272\u3002</p></div></details></section></div>
-    <aside class="side-column">${button("\u66F4\u63DB\u8DEF\u7DDA", "choose-route", "", "compass", gpsPending2() ? "disabled" : "")}</aside></div>`;
+    <aside class="side-column"></aside></div>`;
     }
     function departurePanel(file) {
       if (file.kind !== "recording") return settingsPanel(file) + startPanel();
       return `<section class="panel panel-body stack"><h2>\u4F60\u4FDD\u5B58\u7684\u8ECC\u8DE1</h2>${button("\u4E0B\u8F09 GPX", "file-download", "primary", "download", `data-id="${file.id}"`)}${button("\u4F5C\u70BA\u53C3\u8003\u8DEF\u7DDA", "use-recording-route", "", "route", `data-id="${file.id}" ${gpsPending2() || state?.timeSourceBusy ? "disabled" : ""}`)}<p class="small muted">\u4FDD\u7559\u539F\u59CB GPX\uFF0C\u5728\u6B64\u88DD\u7F6E\u5EFA\u7ACB\u53C3\u8003\u8DEF\u7DDA\uFF1B\u9304\u88FD\u4F86\u6E90\u53EF\u8FFD\u6EAF\u4E14\u6642\u9593\u54C1\u8CEA\u901A\u904E\u6642\uFF0C\u53EF\u7528\u65BC\u7AD9\u9593\u6BD4\u4F8B\u3002</p></section>`;
     }
-    function settingsPanel(_file) {
-      return `${directionPanel(_file, { locked: gpsPending2() || state?.starting, error: state?.directionError })}${itineraryViews?.resourcesPanel() ?? ""}`;
+    function settingsPanel(file) {
+      return `<section class="panel panel-body departure-settings">${directionPanel(file, { locked: gpsPending2() || state?.starting, error: state?.directionError, compact: true })}${itineraryViews?.resourcesPanel({ compact: true }) ?? ""}</section>`;
     }
     function startPanel() {
-      return `<section class="panel panel-body stack route-start"><p class="small muted">\u9810\u4F30\u8017\u6642\uFF1A<strong>${itineraryViews?.estimatedDuration?.() ?? "\u5C1A\u672A\u63D0\u4F9B"}</strong>\uFF08\u4F9D\u8A2D\u5B9A\u500D\u7387\uFF0C\u4E0D\u542B\u984D\u5916\u4F11\u606F\uFF09</p>${button(gpsPending2() ? "\u67E5\u770B GPS \u7D00\u9304" : "\u958B\u59CB\u767B\u5C71\u7D00\u9304", gpsPending2() ? "view-record" : "gps-start", "primary", "locate", state?.starting ? "disabled" : "")}<p class="small muted">\u4F9D\u76EE\u524D\u65B9\u5411\u8207\u500D\u7387\u51FA\u767C\uFF0C\u958B\u59CB\u5F8C\u8ACB\u6C42\u5B9A\u4F4D\u4E26\u4FDD\u7559\u6062\u5FA9\u8349\u7A3F\uFF1B\u7D50\u675F\u6642\u518D\u9078\u64C7\u662F\u5426\u4FDD\u5B58 GPX\u3002</p></section>`;
+      return `<section class="panel panel-body stack route-start"><p class="small muted">\u9810\u4F30\u8017\u6642\uFF1A<strong>${itineraryViews?.estimatedDuration?.() ?? "\u5C1A\u672A\u63D0\u4F9B"}</strong>\uFF08\u4F9D\u8A2D\u5B9A\u500D\u7387\uFF0C\u4E0D\u542B\u984D\u5916\u4F11\u606F\uFF09</p>${recordingLimitations(locationSource)}<div class="route-start-actions">${button(gpsPending2() ? "\u67E5\u770B GPS \u7D00\u9304" : "\u958B\u59CB\u767B\u5C71\u7D00\u9304", gpsPending2() ? "view-record" : "gps-start", "primary", "locate", state?.starting ? "disabled" : "")}${button("\u66F4\u63DB\u8DEF\u7DDA", "choose-route", "ghost", "", gpsPending2() ? "disabled" : "")}</div><p class="small muted">\u7D50\u675F\u6642\u518D\u9078\u64C7\u662F\u5426\u4FDD\u5B58 GPX\u3002</p></section>`;
     }
     function nextCard(file) {
       return `<section class="panel next-card"><span class="eyebrow">ARRIVAL \xB7 \u62B5\u9054\u6642\u9593</span><h2>\u5C1A\u672A\u63D0\u4F9B</h2><p class="small">\u9019\u689D GPX \u5C1A\u672A\u914D\u5C0D\u4E0A\u6CB3\u8DEF\u6BB5\u6642\u9593\u3002</p><div class="next-metrics"><div><strong>${file.stats.km.toFixed(2)} km</strong><small>\u5168\u7A0B\u8ECC\u8DE1\u8DDD\u96E2</small></div></div><p class="small note-space">\u5C71\u9802\u3001\u5C71\u5C4B\u3001\u6C34\u6E90\u3001\u71DF\u5730\u8207\u767B\u5C71\u53E3\uFF0F\u51FA\u53E3\u7684\u8DEF\u7DDA\u5C0D\u61C9\u5C1A\u672A\u5B8C\u6210\u3002</p></section>`;
@@ -9153,6 +9447,14 @@
       }
     };
     return {
+      "eta-unavailable-details": () => {
+        const issues = document2.querySelector(".timing-issues");
+        if (issues) {
+          issues.open = true;
+          issues.scrollIntoView({ block: "center", behavior: "smooth" });
+        }
+      },
+      "itinerary-factor-preset": (target) => itinerary.setFactor(target.dataset.factor),
       "smart-reroute-open": (target) => {
         const panel = target.closest("#reroute-panel");
         if (panel?.open) return;
@@ -9215,6 +9517,7 @@
   }) {
     const { modal } = feedback;
     return {
+      "route-clear-search": () => library.search(""),
       select: (target) => library.selectFile(target.dataset.id),
       "time-source-confirm": (target) => library.confirmTimeSource(target.dataset.id, {
         actualGps: document2.querySelector("#gpx-actual-gps")?.checked === true,
@@ -9516,14 +9819,16 @@
     views,
     recordingView,
     itinerary,
-    personalFactorView
+    personalFactorView,
+    heightProfile
   }) {
     const { libraryView, routesView, planView, recordView } = views;
     let lastRecordingStatus, lastDetailsScope;
     const detailsStates = /* @__PURE__ */ new Map();
     function render() {
       const focused = document2.activeElement, focusId = focused?.id, focusAction = focused?.dataset?.action;
-      const selection = focused?.tagName === "INPUT" && focused.type === "text" ? [focused.selectionStart, focused.selectionEnd] : null;
+      const focusData = { ...focused?.dataset };
+      const selection = focused?.tagName === "INPUT" && ["text", "search"].includes(focused.type) ? [focused.selectionStart, focused.selectionEnd] : null;
       const focusedMapControl = focused?.closest?.(".terrain-map-canvas") ? focused : null;
       if (lastDetailsScope) {
         const saved = detailsStates.get(lastDetailsScope) ?? /* @__PURE__ */ new Map();
@@ -9532,6 +9837,7 @@
         detailsStates.set(lastDetailsScope, saved);
       }
       const detailsScope = state.view + ":" + (state.view === "plan" ? current()?.id ?? "" : state.view === "record" ? state.gps.id ?? current()?.id ?? "" : "");
+      const sameDetailsScope = lastDetailsScope === detailsScope;
       terrainMap.beforeRender();
       const [title, subtitle] = titles[state.view];
       document2.title = `${title} \xB7 Ridgewise`;
@@ -9539,6 +9845,7 @@
     <div class="workspace ${state.view === "record" && gpsPending2() ? "live-workspace" : ""}">${shellHeader()}
     <main id="main" tabindex="-1">${state.view === "record" && gpsPending2() || state.view === "routes" && !state.loading && !state.library.some((file) => file.kind !== "recording") ? "" : `<div class="page-heading"><div>${state.view === "plan" ? '<button class="back-link" data-view="routes">\u2190 \u8DEF\u7DDA\u898F\u5283</button>' : ""}<h1>${title}</h1><p>${subtitle}</p></div><div class="page-actions">${state.view === "routes" && state.library.some((file) => file.kind !== "recording") ? button(state.importing ? "\u532F\u5165\u4E2D\u2026" : "\u532F\u5165 GPX", "upload", "primary", "plus", state.loading || state.importing ? "disabled" : "") : ""}</div></div>`}
       ${gpsPending2() && state.view !== "record" ? `<div class="soft-notice ongoing-notice">${icon("activity")}<span>${["review", "stopping", "finishing", "finished"].includes(state.gps.status) ? "\u7D00\u9304\u5DF2\u505C\u6B62\uFF0C\u8ACB\u9078\u64C7\u662F\u5426\u4FDD\u5B58\u3002" : "GPS \u7D00\u9304\u9032\u884C\u4E2D\uFF0C\u9078\u7528\u8DEF\u7DDA\u66AB\u6642\u9396\u5B9A\u3002"}</span>${button("\u67E5\u770B", "view-record", "ghost")}</div>` : ""}
+      ${!state.loading && !gpsPending2() && (state.selectionNotice || state.selectionError) ? `<p class="soft-notice route-selection-notice" role="status">${esc(state.selectionNotice || state.selectionError)}</p>` : ""}
       ${state.loading ? '<section class="panel empty-state" role="status"><h2>\u6B63\u5728\u8B80\u53D6\u4F60\u7684 GPX\u2026</h2></section>' : { library: libraryView, routes: routesView, plan: planView, record: recordView }[state.view]()}
       </main>${bottomNavigation(state.view, current())}</div>`;
       const savedDetails = detailsStates.get(detailsScope);
@@ -9558,13 +9865,22 @@
           recordingId: state.view === "record" && gpsPending2() ? state.gps.id : null
         }
       );
+      heightProfile?.update();
       if (focusedMapControl?.isConnected) focusedMapControl.focus({ preventScroll: true });
       else if (focusId && focusId !== "main") {
-        const replacement = document2.getElementById(focusId);
+        let replacement = document2.getElementById(focusId);
+        if (sameDetailsScope && focusId === "itinerary-factor" && focused.value !== focused.defaultValue && replacement && !replacement.disabled && replacement.defaultValue === focused.defaultValue) {
+          replacement.replaceWith(focused);
+          replacement = focused;
+        }
         replacement?.focus({ preventScroll: true });
         if (selection) replacement?.setSelectionRange?.(...selection);
-      } else if (focusAction)
-        document2.querySelector(`#app [data-action="${focusAction}"]`)?.focus({ preventScroll: true });
+      } else if (focusAction) {
+        const replacement = [...document2.querySelectorAll?.("#app [data-action]") ?? []].find(
+          (node) => Object.entries(focusData).every(([key2, value2]) => node.dataset[key2] === value2)
+        );
+        replacement?.focus({ preventScroll: true });
+      }
       if (state.view === "record" && gpsPending2()) recordingView.updateNumbers();
       if (state.view === "record" && ["review", "idle"].includes(state.gps.status) && lastRecordingStatus !== state.gps.status)
         document2.defaultView?.scrollTo({ top: 0, behavior: "instant" });
@@ -11803,11 +12119,14 @@
     }
     async function setFactor(value2) {
       if (gpsPending2()) return;
-      const factor = Number(value2);
-      if (!Number.isFinite(factor) || factor <= 0 || factor > 10) {
-        feedback.toast("\u8ACB\u8A2D\u5B9A\u5927\u65BC 0\u3001\u81F3\u591A 10 \u7684\u6642\u9593\u500D\u7387\u3002");
+      const factor = timeFactor(value2);
+      if (factor === null) {
+        ui.factorError = factorMessage;
+        feedback.toast(factorMessage);
+        if (!disposed) render();
         return;
       }
+      ui.factorError = "";
       if (timeBasisOf(planFor(activeFile())) === "gpx-moving-time") ui.gpxFactor = factor;
       else ui.factor = factor;
       await saveResources();
@@ -12753,8 +13072,9 @@
   var range = (value2) => value2 ? `${value2.min.toFixed(2)}\u2013${value2.max.toFixed(2)} \u500D` : "\u2014";
   function createPersonalFactorView({ personalFactors, document: document2 }) {
     let revision = 0, disposed = false;
-    function panel() {
-      return `<section id="personal-factor-panel" class="panel panel-body stack personal-factor-panel" aria-labelledby="personal-factor-title"><h2 id="personal-factor-title">\u500B\u4EBA\u6B77\u53F2\u500D\u7387</h2><div role="status" aria-live="polite">\u6B63\u5728\u6838\u5C0D\u672C\u6A5F\u6B77\u53F2\u8CC7\u6599\u2026</div><p class="small muted">\u50C5\u4F9B\u53C3\u8003\uFF0C\u4E0D\u81EA\u52D5\u5957\u7528 ETA\u3002</p><details id="personal-factor-details"><summary>\u8A08\u7B97\u65B9\u6CD5\u3001\u6A23\u672C\u7BC4\u570D\u8207\u6392\u9664\u539F\u56E0</summary><div data-personal-factor-details></div></details>${button("\u91CD\u65B0\u6838\u5C0D\u6B77\u53F2\u8CC7\u6599", "personal-factor-refresh", "ghost")}</section>`;
+    function panel({ empty = false } = {}) {
+      const content = `<h2 id="personal-factor-title">\u500B\u4EBA\u6B77\u53F2\u500D\u7387</h2><div role="status" aria-live="polite">\u6B63\u5728\u6838\u5C0D\u672C\u6A5F\u6B77\u53F2\u8CC7\u6599\u2026</div><p class="small muted">\u50C5\u4F9B\u53C3\u8003\uFF0C\u4E0D\u81EA\u52D5\u5957\u7528 ETA\u3002</p><details id="personal-factor-details"><summary>\u8A08\u7B97\u65B9\u6CD5\u3001\u6A23\u672C\u7BC4\u570D\u8207\u6392\u9664\u539F\u56E0</summary><div data-personal-factor-details></div></details>${button("\u91CD\u65B0\u6838\u5C0D\u6B77\u53F2\u8CC7\u6599", "personal-factor-refresh", "ghost")}`;
+      return empty ? `<details id="personal-factor-panel" class="personal-factor-empty"><summary>\u500B\u4EBA\u6B77\u53F2\u500D\u7387\uFF1A\u5B8C\u6210\u6709\u6548\u7D00\u9304\u5F8C\u63D0\u4F9B</summary><section class="panel panel-body stack personal-factor-panel" aria-labelledby="personal-factor-title">${content}</section></details>` : `<section id="personal-factor-panel" class="panel panel-body stack personal-factor-panel" aria-labelledby="personal-factor-title">${content}</section>`;
     }
     async function refresh() {
       const ticket = ++revision, root = document2.getElementById("personal-factor-panel");
@@ -12888,6 +13208,13 @@
       gpsElapsed: () => recordingElapsed(state.gps)
     };
     const feedback = createFeedback({ document: document2 });
+    const selection = createRouteSelection({
+      state,
+      repository,
+      gpsPending: selectors.gpsPending,
+      render,
+      temporaryStorage: () => window2.sessionStorage
+    });
     const direction = createDirectionController({
       state,
       current: selectors.current,
@@ -12972,6 +13299,7 @@
       navigator
     });
     const library = createLibraryController({
+      selection,
       state,
       repository,
       gpsPending: selectors.gpsPending,
@@ -12996,8 +13324,16 @@
       heightProfile,
       stationEditor
     });
-    const routeViews = createRouteViews({ ...selectors, mapPanel, itineraryViews, state });
+    const routeViews = createRouteViews({
+      ...selectors,
+      mapPanel,
+      heightPanel,
+      itineraryViews,
+      state,
+      locationSource: locationProvider.sourceType
+    });
     recordingView = createRecordingView({
+      locationSource: locationProvider.sourceType,
       itineraryViews,
       state,
       ...selectors,
@@ -13011,12 +13347,13 @@
       ...createLibraryViews({
         state,
         gpsPending: selectors.gpsPending,
-        personalFactorPanel: () => selectors.gpsPending() ? "" : personalFactorView.panel()
+        personalFactorPanel: (options) => selectors.gpsPending() ? "" : personalFactorView.panel(options)
       }),
       ...routeViews,
       recordView: recordingView.recordView
     };
     renderer = createRenderer({
+      heightProfile,
       itinerary,
       state,
       document: document2,
@@ -13069,13 +13406,15 @@
           } catch {
             if (record.kind === "recording") state.libraryReadError = true;
             state.results.push({
-              ok: false,
+              status: "failed",
               name: record.fileName,
               message: "\u5DF2\u5132\u5B58\u7684\u6A94\u6848\u7121\u6CD5\u8B80\u53D6\uFF0C\u8ACB\u91CD\u65B0\u532F\u5165\u539F\u59CB GPX\u3002"
             });
           }
         }
         await direction.restore();
+        if (disposed) return;
+        await selection.restore();
         if (disposed) return;
         const draft = await repository.getDraft();
         if (draft && !disposed && await persistence.acquireLock()) {
@@ -13087,7 +13426,6 @@
         state.storageError = "\u6B64\u700F\u89BD\u5668\u7121\u6CD5\u4F7F\u7528\u672C\u6A5F\u5132\u5B58\u3002\u4ECD\u53EF\u532F\u5165\u8207\u67E5\u770B\u8DEF\u7DDA\uFF0C\u4F46\u91CD\u65B0\u6574\u7406\u5F8C\u9700\u518D\u6B21\u532F\u5165\u3002";
       }
       if (disposed) return;
-      state.selected = state.gps.sourceRouteId ?? state.library.find((file) => file.kind !== "recording")?.id ?? null;
       state.loading = false;
       render();
       void offlineMaps.initialize();
@@ -13125,13 +13463,15 @@
     async function dispose() {
       if (disposed) return;
       disposed = true;
+      const stoppingRecording = recording.dispose();
       personalFactorView.dispose();
       unbind?.();
       library.dispose();
       itinerary.dispose();
+      await selection.dispose();
       await direction.dispose();
       await daylight.dispose();
-      await recording.dispose();
+      await stoppingRecording;
       await persistence.save();
       await persistence.dispose();
       await startPromise;
@@ -13156,6 +13496,7 @@
         daylight,
         offlineMaps,
         direction,
+        selection,
         history: history.api,
         personalFactors
       }

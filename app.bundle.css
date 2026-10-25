@@ -1217,7 +1217,7 @@
     gap: 12px;
     flex-wrap: wrap;
     font-size: 12px;
-    color: #6c805f;
+    color: #3f583e;
     margin-bottom: 16px;
   }
   .chart-heading {
@@ -1237,8 +1237,8 @@
     align-items: center;
     gap: 24px;
     margin: 0 0 18px 4px;
-    font-size: 11px;
-    color: #6c805f;
+    font-size: 13px;
+    color: #3f583e;
     flex-wrap: wrap;
   }
   .elevation-summary > span {
@@ -1254,10 +1254,10 @@
     font-variant-numeric: tabular-nums;
   }
   .elevation-summary small {
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 400;
     margin-left: 4px;
-    color: #6c805f;
+    color: #3f583e;
   }
   .elevation-distance {
     margin-left: auto;
@@ -1268,9 +1268,12 @@
     height: auto;
     overflow: visible;
   }
+  .elevation-chart text {
+    font-size: 13px;
+  }
   .elevation-caption {
-    font-size: 11px;
-    color: #6c805f;
+    font-size: 13px;
+    color: #3f583e;
     margin: 5px 0 0 4px;
   }
   .profile-station,
@@ -1300,21 +1303,25 @@
     stroke-width: 4;
   }
   .profile-station-label path {
-    stroke: #61785a;
+    stroke: #52684c;
     stroke-width: 1;
-    opacity: 0.5;
+    opacity: 0.8;
     fill: none;
     pointer-events: none;
   }
   .profile-station-label text {
     fill: #233e2e;
-    font-size: 22px;
+    font-size: 13px;
     paint-order: stroke;
     stroke: #eaf0e0;
     stroke-width: 5;
   }
   .profile-station-label:focus text {
-    fill: #a35a08;
+    fill: #75420b;
+  }
+  .profile-station[aria-pressed=true] .profile-station-dot {
+    stroke: #122d4f;
+    stroke-width: 4;
   }
   .profile-current {
     pointer-events: none;
@@ -1331,18 +1338,18 @@
   }
   .profile-stations {
     color: #355c3e;
-    font-size: 12px;
+    font-size: 14px;
     line-height: 1.7;
   }
   .profile-station-legend {
-    font-size: 11px;
+    font-size: 13px;
     margin: 8px 0;
   }
   .profile-station-legend span {
-    color: #607165;
+    color: #3f583e;
   }
   .profile-station-legend b {
-    color: #a35a08;
+    color: #75420b;
   }
   .profile-station-info {
     background: #f4f7ed;
@@ -1417,7 +1424,7 @@
       gap: 5px;
     }
     .chart-title > span:last-child {
-      font-size: 11px;
+      font-size: 12px;
     }
     .elevation-summary {
       gap: 10px 14px;
@@ -1429,11 +1436,8 @@
     .elevation-summary strong {
       font-size: 16px;
     }
-    .elevation-chart text {
-      font-size: 19px;
-    }
     .elevation-chart .elevation-axis-unit {
-      font-size: 14px;
+      font-size: 12px;
     }
     .elevation-empty {
       padding: 18px 14px;
@@ -3841,14 +3845,14 @@ dialog {
 }
 .daylight-reference small {
   grid-column: 1 / -1;
-  font-size: 10px;
+  font-size: 12px;
   color: #62745c;
 }
 .daylight-legend {
   display: flex;
   gap: 12px 18px;
   flex-wrap: wrap;
-  font-size: 11px;
+  font-size: 13px;
   color: #526551;
   margin: 12px 0;
 }
@@ -3879,7 +3883,7 @@ dialog {
 }
 .solar-days {
   margin-top: 12px;
-  font-size: 11px;
+  font-size: 13px;
   border-top: 1px solid #c7d2bf;
   padding-top: 8px;
   color: #596c53;
@@ -3893,12 +3897,12 @@ dialog {
   padding: 4px 0;
 }
 .daylight-method {
-  font-size: 10px;
-  color: #62745c;
+  font-size: 12px;
+  color: #3f583e;
   margin-top: 12px;
 }
 .daylight-source {
-  font-size: 10px;
+  font-size: 12px;
   color: #3b634b;
   display: inline-block;
   margin-top: 8px;
@@ -3907,7 +3911,7 @@ dialog {
   opacity: 0.82;
 }
 .height-phase-label {
-  font-size: 10px;
+  font-size: 12px;
   fill: #40503e;
 }
 .height-phase-boundary {
@@ -3930,10 +3934,10 @@ dialog {
 }
 @media (max-width: 740px) {
   .elevation-chart .height-phase-label {
-    font-size: 15px;
+    font-size: 12px;
   }
   .daylight-legend {
-    font-size: 10px;
+    font-size: 13px;
     gap: 10px;
   }
 }
@@ -4280,6 +4284,182 @@ dialog {
 .gpx-station-editor select {
   width: 100%;
   min-width: 0;
+}
+
+/* src/features/routes/route-ux.css */
+.recording-limitations {
+  padding: 12px;
+  border-left: 3px solid #a35a08;
+  border-radius: 8px;
+  background: #faf3e6;
+  color: #573e1d;
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.recording-limitations span {
+  display: block;
+  margin-top: 4px;
+}
+.route-selection-notice {
+  margin-bottom: 16px;
+  overflow-wrap: anywhere;
+}
+.departure-checks {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+  margin: 0;
+  font-size: 14px;
+}
+.departure-checks > div:first-child,
+.departure-checks > div:last-child {
+  grid-column: 1 / -1;
+}
+.departure-checks dt {
+  color: var(--muted);
+}
+.departure-checks dd {
+  margin: 0;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.departure-settings {
+  display: grid;
+  gap: 18px;
+}
+.departure-settings h2 {
+  font-size: 16px;
+}
+.departure-settings .stack {
+  gap: 8px;
+}
+.departure-settings summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  color: var(--green);
+}
+.factor-presets {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+}
+.factor-presets .button {
+  min-height: 44px;
+  padding: 6px 2px;
+  font-size: 14px;
+}
+.factor-presets [aria-pressed=true] {
+  background: var(--soft);
+  box-shadow: inset 0 0 0 1px var(--green);
+}
+.route-start-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.route-start-actions .primary {
+  flex: 1 1 160px;
+  padding-inline: 8px;
+}
+.route-start-actions .ghost {
+  flex: 0 1 70px;
+  font-size: 14px;
+  padding-inline: 4px;
+}
+.route-plan > .side-column:empty {
+  display: none;
+}
+.route-height {
+  overflow: hidden;
+}
+.eta-unavailable {
+  padding: 12px 16px;
+  background: #faf3e6;
+  color: #573e1d;
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.eta-unavailable p + p {
+  margin-top: 4px;
+}
+.eta-unavailable .button {
+  margin-top: 8px;
+  padding-inline: 8px;
+  color: #573e1d;
+  font-size: 14px;
+}
+.personal-factor-empty {
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.personal-factor-empty > summary {
+  min-height: 44px;
+  padding-block: 10px;
+  cursor: pointer;
+}
+.route-collection-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, 0.5fr);
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+.route-collection-tools label {
+  display: grid;
+  gap: 4px;
+  font-size: 14px;
+}
+.route-collection-tools input,
+.route-collection-tools select {
+  min-width: 0;
+  width: 100%;
+  min-height: 48px;
+  font-size: 16px;
+}
+@media (max-width: 375px) {
+  .route-collection-tools {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 700px) {
+  .route-plan .departure-factor > h2,
+  .route-plan .route-heading > .eyebrow,
+  .page-heading:has(.back-link) > div > p {
+    display: none;
+  }
+  .page-heading:has(.back-link) {
+    margin-bottom: 12px;
+  }
+  .route-summary .route-heading {
+    padding: 12px 16px;
+  }
+  .route-summary .stats {
+    padding: 10px 16px;
+  }
+  .route-summary .panel-body {
+    padding: 10px 16px;
+  }
+  .route-summary .soft-notice {
+    padding: 8px;
+  }
+  .route-departure,
+  .route-plan {
+    gap: 12px;
+  }
+  .route-departure .panel-body {
+    padding: 16px;
+  }
+  .route-plan .route-heading h2,
+  .route-plan .stats strong {
+    overflow-wrap: anywhere;
+  }
 }
 
 /* src/styles/index.css */
