@@ -1936,15 +1936,15 @@
     }
     boundaries.sort((a, b) => a - b);
     const unique = [...new Set(boundaries)];
-    return unique.slice(1).map((time3, index) => {
-      const begin = unique[index], middle = (begin + time3) / 2;
+    return unique.slice(1).map((time4, index) => {
+      const begin = unique[index], middle = (begin + time4) / 2;
       const sun = solarDay(reference, county, taipeiDate(middle));
       const phase = !sun ? "unknown" : middle >= sun.sunrise && middle < sun.sunset ? "day" : "night";
       return {
         fromM: fromM + (toM - fromM) * (begin - start) / (end - start),
-        toM: fromM + (toM - fromM) * (time3 - start) / (end - start),
+        toM: fromM + (toM - fromM) * (time4 - start) / (end - start),
         start: begin,
-        end: time3,
+        end: time4,
         phase,
         date: taipeiDate(middle)
       };
@@ -2467,6 +2467,306 @@
   var timeBasisOf = (value2) => value2?.timeBasis === GPX_TIME_BASIS ? GPX_TIME_BASIS : "shanghe";
   var routeTimeAt = (model, distanceM2, options) => model?.timeBasis === GPX_TIME_BASIS ? gpxTimeAt(model, distanceM2, options) : shangheTimeAt(model, distanceM2, options);
 
+  // src/features/itinerary/station-groups.js
+  function groupStations(stations) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const station of stations) {
+      const key2 = station.coordinateStatus === "located" && station.placeId ? station.placeId : station.stationId;
+      const group = groups.get(key2);
+      if (group) {
+        if (group.lat !== station.lat || group.lon !== station.lon)
+          throw new Error("Conflicting coordinates for one physical station");
+        group.members.push(station);
+      } else groups.set(key2, { ...station, members: [station] });
+    }
+    return [...groups.values()];
+  }
+  var stationMembers = (station) => station.members ?? [station];
+
+  // src/features/itinerary/time-path.js
+  function createTimeGraph(database) {
+    const graph = /* @__PURE__ */ new Map();
+    for (const record of database?.records ?? []) {
+      if (record.mode !== "walk") continue;
+      const key2 = record.fromNodeId;
+      if (!graph.has(key2)) graph.set(key2, /* @__PURE__ */ new Set());
+      graph.get(key2).add(record.toNodeId);
+    }
+    return graph;
+  }
+  function uniqueTimePath(graph, from, to, blocked = /* @__PURE__ */ new Set()) {
+    if (!from || !to) return { nodes: null, reason: "\u672A\u5C0D\u61C9\u6642\u9593\u7BC0\u9EDE" };
+    const paths = [];
+    let visits = 0, limit = false;
+    function search(node, path) {
+      if (++visits > 5e3 || path.length > 30) {
+        limit = true;
+        return;
+      }
+      if (node === to) {
+        paths.push(path);
+        return;
+      }
+      for (const next of graph.get(node) ?? []) {
+        if (paths.length > 1) break;
+        if (!path.includes(next) && (next === to || !blocked.has(next)))
+          search(next, [...path, next]);
+      }
+    }
+    search(from, [from]);
+    if (limit) return { nodes: null, reason: "\u8DEF\u6BB5\u8CC7\u6599\u904E\u65BC\u8907\u96DC\uFF0C\u9700\u6838\u5C0D" };
+    if (paths.length !== 1)
+      return {
+        nodes: null,
+        reason: paths.length ? "\u6709\u591A\u689D\u53EF\u80FD\u8DEF\u5F91\uFF0C\u9700\u6838\u5C0D\u4E2D\u9593\u7AD9\u9EDE" : "\u7F3A\u5C11\u76F8\u9130\u6709\u5411\u8DEF\u6BB5"
+      };
+    return { nodes: paths[0], reason: null };
+  }
+
+  // src/features/itinerary/visit-resolution.js
+  var CLOSE_PASS_M = 25;
+  function resolveBranchVisits(candidates, { ids, graph } = {}) {
+    if (!ids || !graph) return { occurrences: candidates, bypassedOccurrences: [] };
+    const neighbors = /* @__PURE__ */ new Map();
+    for (const [from, targets] of graph)
+      for (const to of targets) {
+        if (!neighbors.has(from)) neighbors.set(from, /* @__PURE__ */ new Set());
+        if (!neighbors.has(to)) neighbors.set(to, /* @__PURE__ */ new Set());
+        neighbors.get(from).add(to);
+        neighbors.get(to).add(from);
+      }
+    const bindings3 = (point) => stationMembers(point.station).map((s) => ids.get(s.stationId));
+    const places = new Map(candidates.flatMap((p) => bindings3(p).map((id2) => [id2, p.station])));
+    const bypassedOccurrences = [];
+    const occurrences = candidates.filter((point, index) => {
+      if (point.offsetM <= CLOSE_PASS_M) return true;
+      const leafIds = bindings3(point);
+      const gates = leafIds.map((id2) => {
+        const adjacent = [...neighbors.get(id2) ?? []];
+        const gate2 = adjacent[0];
+        return adjacent.length === 1 && graph.get(id2)?.has(gate2) && graph.get(gate2)?.has(id2) && neighbors.get(gate2)?.size >= 3 ? places.get(gate2) : null;
+      });
+      if (!gates.length || gates.some((gate2) => !gate2 || gate2 !== gates[0])) return true;
+      const gate = gates[0];
+      if (distanceM(gate, point.station) <= 200) return true;
+      const before = candidates.slice(0, index).findLast((p) => p.station !== point.station);
+      const after = candidates.slice(index + 1).find((p) => p.station !== point.station);
+      if (!before || !after || before.segmentIndex !== point.segmentIndex || after.segmentIndex !== point.segmentIndex)
+        return true;
+      if (before.station === gate && after.station === gate) return true;
+      if (before.station !== gate && after.station !== gate) return true;
+      const mainPath = bindings3(before).some(
+        (a) => bindings3(after).some((b) => uniqueTimePath(graph, a, b, new Set(leafIds)).nodes)
+      );
+      if (!mainPath) return true;
+      bypassedOccurrences.push({
+        ...point,
+        reason: "terminal-branch-pass-without-return-gate",
+        gateStationId: gate.stationId
+      });
+      return false;
+    });
+    return { occurrences, bypassedOccurrences };
+  }
+
+  // src/features/itinerary/matching.js
+  var routeMatchers = /* @__PURE__ */ new WeakMap();
+  function routeMatcherFor(file) {
+    if (!routeMatchers.has(file)) routeMatchers.set(file, createTrackMatcher(file.segments));
+    return routeMatchers.get(file);
+  }
+  var DISPLAY_TYPES = /* @__PURE__ */ new Set(["trailhead", "exit", "summit", "hut", "water", "camp"]);
+  function matchItinerary(stations, file, topology) {
+    const found = routeMatcherFor(file).match(groupStations(stations));
+    const raw = found.matches.flatMap(
+      (match) => match.routePositions.map((position3) => ({
+        station: match.station,
+        ...position3
+      }))
+    ).sort((a, b) => a.routeProgressM - b.routeProgressM);
+    const resolved = resolveBranchVisits(raw, topology);
+    const occurrences = [];
+    for (const point of resolved.occurrences) {
+      const previous = occurrences.at(-1);
+      if (previous?.station.stationId === point.station.stationId) {
+        if (point.offsetM < previous.offsetM) occurrences[occurrences.length - 1] = point;
+      } else occurrences.push(point);
+    }
+    const areas = [
+      ...new Set(occurrences.flatMap((point) => stationMembers(point.station).map((s) => s.area)))
+    ];
+    return {
+      occurrences,
+      candidateOccurrences: raw,
+      bypassedOccurrences: resolved.bypassedOccurrences,
+      areas,
+      totalDistanceM: found.totalTrackDistanceM,
+      startCovered: Boolean(
+        occurrences.length && distanceM(file.points[0], occurrences[0].station) <= 100
+      ),
+      endCovered: Boolean(
+        occurrences.length && distanceM(file.points.at(-1), occurrences.at(-1).station) <= 100
+      )
+    };
+  }
+  function nearestRouteOffset(file, position3) {
+    const probe = { ...position3, stationId: "gps-position", coordinateStatus: "located" };
+    const found = routeMatcherFor(file).match([probe], {
+      maxOffsetM: 1e4,
+      mergeWithinM: 25
+    });
+    return found.matches[0]?.nearestTrackDistanceM ?? Infinity;
+  }
+
+  // src/features/itinerary/position-cluster.js
+  var indexed = /* @__PURE__ */ new WeakMap();
+  function heading(file, position3) {
+    if (!indexed.has(file)) {
+      const groups = /* @__PURE__ */ new Map();
+      for (const p of file.points) {
+        if (!groups.has(p.segment)) groups.set(p.segment, []);
+        groups.get(p.segment).push(p);
+      }
+      indexed.set(file, groups);
+    }
+    const points = indexed.get(file).get(position3.segmentIndex) ?? [];
+    let lo = 1, hi = points.length - 1;
+    while (lo < hi) {
+      const mid = lo + hi >>> 1;
+      if (points[mid].km * 1e3 < position3.routeProgressM) lo = mid + 1;
+      else hi = mid;
+    }
+    const a = points[lo - 1], b = points[lo];
+    return a && b ? [b.lat - a.lat, (b.lon - a.lon) * Math.cos(a.lat * Math.PI / 180)] : null;
+  }
+  function compactPositionCluster(file, candidates, tolerance = 25) {
+    if (candidates.length < 2) return candidates;
+    const distances = candidates.map((p) => p.routeProgressM);
+    if (Math.max(...distances) - Math.min(...distances) > tolerance) return candidates;
+    const vectors = candidates.map((p) => heading(file, p));
+    if (vectors.some((a) => vectors.some((b) => a && b && a[0] * b[0] + a[1] * b[1] < 0)))
+      return candidates;
+    return [candidates.reduce((a, b) => a.offsetM <= b.offsetM ? a : b)];
+  }
+
+  // src/features/itinerary/route-evidence.js
+  var RECOVERY_VERSION = 1;
+  var RECOVERY_GAP_MS = 61e3;
+  var bindings2 = /* @__PURE__ */ new WeakMap();
+  function recoveryBinding(file) {
+    if (!bindings2.has(file)) {
+      const content = JSON.stringify([
+        file.id,
+        file.direction ?? "forward",
+        file.raw ?? null,
+        file.processing?.version ?? null,
+        file.points.map((p) => [p.lat, p.lon, p.elevation, p.km, p.segment])
+      ]);
+      let hash2 = 2166136261;
+      for (let i = 0; i < content.length; i++)
+        hash2 = Math.imul(hash2 ^ content.charCodeAt(i), 16777619);
+      bindings2.set(file, `${file.id}:${file.direction ?? "forward"}:${content.length}:${hash2 >>> 0}`);
+    }
+    return bindings2.get(file);
+  }
+  function overlapsPause(pauses, from, to) {
+    return (pauses ?? []).some(
+      (p) => Number.isFinite(p.pausedAt) && p.pausedAt < to && (p.resumedAt ?? to) > from
+    );
+  }
+  function recoveryId(binding, from, to) {
+    return `${binding}:${from}:${to}`;
+  }
+  var reliable = (p) => p && [p.lat, p.lon, p.time, p.accuracy, p.routeProgressM].every(Number.isFinite) && Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180 && p.accuracy >= 0 && p.accuracy <= 50 && !p.excluded;
+  function validateRecoveredGap(file, gap, pauses = []) {
+    if (!file || gap?.version !== RECOVERY_VERSION || gap.status !== "validated" || gap.kind !== "gpx-estimate" || gap.binding !== recoveryBinding(file) || gap.direction !== (file.direction ?? "forward") || gap.id !== recoveryId(gap.binding, gap.fromTime, gap.toTime) || !reliable(gap.from) || !reliable(gap.to) || gap.fromTime !== gap.from.time || gap.toTime !== gap.to.time || gap.fromM !== gap.from.routeProgressM || gap.toM !== gap.to.routeProgressM || gap.segmentIndex !== gap.from.segmentIndex || gap.segmentIndex !== gap.to.segmentIndex || (gap.reason === "reload-unique-reachable-route-corridor" ? gap.toTime <= gap.fromTime : gap.toTime - gap.fromTime < RECOVERY_GAP_MS) || !(gap.toM > gap.fromM + 25) || overlapsPause(pauses, gap.fromTime, gap.toTime))
+      return false;
+    const reach = 6 * (gap.toTime - gap.fromTime) / 1e3 + gap.from.accuracy + gap.to.accuracy;
+    if (gap.toM - gap.fromM > reach || haversine(gap.from, gap.to) * 1e3 > reach) return false;
+    for (const p of [gap.from, gap.to]) {
+      const match = routeMatcherFor(file).match(
+        [{ ...p, stationId: "gap-evidence", coordinateStatus: "located" }],
+        { maxOffsetM: 80, mergeWithinM: 25, preserveReversals: true }
+      ).matches[0];
+      let candidates = (match?.routePositions ?? []).filter(
+        (c) => c.segmentIndex === gap.segmentIndex && c.offsetM <= match.nearestTrackDistanceM + Math.max(8, p.accuracy) && (p === gap.from || c.routeProgressM >= gap.fromM - 25 && c.routeProgressM <= gap.fromM + reach)
+      );
+      if (p === gap.to) candidates = compactPositionCluster(file, candidates);
+      if (p === gap.to && candidates.length !== 1 || !candidates.some((c) => Math.abs(c.routeProgressM - p.routeProgressM) < 1e-6))
+        return false;
+    }
+    const geometry2 = routeGeometryBetween(file, gap.segmentIndex, gap.fromM, gap.toM);
+    return geometry2.length > 1 && JSON.stringify(geometry2) === JSON.stringify(gap.geometry);
+  }
+  function recoveryRecord(gap) {
+    return gap?.version === RECOVERY_VERSION && gap.status === "validated" && gap.kind === "gpx-estimate" && typeof gap.binding === "string" && typeof gap.routeId === "string" && ["forward", "reverse"].includes(gap.direction) && gap.id === recoveryId(gap.binding, gap.fromTime, gap.toTime) && reliable(gap.from) && reliable(gap.to) && gap.from.time === gap.fromTime && gap.to.time === gap.toTime && gap.from.routeProgressM === gap.fromM && gap.to.routeProgressM === gap.toM && Number.isInteger(gap.segmentIndex) && gap.from.segmentIndex === gap.segmentIndex && gap.to.segmentIndex === gap.segmentIndex && gap.toTime > gap.fromTime && gap.toM > gap.fromM && gap.elapsedSeconds === (gap.toTime - gap.fromTime) / 1e3 && Array.isArray(gap.geometry) && gap.geometry.length > 1 && gap.geometry.every(
+      (p) => Number.isFinite(p.lat) && Number.isFinite(p.lon) && Math.abs(p.lat) <= 90 && Math.abs(p.lon) <= 180
+    );
+  }
+  function validatedGaps(gaps = [], file = null, pauses = []) {
+    const result = [];
+    for (const gap of [...gaps].sort((a, b) => a.fromTime - b.fromTime)) {
+      if (!recoveryRecord(gap) || overlapsPause(pauses, gap.fromTime, gap.toTime) || file && !validateRecoveredGap(file, gap, pauses) || result.some(
+        (g) => g.id === gap.id || Math.max(g.fromTime, gap.fromTime) < Math.min(g.toTime, gap.toTime)
+      ))
+        continue;
+      result.push(gap);
+    }
+    return result;
+  }
+  function routeGeometryBetween(file, segmentIndex, fromM, toM) {
+    if (!file?.points?.length || !Number.isFinite(fromM) || !Number.isFinite(toM) || toM <= fromM)
+      return [];
+    const points = file.points.filter((p) => p.segment === segmentIndex);
+    if (points.length < 2 || fromM < points[0].km * 1e3 - 1 || toM > points.at(-1).km * 1e3 + 1)
+      return [];
+    const at = (distance2) => {
+      for (let i = 1; i < points.length; i++) {
+        const a = points[i - 1], b = points[i], lo = a.km * 1e3, hi = b.km * 1e3;
+        if (lo <= distance2 && distance2 <= hi && hi > lo) {
+          const f = (distance2 - lo) / (hi - lo);
+          return {
+            lat: a.lat + (b.lat - a.lat) * f,
+            lon: a.lon + (b.lon - a.lon) * f,
+            elevation: Number.isFinite(a.elevation) && Number.isFinite(b.elevation) ? a.elevation + (b.elevation - a.elevation) * f : null
+          };
+        }
+      }
+      return null;
+    };
+    const start = at(fromM), end = at(toM);
+    if (!start || !end) return [];
+    return [
+      start,
+      ...points.filter((p) => p.km * 1e3 > fromM && p.km * 1e3 < toM).map(({ lat, lon, elevation }) => ({ lat, lon, elevation })),
+      end
+    ];
+  }
+
+  // src/features/recording/clock.js
+  function recordingClock(gps, now = Date.now()) {
+    const until = gps.endedAt ?? now;
+    const wallMs = gps.startedAt == null ? 0 : Math.max(0, until - gps.startedAt);
+    const intervals = (gps.historyObservations?.pauses ?? []).map((p) => [p.pausedAt, p.resumedAt ?? until]).filter(([a, b]) => Number.isFinite(a) && Number.isFinite(b) && b > a).sort((a, b) => a[0] - b[0]);
+    let manualPauseMs = 0, cursor = gps.startedAt ?? until;
+    for (const [a, b] of intervals) {
+      const left = Math.max(cursor, a), right = Math.min(until, b);
+      manualPauseMs += Math.max(0, right - left);
+      cursor = Math.max(cursor, right);
+    }
+    if (!gps.historyObservations?.pauses)
+      manualPauseMs = Math.max(
+        0,
+        (gps.pausedMs ?? 0) + (gps.pauseAt == null ? 0 : until - gps.pauseAt)
+      );
+    return {
+      wallMs,
+      manualPauseMs,
+      elapsedMs: Math.max(0, wallMs - manualPauseMs),
+      basis: "wall-clock-excluding-explicit-manual-pauses"
+    };
+  }
+
   // src/features/itinerary/navigation-estimate.js
   function practicalGpxSeconds(model, fromM, toM, segmentIndex) {
     let measuredM = 0, measuredS = 0;
@@ -2502,51 +2802,22 @@
     const diff = b.elapsedSeconds - a.elapsedSeconds;
     return [a.elapsedSeconds, b.elapsedSeconds, diff].every(Number.isFinite) && diff >= 0 ? diff : null;
   }
-  function progressAtTime(history, at) {
-    if (!Array.isArray(history) || !history.length || !Number.isFinite(at)) return null;
-    for (let i = 0; i < history.length; i++) {
-      const current = history[i];
-      if (current.time === at) return current;
-      const next = history[i + 1];
-      if (!next || at < current.time || at > next.time) continue;
-      if (current.segmentIndex !== next.segmentIndex || next.time <= current.time || next.routeProgressM < current.routeProgressM)
-        return null;
-      const f = (at - current.time) / (next.time - current.time);
-      return {
-        time: at,
-        segmentIndex: current.segmentIndex,
-        routeProgressM: current.routeProgressM + (next.routeProgressM - current.routeProgressM) * f,
-        estimated: true
-      };
-    }
-    return null;
-  }
-  function explicitPauseSeconds(gps, from, to) {
-    if (!(to > from)) return 0;
-    return (gps?.historyObservations?.pauses ?? []).reduce((sum, pause) => {
-      const start = pause.pausedAt, end = pause.resumedAt ?? to;
-      return Number.isFinite(start) && Number.isFinite(end) ? sum + Math.max(0, Math.min(end, to) - Math.max(start, from)) / 1e3 : sum;
-    }, 0);
-  }
   function navigationStats(gps, now = Date.now()) {
     const journey = gps?.itinerary, start = journey?.routeStart, end = journey?.routePosition;
     if (!start || !end || start.segmentIndex !== end.segmentIndex || ![start.time, end.time, start.routeProgressM, end.routeProgressM].every(Number.isFinite) || end.time < start.time || end.routeProgressM < start.routeProgressM)
       return null;
-    const until = gps.endedAt ?? gps.pauseAt ?? now;
-    if (!Number.isFinite(until) || until < start.time) return null;
-    const elapsedSeconds = Math.max(
-      0,
-      (until - start.time) / 1e3 - explicitPauseSeconds(gps, start.time, until)
-    );
+    const timing = recordingClock(gps, now);
+    const elapsedSeconds = timing.elapsedMs / 1e3;
     const distanceM2 = end.routeProgressM - start.routeProgressM;
     return {
       distanceM: distanceM2,
       elapsedSeconds,
+      timing,
       speedKmh: elapsedSeconds > 0 ? distanceM2 / elapsedSeconds * 3.6 : null,
       estimated: Boolean(start.estimated || journey.recoveredGaps?.length)
     };
   }
-  function navigationEstimate(file, data, gps, now = Date.now()) {
+  function navigationEstimate(file, data, gps, now = Date.now(), live = null) {
     const empty = {
       position: null,
       speedKmh: null,
@@ -2564,12 +2835,13 @@
     if (position3?.revisionId !== file.id || !Number.isFinite(position3.time) || journey.lastFixTime != null && journey.lastFixTime !== position3.time || position3.time > now + 5e3 || now - position3.time > 6e4)
       return empty;
     const start = journey.routeStart;
-    const gaps = (journey.recoveredGaps ?? []).flatMap((gap) => [
+    const evidence = validatedGaps(journey.recoveredGaps, file, gps.historyObservations?.pauses);
+    const gaps = evidence.flatMap((gap) => [
       { segmentIndex: gap.segmentIndex, routeProgressM: gap.fromM, time: gap.fromTime },
       { segmentIndex: gap.segmentIndex, routeProgressM: gap.toM, time: gap.toTime }
     ]);
     const history = [...gaps, ...journey.routeHistory ?? []].filter((p) => p.time <= position3.time).sort((a, b) => a.time - b.time);
-    const elapsedS = start && position3.time > start.time ? (position3.time - start.time) / 1e3 - explicitPauseSeconds(gps, start.time, position3.time) : null;
+    const elapsedS = start && position3.time > start.time ? (position3.time - start.time) / 1e3 : null;
     const progressedM = start && start.segmentIndex === position3.segmentIndex ? position3.routeProgressM - start.routeProgressM : null;
     const speedMps = elapsedS > 0 && progressedM > 15 ? progressedM / elapsedS : null;
     const model = data.timeModel;
@@ -2600,14 +2872,15 @@
         }
       } : null;
     };
-    const total = elapsedS ? factor(start, position3, elapsedS) : null;
+    const total = live ? Number.isFinite(live.total?.factor) ? live.total : null : elapsedS && !journey.unresolvedGap ? factor(start, position3, elapsedS) : null;
     const target = Math.max(start?.time ?? position3.time, position3.time - 18e5);
-    const boundary = progressAtTime(history, target);
-    const recent = boundary && boundary.time < position3.time ? factor(
-      boundary,
-      position3,
-      (position3.time - boundary.time) / 1e3 - explicitPauseSeconds(gps, boundary.time, position3.time)
-    ) : null;
+    const boundary = history.find((p) => p.time === target) ?? history.find((p) => p.time >= target && p.time < position3.time) ?? evidence.at(-1)?.from ?? start;
+    const recent = live ? Number.isFinite(live.recent?.factor) ? live.recent : null : boundary && boundary.time < position3.time ? factor(boundary, position3, (position3.time - boundary.time) / 1e3) : null;
+    if (recent?.source && !live) {
+      recent.source.windowKind = boundary.time === target ? "observed-window-endpoints" : "latest-valid-section";
+      recent.source.requestedWindowMs = 18e5;
+      recent.source.actualWindowMs = position3.time - boundary.time;
+    }
     const next = data.next;
     const inCorridor = next && !next.gap && next.segmentIndex === position3.segmentIndex && next.routeProgressM >= position3.routeProgressM - 25;
     const nextDistanceM = inCorridor ? Math.max(0, next.routeProgressM - position3.routeProgressM) : null;
@@ -2623,7 +2896,17 @@
     }
     if (!(Number.isFinite(remainingSeconds) && remainingSeconds >= 0)) remainingSeconds = null;
     const arrivalUtcMs = remainingSeconds === null ? null : now + remainingSeconds * 1e3;
+    const destination = data.rows?.at(-1);
+    const destinationBaseline = data.endCovered !== false && destination?.segmentIndex === position3.segmentIndex ? referenceSeconds(
+      model,
+      position3.routeProgressM,
+      destination.routeProgressM,
+      position3.segmentIndex
+    ) : null;
+    const routeRemainingSeconds = Number.isFinite(destinationBaseline) && Number.isFinite(chosen) ? destinationBaseline * chosen : null;
     return {
+      routeRemainingSeconds,
+      destinationArrivalUtcMs: routeRemainingSeconds === null ? null : now + routeRemainingSeconds * 1e3,
       position: position3,
       progressDistanceM: progressedM >= 0 ? progressedM : null,
       speedKmh: speedMps === null ? null : speedMps * 3.6,
@@ -2742,6 +3025,32 @@
     }
     return { snapshot: snapshot3, dispose() {
     } };
+  }
+
+  // src/features/map/position.js
+  var fixes = /* @__PURE__ */ new WeakMap();
+  function rememberMapFix(gps, fix) {
+    fixes.set(gps, fix);
+  }
+  function currentMapPosition(gps, now = Date.now()) {
+    const fix = fixes.get(gps);
+    if (gps?.status !== "tracking" || !fix || fix.excluded || !Number.isFinite(fix.lat) || !Number.isFinite(fix.lon) || !Number.isFinite(fix.accuracy) || fix.accuracy < 0 || fix.accuracy > 50 || !Number.isFinite(fix.time) || now - fix.time > 6e4 || fix.time > now + 5e3)
+      return null;
+    return fix;
+  }
+
+  // src/features/recording/observation-breaks.js
+  function rawObservationBreaks(segments) {
+    return segments.flatMap(
+      (segment) => segment.flatMap(
+        (p, i) => i && p.time - segment[i - 1].time >= 61e3 ? [{ fromTime: segment[i - 1].time, toTime: p.time, kind: "legacy-raw-gap" }] : []
+      )
+    );
+  }
+  function hasObservationBreak(gps, from, to) {
+    return Array.isArray(gps.observationBreaks) ? gps.observationBreaks.some(
+      (g) => g.fromTime >= from.time && g.toTime <= to.time && g.toTime > g.fromTime
+    ) : to.time - from.time >= 61e3;
   }
 
   // src/domain/track-stream.js
@@ -2952,7 +3261,7 @@
       let run = [];
       for (const point of segment) {
         const previous = run.at(-1);
-        if (previous && point.time - previous.time >= 61e3) {
+        if (previous && hasObservationBreak(gps, previous, point)) {
           result.push(run);
           run = [];
         }
@@ -2967,157 +3276,6 @@
     const point = processors.get(gps)?.latestPoint();
     if (point) return point.excluded ? null : point;
     return gps.segments.findLast((segment) => segment.length)?.at(-1) ?? null;
-  }
-
-  // src/features/itinerary/station-groups.js
-  function groupStations(stations) {
-    const groups = /* @__PURE__ */ new Map();
-    for (const station of stations) {
-      const key2 = station.coordinateStatus === "located" && station.placeId ? station.placeId : station.stationId;
-      const group = groups.get(key2);
-      if (group) {
-        if (group.lat !== station.lat || group.lon !== station.lon)
-          throw new Error("Conflicting coordinates for one physical station");
-        group.members.push(station);
-      } else groups.set(key2, { ...station, members: [station] });
-    }
-    return [...groups.values()];
-  }
-  var stationMembers = (station) => station.members ?? [station];
-
-  // src/features/itinerary/time-path.js
-  function createTimeGraph(database) {
-    const graph = /* @__PURE__ */ new Map();
-    for (const record of database?.records ?? []) {
-      if (record.mode !== "walk") continue;
-      const key2 = record.fromNodeId;
-      if (!graph.has(key2)) graph.set(key2, /* @__PURE__ */ new Set());
-      graph.get(key2).add(record.toNodeId);
-    }
-    return graph;
-  }
-  function uniqueTimePath(graph, from, to, blocked = /* @__PURE__ */ new Set()) {
-    if (!from || !to) return { nodes: null, reason: "\u672A\u5C0D\u61C9\u6642\u9593\u7BC0\u9EDE" };
-    const paths = [];
-    let visits = 0, limit = false;
-    function search(node, path) {
-      if (++visits > 5e3 || path.length > 30) {
-        limit = true;
-        return;
-      }
-      if (node === to) {
-        paths.push(path);
-        return;
-      }
-      for (const next of graph.get(node) ?? []) {
-        if (paths.length > 1) break;
-        if (!path.includes(next) && (next === to || !blocked.has(next)))
-          search(next, [...path, next]);
-      }
-    }
-    search(from, [from]);
-    if (limit) return { nodes: null, reason: "\u8DEF\u6BB5\u8CC7\u6599\u904E\u65BC\u8907\u96DC\uFF0C\u9700\u6838\u5C0D" };
-    if (paths.length !== 1)
-      return {
-        nodes: null,
-        reason: paths.length ? "\u6709\u591A\u689D\u53EF\u80FD\u8DEF\u5F91\uFF0C\u9700\u6838\u5C0D\u4E2D\u9593\u7AD9\u9EDE" : "\u7F3A\u5C11\u76F8\u9130\u6709\u5411\u8DEF\u6BB5"
-      };
-    return { nodes: paths[0], reason: null };
-  }
-
-  // src/features/itinerary/visit-resolution.js
-  var CLOSE_PASS_M = 25;
-  function resolveBranchVisits(candidates, { ids, graph } = {}) {
-    if (!ids || !graph) return { occurrences: candidates, bypassedOccurrences: [] };
-    const neighbors = /* @__PURE__ */ new Map();
-    for (const [from, targets] of graph)
-      for (const to of targets) {
-        if (!neighbors.has(from)) neighbors.set(from, /* @__PURE__ */ new Set());
-        if (!neighbors.has(to)) neighbors.set(to, /* @__PURE__ */ new Set());
-        neighbors.get(from).add(to);
-        neighbors.get(to).add(from);
-      }
-    const bindings2 = (point) => stationMembers(point.station).map((s) => ids.get(s.stationId));
-    const places = new Map(candidates.flatMap((p) => bindings2(p).map((id2) => [id2, p.station])));
-    const bypassedOccurrences = [];
-    const occurrences = candidates.filter((point, index) => {
-      if (point.offsetM <= CLOSE_PASS_M) return true;
-      const leafIds = bindings2(point);
-      const gates = leafIds.map((id2) => {
-        const adjacent = [...neighbors.get(id2) ?? []];
-        const gate2 = adjacent[0];
-        return adjacent.length === 1 && graph.get(id2)?.has(gate2) && graph.get(gate2)?.has(id2) && neighbors.get(gate2)?.size >= 3 ? places.get(gate2) : null;
-      });
-      if (!gates.length || gates.some((gate2) => !gate2 || gate2 !== gates[0])) return true;
-      const gate = gates[0];
-      if (distanceM(gate, point.station) <= 200) return true;
-      const before = candidates.slice(0, index).findLast((p) => p.station !== point.station);
-      const after = candidates.slice(index + 1).find((p) => p.station !== point.station);
-      if (!before || !after || before.segmentIndex !== point.segmentIndex || after.segmentIndex !== point.segmentIndex)
-        return true;
-      if (before.station === gate && after.station === gate) return true;
-      if (before.station !== gate && after.station !== gate) return true;
-      const mainPath = bindings2(before).some(
-        (a) => bindings2(after).some((b) => uniqueTimePath(graph, a, b, new Set(leafIds)).nodes)
-      );
-      if (!mainPath) return true;
-      bypassedOccurrences.push({
-        ...point,
-        reason: "terminal-branch-pass-without-return-gate",
-        gateStationId: gate.stationId
-      });
-      return false;
-    });
-    return { occurrences, bypassedOccurrences };
-  }
-
-  // src/features/itinerary/matching.js
-  var routeMatchers = /* @__PURE__ */ new WeakMap();
-  function routeMatcherFor(file) {
-    if (!routeMatchers.has(file)) routeMatchers.set(file, createTrackMatcher(file.segments));
-    return routeMatchers.get(file);
-  }
-  var DISPLAY_TYPES = /* @__PURE__ */ new Set(["trailhead", "exit", "summit", "hut", "water", "camp"]);
-  function matchItinerary(stations, file, topology) {
-    const found = routeMatcherFor(file).match(groupStations(stations));
-    const raw = found.matches.flatMap(
-      (match) => match.routePositions.map((position3) => ({
-        station: match.station,
-        ...position3
-      }))
-    ).sort((a, b) => a.routeProgressM - b.routeProgressM);
-    const resolved = resolveBranchVisits(raw, topology);
-    const occurrences = [];
-    for (const point of resolved.occurrences) {
-      const previous = occurrences.at(-1);
-      if (previous?.station.stationId === point.station.stationId) {
-        if (point.offsetM < previous.offsetM) occurrences[occurrences.length - 1] = point;
-      } else occurrences.push(point);
-    }
-    const areas = [
-      ...new Set(occurrences.flatMap((point) => stationMembers(point.station).map((s) => s.area)))
-    ];
-    return {
-      occurrences,
-      candidateOccurrences: raw,
-      bypassedOccurrences: resolved.bypassedOccurrences,
-      areas,
-      totalDistanceM: found.totalTrackDistanceM,
-      startCovered: Boolean(
-        occurrences.length && distanceM(file.points[0], occurrences[0].station) <= 100
-      ),
-      endCovered: Boolean(
-        occurrences.length && distanceM(file.points.at(-1), occurrences.at(-1).station) <= 100
-      )
-    };
-  }
-  function nearestRouteOffset(file, position3) {
-    const probe = { ...position3, stationId: "gps-position", coordinateStatus: "located" };
-    const found = routeMatcherFor(file).match([probe], {
-      maxOffsetM: 1e4,
-      mergeWithinM: 25
-    });
-    return found.matches[0]?.nearestTrackDistanceM ?? Infinity;
   }
 
   // src/features/elevation/stations.js
@@ -3201,7 +3359,7 @@
   function currentPosition(file, data, gps, now) {
     if (!file || !data?.active || !data.compatible || data.finished || data.offRoute || gps?.status !== "tracking")
       return null;
-    const fix = recordingFix(gps);
+    const fix = currentMapPosition(gps, now) ?? recordingFix(gps);
     if (!fix || fix.excluded || ![fix.lat, fix.lon, fix.time, gps.accuracy].every(Number.isFinite) || Math.abs(fix.lat) > 90 || Math.abs(fix.lon) > 180 || gps.accuracy < 0 || gps.accuracy > 50 || now - fix.time > 6e4 || fix.time > now + 5e3)
       return null;
     const previous = data.rows[Math.max(0, data.nextIndex - 1)], next = data.rows[data.nextIndex];
@@ -3383,7 +3541,7 @@
   }
 
   // src/features/daylight/view.js
-  var hhmm = (time3) => new Date(time3).toLocaleTimeString("zh-TW", {
+  var hhmm = (time4) => new Date(time4).toLocaleTimeString("zh-TW", {
     timeZone: "Asia/Taipei",
     hour: "2-digit",
     minute: "2-digit",
@@ -3612,18 +3770,6 @@
     };
   }
 
-  // src/features/map/position.js
-  var fixes = /* @__PURE__ */ new WeakMap();
-  function rememberMapFix(gps, fix) {
-    fixes.set(gps, fix);
-  }
-  function currentMapPosition(gps, now = Date.now()) {
-    const fix = fixes.get(gps);
-    if (gps?.status !== "tracking" || !fix || fix.excluded || !Number.isFinite(fix.lat) || !Number.isFinite(fix.lon) || !Number.isFinite(fix.accuracy) || fix.accuracy < 0 || fix.accuracy > 50 || !Number.isFinite(fix.time) || now - fix.time > 6e4 || fix.time > now + 5e3)
-      return null;
-    return fix;
-  }
-
   // src/features/itinerary/factor.js
   var factorMessage = "\u8ACB\u8F38\u5165\u5927\u65BC 0\u3001\u81F3\u591A 10 \u7684\u6642\u9593\u500D\u7387\u3002";
   function timeFactor(value2) {
@@ -3644,6 +3790,7 @@
     persistence,
     map,
     recordingView,
+    recording,
     itinerary,
     heightProfile,
     stationEditor,
@@ -3758,12 +3905,18 @@
         event.returnValue = "";
       }
     });
+    listen(window2, "pageshow", (event) => {
+      void recording?.resumeOnForeground({ restoredPage: event.persisted === true });
+    });
     listen(window2, "pagehide", () => {
       persistence.save();
     });
     listen(document2, "visibilitychange", () => {
       if (document2.visibilityState === "hidden") persistence.save();
-      else void personalFactorView?.refresh();
+      else {
+        void personalFactorView?.refresh();
+        void recording?.resumeOnForeground();
+      }
     });
     const clock = window2.setInterval(() => {
       heightProfile?.update();
@@ -3948,8 +4101,8 @@
       const elevationText = value2(node, "ele"), elevation = number(elevationText);
       if (elevationText && elevation === null) badElevation++;
       const timeText = value2(node, "time");
-      const time3 = parseGpxTime(timeText);
-      if (timeText && !Number.isFinite(time3)) badTime++;
+      const time4 = parseGpxTime(timeText);
+      if (timeText && !Number.isFinite(time4)) badTime++;
       const extensions = children(node, "extensions")[0], quality = {};
       for (const key2 of ["accuracy", "altitudeAccuracy"]) {
         const element = extensions && Array.from(extensions.childNodes).find(
@@ -3965,8 +4118,8 @@
         lat,
         lon,
         elevation,
-        time: Number.isFinite(time3) ? time3 : null,
-        timeSource: !timeText ? "missing" : time3 === null ? "invalid" : ["synthetic", "interpolated", "estimated"].includes(declaredSource2) ? declaredSource2 : "gpx",
+        time: Number.isFinite(time4) ? time4 : null,
+        timeSource: !timeText ? "missing" : time4 === null ? "invalid" : ["synthetic", "interpolated", "estimated"].includes(declaredSource2) ? declaredSource2 : "gpx",
         ...quality
       };
     }
@@ -4020,32 +4173,55 @@
     const navigation = navigationStats(gps, now);
     if (!navigation) return null;
     const analysis = recordingAnalysis(gps), points = analysis.points;
-    const at = (time3) => {
-      let lo = 0, hi = points.length;
-      while (lo < hi) {
-        const mid = lo + hi >>> 1;
-        if (points[mid].time < time3) lo = mid + 1;
-        else hi = mid;
-      }
-      return points[lo]?.time === time3 ? points[lo] : null;
-    };
-    let distanceM2 = analysis.stats.km * 1e3;
-    for (const gap of gps.itinerary.recoveredGaps ?? []) {
-      const a = at(gap.fromTime), b = at(gap.toTime);
-      if (!a || !b || b.time <= a.time || gap.toM <= gap.fromM) continue;
+    const gaps = validatedGaps(gps.itinerary.recoveredGaps, null, gps.historyObservations?.pauses);
+    let removedM = 0, boundaryObservedM = 0;
+    for (let i = 1; i < points.length; i++) {
+      const a = points[i - 1], b = points[i];
       const counted = Math.max(0, (b.km - a.km) * 1e3);
-      distanceM2 += Math.max(0, gap.toM - gap.fromM - counted);
+      if (!(counted > 0) || !(b.time > a.time)) continue;
+      const overlapping = gaps.filter((g) => g.fromTime < b.time && g.toTime > a.time);
+      if (!overlapping.length) {
+        if (hasObservationBreak(gps, a, b)) removedM += counted;
+        continue;
+      }
+      removedM += counted;
+      const cuts = [a, b, ...overlapping.flatMap((g) => [g.from, g.to])].filter((p) => p.time >= a.time && p.time <= b.time).sort((x, y) => x.time - y.time);
+      for (let j = 1; j < cuts.length; j++) {
+        const left = cuts[j - 1], right = cuts[j];
+        if (right.time <= left.time || left.excluded || right.excluded || overlapping.some((g) => g.fromTime < right.time && g.toTime > left.time) || hasObservationBreak(gps, left, right))
+          continue;
+        boundaryObservedM += haversine(left, right) * 1e3;
+      }
     }
+    const observedDistanceM = Math.max(0, analysis.stats.km * 1e3 - removedM + boundaryObservedM);
+    let inferredDistanceM = 0, inferredAscentM = 0, inferredDescentM = 0;
+    for (const gap of gaps) {
+      inferredDistanceM += gap.toM - gap.fromM;
+      for (let i = 1; i < (gap.geometry?.length ?? 0); i++) {
+        const a = gap.geometry[i - 1].elevation, b = gap.geometry[i].elevation;
+        if (Number.isFinite(a) && Number.isFinite(b)) {
+          inferredAscentM += Math.max(0, b - a);
+          inferredDescentM += Math.max(0, a - b);
+        }
+      }
+    }
+    const distanceM2 = observedDistanceM + inferredDistanceM;
     return {
       ...navigation,
       distanceM: distanceM2,
+      observedDistanceM,
+      inferredDistanceM,
+      inferredGapCount: gaps.length,
+      inferredAscentM,
+      inferredDescentM,
+      estimated: gaps.length > 0,
       speedKmh: navigation.elapsedSeconds > 0 ? distanceM2 / navigation.elapsedSeconds * 3.6 : null
     };
   }
 
   // src/features/recording/model.js
   function recordingElapsed(gps, now = Date.now()) {
-    return gps.startedAt == null ? 0 : Math.max(0, (gps.endedAt ?? gps.pauseAt ?? now) - gps.startedAt - (gps.pausedMs || 0));
+    return recordingClock(gps, now).elapsedMs;
   }
   function positiveMinutes(value2) {
     const number = Number(value2);
@@ -4074,10 +4250,43 @@
     const values = ["accuracy", "altitudeAccuracy"].filter((key2) => Number.isFinite(point[key2]) && point[key2] >= 0).map((key2) => "<rw:" + key2 + ">" + point[key2] + "</rw:" + key2 + ">").join("");
     return values ? "<extensions>" + values + "</extensions>" : "";
   };
-  function recordingGpx(gps) {
-    return `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="Ridgewise" xmlns="http://www.topografix.com/GPX/1/1" xmlns:rw="${RIDGEWISE_GPX_NAMESPACE}"><metadata><name>${xmlText(gps.name || "\u6211\u7684\u8ECC\u8DE1")}</name><time>${new Date(gps.startedAt).toISOString()}</time></metadata><trk><name>${xmlText(gps.name || "\u6211\u7684\u8ECC\u8DE1")}</name>${gps.segments.filter((segment) => segment.length).map(
+  function observedRecordingSegments(segments, observationBreaks) {
+    const result = [];
+    for (const segment of segments) {
+      let run = [];
+      for (const p of segment) {
+        if (run.length && hasObservationBreak({ observationBreaks }, run.at(-1), p)) {
+          result.push(run);
+          run = [];
+        }
+        run.push(p);
+      }
+      if (run.length) result.push(run);
+    }
+    return result;
+  }
+  function recordingGpx(gps, { preserveSegments = false } = {}) {
+    const segments = preserveSegments ? gps.segments : observedRecordingSegments(gps.segments, gps.observationBreaks);
+    return `<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="Ridgewise" xmlns="http://www.topografix.com/GPX/1/1" xmlns:rw="${RIDGEWISE_GPX_NAMESPACE}"><metadata><name>${xmlText(gps.name || "\u6211\u7684\u8ECC\u8DE1")}</name><time>${new Date(gps.startedAt).toISOString()}</time></metadata><trk><name>${xmlText(gps.name || "\u6211\u7684\u8ECC\u8DE1")}</name>${segments.filter((segment) => segment.length).map(
       (segment) => `<trkseg>${segment.map((point) => `<trkpt lat="${point.lat}" lon="${point.lon}">${Number.isFinite(point.elevation) ? `<ele>${point.elevation}</ele>` : ""}<time>${new Date(point.time).toISOString()}</time>${qualityXml(point)}</trkpt>`).join("")}</trkseg>`
     ).join("")}</trk></gpx>`;
+  }
+  function inferredRecordingGpx(gps) {
+    const raw = recordingGpx(gps);
+    const gaps = validatedGaps(gps.itinerary?.recoveredGaps);
+    const inferred = gaps.filter((g) => g.geometry?.length > 1).map((g) => {
+      const points = g.geometry.map(
+        (p) => `<trkpt lat="${p.lat}" lon="${p.lon}">${Number.isFinite(p.elevation) ? `<ele>${p.elevation}</ele>` : ""}<extensions><rw:inferred>true</rw:inferred><rw:timeSource>estimated</rw:timeSource><rw:recoveryId>${xmlText(g.id)}</rw:recoveryId></extensions></trkpt>`
+      ).join("");
+      return `<trkseg>${points}<extensions><rw:recovery>${xmlText(JSON.stringify({ id: g.id, binding: g.binding, routeId: g.routeId, direction: g.direction, fromTime: g.fromTime, toTime: g.toTime, kind: g.kind, confidence: g.confidence }))}</rw:recovery></extensions></trkseg>`;
+    }).join("");
+    return raw.replace(
+      "</metadata>",
+      "<extensions><rw:timeSource>estimated</rw:timeSource><rw:containsInferredGpx>true</rw:containsInferredGpx></extensions></metadata>"
+    ).replace(
+      "</trk>",
+      "</trk><trk><name>GPX \u63A8\u5B9A\u88DC\u6BB5\uFF08\u975E GPS \u91CF\u6E2C\uFF1B\u7121\u63A8\u5B9A\u6642\u9593\u6233\uFF09</name>" + inferred + "</trk>"
+    );
   }
   function recordingSnapshot(gps, now = Date.now()) {
     const { watchId, saveError, saving, savedAt, ...data } = gps;
@@ -4085,21 +4294,35 @@
       JSON.stringify({
         ...data,
         slot: "active",
+        recordingIntent: recordingIntent(gps),
         elapsedMs: recordingElapsed(gps, now),
+        timing: recordingClock(gps, now),
         updatedAt: now,
         raw: recordingGpx(gps)
       })
     );
+  }
+  function recordingIntent(gps) {
+    if (["review", "stopping", "finishing", "finished", "discarding"].includes(gps.status) || gps.finalizePending && gps.endedAt != null)
+      return "stopped";
+    if (gps.status === "error") return "paused";
+    if (gps.historyObservations?.pauses?.some((p) => p.resumedAt === null)) return "paused";
+    if (["recording", "paused", "stopped"].includes(gps.recordingIntent)) return gps.recordingIntent;
+    return ["tracking", "requesting"].includes(gps.status) ? "recording" : "paused";
+  }
+  function shouldAutoResumeRecording(snapshot3) {
+    return recordingIntent(snapshot3) === "recording" && ["tracking", "requesting", "paused"].includes(snapshot3.status);
   }
   function restoreRecording(snapshot3, now = Date.now()) {
     const finished = snapshot3.status === "finished";
     const stopped = finished || ["review", "stopping", "finishing"].includes(snapshot3.status) || Boolean(snapshot3.finalizePending && snapshot3.endedAt != null);
     return {
       ...snapshot3,
+      recordingIntent: recordingIntent(snapshot3),
       status: finished ? "finished" : stopped ? "review" : "paused",
       endedAt: stopped ? snapshot3.endedAt : null,
-      pauseAt: stopped ? snapshot3.pauseAt : now,
-      pausedMs: stopped ? snapshot3.pausedMs : Math.max(0, now - snapshot3.startedAt - snapshot3.elapsedMs),
+      pauseAt: stopped ? snapshot3.pauseAt : snapshot3.pauseAt ?? now,
+      pausedMs: snapshot3.pausedMs ?? 0,
       watchId: null,
       accuracy: null,
       error: "",
@@ -4118,11 +4341,13 @@
       raw: recordingGpx(gps),
       kind: "recording",
       recording: {
+        ...gps.observationBreaks ? { observationBreaks: structuredClone(gps.observationBreaks) } : {},
         ...navigation ? { navigationStatistics: { ...navigation, basis: "gpx-progress" } } : {},
         ...gps.navigation ? { navigation: structuredClone(gps.navigation) } : {},
         ...gps.routeFactorHistory ? { routeFactorHistory: structuredClone(gps.routeFactorHistory) } : {},
         ...gps.captureSource ? { captureSource: { ...gps.captureSource } } : {},
         ...gps.historyObservations ? { historyObservations: structuredClone(gps.historyObservations) } : {},
+        timing: recordingClock(gps, gps.endedAt ?? now),
         startedAt: gps.startedAt,
         endedAt: gps.endedAt,
         elapsedMs: navigation ? navigation.elapsedSeconds * 1e3 : recordingElapsed(gps),
@@ -4394,8 +4619,8 @@
   }
 
   // src/features/map/thumbnail.js
-  function mapSvg(file, position3 = null, live = [], small = false, stations = []) {
-    const all = [...file.points, ...live.flat()], origin = all[0];
+  function mapSvg(file, position3 = null, live = [], small = false, stations = [], estimated = []) {
+    const all = [...file.points, ...live.flat(), ...estimated.flat()], origin = all[0];
     if (!all.length)
       return '<div class="map-waiting">\u7B49\u5F85\u7B2C\u4E00\u500B GPS \u4F4D\u7F6E\uFF1B\u53EF\u5148\u7E2E\u653E\u8207\u5207\u63DB\u5E95\u5716\u3002</div>';
     const cos = Math.max(0.01, Math.cos(origin.lat * Math.PI / 180));
@@ -4422,7 +4647,7 @@
         y: height / 2 + (p.y - (minY + maxY) / 2) * scale
       };
     };
-    const line = (segment, color, size) => `<polyline points="${sampled(
+    const line = (segment, color, size, dashed = false) => `<polyline points="${sampled(
       segment,
       Math.max(20, Math.floor(4e3 / Math.max(1, file.segments.length + live.length)))
     ).map((point) => {
@@ -4430,7 +4655,7 @@
       return `${p.x.toFixed(2)},${p.y.toFixed(2)}`;
     }).join(
       " "
-    )}" fill="none" stroke="${color}" stroke-width="${size}" stroke-linecap="round" stroke-linejoin="round"/>`;
+    )}" fill="none" stroke="${color}" ${dashed ? 'stroke-dasharray="8 7"' : ""} stroke-width="${size}" stroke-linecap="round" stroke-linejoin="round"/>`;
     const dot = (point, color, r = 6) => {
       const p = project2(point);
       return `<circle cx="${p.x}" cy="${p.y}" r="${r}" fill="${color}" stroke="white" stroke-width="3"/>`;
@@ -4439,12 +4664,35 @@
     <g stroke="#dce5dc" stroke-width="1">${[80, 160, 240, 320, 400, 480, 560].map((x) => `<path d="M${x} 0V${height}"/>`).join("")}${[70, 140, 210, 280].map((y) => `<path d="M0 ${y}H640"/>`).join("")}</g>
     ${file.segments.map((segment) => line(segment, "white", 8)).join("")}${file.segments.map((segment) => line(segment, "#326753", 4)).join("")}
     ${live.map((segment) => line(segment, "#4388b7", 3)).join("")}
+    ${estimated.map((segment) => line(segment, "#e0a040", 5, true)).join("")}
     ${file.points.length ? dot(file.points[0], "#183e35") + dot(file.points.at(-1), "#8daa64") : ""}
     ${position3 ? dot(position3, "#2477d4", 9) : ""}
     ${stations.map((station) => {
       return `<g>${dot(station, station.next ? "#b87930" : "#326753", 7)}<title>${esc(station.name)} ${esc(station.arrivalLabel || "")}</title></g>`;
     }).join("")}
     <text x="20" y="27" fill="#527062" font-size="13">N \u2191</text></svg>`;
+  }
+
+  // src/features/recording/recovery-view.js
+  var time2 = (t) => new Date(t).toLocaleString("zh-TW", { timeZone: "Asia/Taipei", hourCycle: "h23" });
+  function recoveryDetails(journey, statistics, historyId = null) {
+    const gaps = validatedGaps(journey?.recoveredGaps);
+    const pending = journey?.recoveryStatus?.status === "pending";
+    if (!gaps.length && !pending) return "";
+    const reasons2 = {
+      "off-route": "\u66FE\u504F\u96E2 GPX",
+      "manual-pause": "\u624B\u52D5\u66AB\u505C\u671F\u9593\u672A\u63A8\u5B9A\u8DEF\u7A0B",
+      "ambiguous-route-position": "\u5F80\u8FD4\u6216\u91CD\u8907\u8A2A\u6B21\u5C1A\u6709\u6B67\u7FA9",
+      "unreachable-or-disconnected": "\u901F\u5EA6\u6216\u5206\u6BB5\u9023\u63A5\u4E0D\u53EF\u4FE1",
+      "unsafe-route-continuity": "\u8DEF\u7DDA\u9023\u7E8C\u6027\u5F85\u78BA\u8A8D"
+    };
+    return `<details id="gps-recovery-details${historyId ? "-" + esc(historyId) : ""}"><summary>GPS \u7F3A\u6BB5\u8207 GPX \u63A8\u5B9A \xB7 ${gaps.length} \u6BB5</summary>
+    ${pending ? `<p role="status">\u7F3A\u6BB5\u5F85\u78BA\u8A8D\uFF1A${esc(reasons2[journey.recoveryStatus.reason] ?? "\u7B49\u5F85\u9023\u7E8C\u53EF\u9760\u5B9A\u4F4D")}\u3002\u539F\u59CB\u7D00\u9304\u6703\u7E7C\u7E8C\u4FDD\u5B58\u3002</p>` : ""}
+    <p>\u91CC\u7A0B\u542B\u5DF2\u9A57\u8B49\u88DC\u6BB5\uFF1B\u5BE6\u6E2C ${((statistics?.observedDistanceM ?? 0) / 1e3).toFixed(2)} km \xB7 GPX \u63A8\u5B9A ${((statistics?.inferredDistanceM ?? gaps.reduce((s, g) => s + g.toM - g.fromM, 0)) / 1e3).toFixed(2)} km\u3002</p>
+    <p>\u7D00\u9304\u6642\u9593\uFF1A\u6574\u8D9F\u7D93\u904E\u6642\u9593\u6263\u9664\u660E\u78BA\u624B\u52D5\u66AB\u505C\uFF0C\u5305\u542B\u672A\u89C0\u6E2C\u80CC\u666F\u6642\u9593\u3002\u500D\u7387\uFF1A\u771F\u5BE6\u7AEF\u9EDE\u7D93\u904E\u6642\u9593\uFF0C\u5305\u542B\u4F11\u606F\u8207\u66AB\u505C\u3002</p>
+    ${gaps.map((g) => `<p>${esc(time2(g.fromTime))} \u2192 ${esc(time2(g.toTime))}\uFF08\u53F0\u5317\u6642\u9593\uFF09<br>${((g.toM - g.fromM) / 1e3).toFixed(2)} km \xB7 ${Math.round(g.elapsedSeconds / 60)} \u5206\u9418 \xB7 ${g.direction === "reverse" ? "\u53CD\u5411" : "\u539F\u5411"}<br>\u53C3\u8003 GPX\uFF1A${esc(g.routeId)} \xB7 \u7248\u672C ${esc(g.binding)}<br>\u539F\u56E0\uFF1A\u552F\u4E00\u4E14\u53EF\u9054\u7684\u540C\u6BB5\u8DEF\u7DDA\uFF1B\u53EF\u4FE1\u5EA6\u70BA\u8DEF\u7DDA\u63A8\u5B9A\uFF0C\u975E GPS \u91CF\u6E2C\u3002${g.usage ? `\u5168\u7A0B\u500D\u7387\uFF1A${g.usage.totalFactor ? "\u5DF2\u7D0D\u5165" : "\u5C1A\u672A\u7D0D\u5165"}\uFF1B\u6700\u8FD1\u5340\u6BB5\uFF1A${g.usage.recentFactor ? "\u5DF2\u7D0D\u5165" : "\u672A\u4F7F\u7528\u6B64\u88DC\u6BB5"}\uFF1B\u4E0B\u4E00\u7AD9 ETA\uFF1A${g.usage.eta ? "\u5DF2\u4F7F\u7528" : "\u5C1A\u672A\u4F7F\u7528\u6B64\u88DC\u6BB5"}` : "\u53EF\u4F9B\u6709\u6548\u500D\u7387\u8207 ETA \u4F7F\u7528\uFF1B\u57FA\u6E96\u4E0D\u8DB3\u6642\u4FDD\u7559\u672A\u77E5\u3002"}</p>`).join("")}
+    ${gaps.length ? `<p>\u6A58\u9EC3\u865B\u7DDA\u70BA GPX \u63A8\u5B9A\uFF1B\u85CD\u8272\u5BE6\u7DDA\u70BA GPS\u3002\u63A8\u5B9A\u9AD8\u5EA6\u53E6\u5217\uFF1A\u722C\u5347 ${Math.round(statistics?.inferredAscentM ?? 0)} m \uFF0F\u4E0B\u964D ${Math.round(statistics?.inferredDescentM ?? 0)} m\uFF0C\u4E0D\u6DF7\u5165\u5BE6\u6E2C\u9AD8\u5EA6\u3002</p><p>\u542B\u63A8\u5B9A GPX \u4F7F\u7528\u7368\u7ACB\u8ECC\u8DE1\u8207 extensions \u6A19\u8A18\uFF1B\u5176\u4ED6 GPX \u8EDF\u9AD4\u53EF\u80FD\u5FFD\u7565\u6A19\u8A18\u3002\u539F\u59CB\u5099\u4EFD\u4E0D\u542B\u63A8\u5B9A\u3002</p>${button("\u4E0B\u8F09\u542B\u63A8\u5B9A GPX", historyId ? "file-download-inferred" : "gps-download-inferred", "ghost", "download", historyId ? `data-id="${esc(historyId)}"` : "")}` : ""}
+    </details>`;
   }
 
   // src/features/gpx/views.js
@@ -4459,7 +4707,7 @@
       ${button(history ? "\u67E5\u770B\u8ECC\u8DE1" : state.selected === file.id ? "\u67E5\u770B\u6B64\u8DEF\u7DDA" : "\u9078\u7528\u8DEF\u7DDA", "select", "", "route", `data-id="${file.id}" ${gpsPending2() ? "disabled" : ""}`)}
       ${history ? button("\u4E0B\u8F09 GPX", "file-download", "ghost", "download", `data-id="${file.id}"`) + button("\u4F5C\u70BA\u53C3\u8003\u8DEF\u7DDA", "use-recording-route", "", "route", `data-id="${file.id}" ${gpsPending2() || state.timeSourceBusy ? "disabled" : ""}`) : ""}
       ${button("\u79FB\u9664", "delete", "ghost", "close", `data-id="${file.id}" ${gpsPending2() && state.gps.sourceRouteId === file.id ? "disabled" : ""}`)}
-      </div>${!file.saved ? '<p class="small error-message">\u5C1A\u672A\u4FDD\u5B58\u81F3\u6B64\u88DD\u7F6E\uFF0C\u8ACB\u4FDD\u7559\u539F\u6A94\u3002</p>' : ""}</article>`;
+      </div>${history ? recoveryDetails(file.recording?.itinerary, file.recording?.navigationStatistics, file.id) : ""}${!file.saved ? '<p class="small error-message">\u5C1A\u672A\u4FDD\u5B58\u81F3\u6B64\u88DD\u7F6E\uFF0C\u8ACB\u4FDD\u7559\u539F\u6A94\u3002</p>' : ""}</article>`;
     }
     function libraryView() {
       const files = state.library.filter((file) => file.kind === "recording");
@@ -4629,6 +4877,7 @@
       stopWatch();
       gps.endedAt = gps.pauseAt ?? Date.now();
       gps.pauseAt = gps.endedAt;
+      gps.recordingIntent = "stopped";
       gps.status = "stopping";
       persistence.cancelScheduled();
       render();
@@ -4695,6 +4944,7 @@
       stopWatch();
       const gps = state.gps, previousStatus = gps.status;
       gps.pauseAt ??= Date.now();
+      gps.recordingIntent = "stopped";
       gps.status = "discarding";
       persistence.cancelScheduled();
       render();
@@ -4705,6 +4955,7 @@
         navigate("record");
       } catch {
         gps.status = previousStatus === "review" ? "review" : "paused";
+        gps.recordingIntent = gps.status === "review" ? "stopped" : "paused";
         gps.saveError = "\u7121\u6CD5\u79FB\u9664\u8349\u7A3F\uFF0C\u8ACB\u7A0D\u5F8C\u91CD\u8A66\u3002";
         render();
       }
@@ -4776,7 +5027,8 @@
       gps.segments.push([]);
       processor.startSegment();
       const segment = gps.segments.at(-1), requestedAt = Date.now();
-      let latestTimestamp = processor.lastRawPoint()?.time ?? -Infinity;
+      gps.observationBreaks ??= rawObservationBreaks(gps.segments);
+      let latestTimestamp = gps.lastObservationTime ?? processor.lastRawPoint()?.time ?? -Infinity;
       try {
         const subscription = locationProvider.watch((fix) => {
           if (!isCurrent()) return;
@@ -4787,7 +5039,14 @@
             );
             return;
           }
+          if (Number.isFinite(latestTimestamp) && point.time - latestTimestamp >= 61e3)
+            gps.observationBreaks.push({
+              fromTime: latestTimestamp,
+              toTime: point.time,
+              kind: "gps-callback-gap"
+            });
           latestTimestamp = point.time;
+          gps.lastObservationTime = point.time;
           gps.accuracy = point.accuracy;
           const last = segment.at(-1);
           if (!last || haversine(last, point) >= 3e-3 || point.time - last.time >= 3e4 || positionReliable(last) !== positionReliable(point) || elevationReliable(last) !== elevationReliable(point)) {
@@ -4800,15 +5059,15 @@
             onPoint();
           }
           const latest = processor.latestPoint();
-          const reliable = positionReliable(point) && !latest?.excluded;
-          gps.status = reliable ? "tracking" : "requesting";
+          const reliable2 = positionReliable(point) && !latest?.excluded;
+          gps.status = reliable2 ? "tracking" : "requesting";
           gps.error = !positionReliable(point) ? "\u76EE\u524D\u5B9A\u4F4D\u7CBE\u5EA6\u4E0D\u8DB3\uFF0C\u539F\u59CB\u4F4D\u7F6E\u5DF2\u4FDD\u7559\uFF0C\u8A72\u6BB5\u66AB\u4E0D\u8A08\u5165\u8DDD\u96E2\u3002" : latest?.excluded ? "\u4F4D\u7F6E\u8DF3\u52D5\u5F85\u78BA\u8A8D\uFF0C\u539F\u59CB\u4F4D\u7F6E\u5DF2\u4FDD\u7559\uFF0C\u66AB\u4E0D\u8A08\u5165\u8DDD\u96E2\u3002" : !elevationReliable(point) ? "\u6D77\u62D4\u7CBE\u5EA6\u4E0D\u8DB3\uFF0C\u539F\u59CB\u9AD8\u5EA6\u5DF2\u4FDD\u7559\uFF0C\u722C\u5347\u8CC7\u6599\u66AB\u4E0D\u5B8C\u6574\u3002" : "";
-          rememberMapFix(gps, { ...point, excluded: !reliable });
+          rememberMapFix(gps, { ...point, excluded: !reliable2 });
           onFix(
             {
               ...point,
-              excluded: !reliable,
-              qualityReason: !positionReliable(point) ? "horizontal-accuracy" : !reliable ? "position-jump" : null
+              excluded: !reliable2,
+              qualityReason: !positionReliable(point) ? "horizontal-accuracy" : !reliable2 ? "position-jump" : null
             },
             Date.now()
           );
@@ -4843,37 +5102,6 @@
     anchor.download = fileName;
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 5e3);
-  }
-
-  // src/features/itinerary/position-cluster.js
-  var indexed = /* @__PURE__ */ new WeakMap();
-  function heading(file, position3) {
-    if (!indexed.has(file)) {
-      const groups = /* @__PURE__ */ new Map();
-      for (const p of file.points) {
-        if (!groups.has(p.segment)) groups.set(p.segment, []);
-        groups.get(p.segment).push(p);
-      }
-      indexed.set(file, groups);
-    }
-    const points = indexed.get(file).get(position3.segmentIndex) ?? [];
-    let lo = 1, hi = points.length - 1;
-    while (lo < hi) {
-      const mid = lo + hi >>> 1;
-      if (points[mid].km * 1e3 < position3.routeProgressM) lo = mid + 1;
-      else hi = mid;
-    }
-    const a = points[lo - 1], b = points[lo];
-    return a && b ? [b.lat - a.lat, (b.lon - a.lon) * Math.cos(a.lat * Math.PI / 180)] : null;
-  }
-  function compactPositionCluster(file, candidates, tolerance = 25) {
-    if (candidates.length < 2) return candidates;
-    const distances = candidates.map((p) => p.routeProgressM);
-    if (Math.max(...distances) - Math.min(...distances) > tolerance) return candidates;
-    const vectors = candidates.map((p) => heading(file, p));
-    if (vectors.some((a) => vectors.some((b) => a && b && a[0] * b[0] + a[1] * b[1] < 0)))
-      return candidates;
-    return [candidates.reduce((a, b) => a.offsetM <= b.offsetM ? a : b)];
   }
 
   // src/features/itinerary/live-factor.js
@@ -4929,6 +5157,7 @@
     const matcher = file?.segments?.length ? routeMatcherFor(file) : null;
     let first = departureAvailable, origin = null, originReason = departureAvailable ? "missing-start-fix" : "session-history-unavailable", continuityReason = null;
     let last = null, lastTime = -Infinity, peakM = -Infinity, history = [], current = null;
+    let recoveryEvidence = [], sectionOrigin = null;
     let failure2 = "missing-gps-fix";
     let departureCandidate = null, peakSample = null, confirmation = null, restoredBoundary = null, restoration = null;
     let restorationCount = 0;
@@ -4987,13 +5216,19 @@
         return missing2("progress-too-small");
       if (!Number.isFinite(actualSeconds) || actualSeconds <= 0)
         return missing2("invalid-elapsed-time");
+      const inferred = recoveryEvidence.filter(
+        (g) => g.fromTime < to.fix.time && g.toTime > from.fix.time
+      );
       return {
+        ...inferred.length ? { estimated: true } : {},
         factor: actualSeconds / baselineSeconds,
         reason: null,
         actualSeconds,
         baselineSeconds,
         source: {
           version: LIVE_FACTOR_VERSION,
+          observationBasis: inferred.length ? "observed-and-inferred-gpx" : "observed-gps",
+          inferredGapIds: inferred.map((g) => g.id),
           routeId: file.id ?? null,
           direction: file.direction === "reverse" ? "reverse" : "forward",
           modelVersion: timeModel.version,
@@ -5056,13 +5291,43 @@
         if (sample.fix.time <= target && Math.abs(sample.fix.time - target) <= config2.endpointToleranceMs && (!endpoint || Math.abs(sample.fix.time - target) < Math.abs(endpoint.fix.time - target)))
           endpoint = sample;
       }
-      const recent = endpoint ? ratio(
+      let recent = endpoint ? ratio(
         endpoint,
         current,
         (current.fix.time - endpoint.fix.time) / 1e3,
         baselineBetween(endpoint, current)
       ) : missing2("window-start-missing");
+      if (!Number.isFinite(recent.factor) && (continuityReason || recoveryEvidence.length || originReason === "session-history-unavailable")) {
+        const lowerBound = Math.max(
+          sectionOrigin?.fix.time ?? -Infinity,
+          recoveryEvidence.findLast((g) => g.fromTime <= target && g.toTime > target)?.fromTime ?? target
+        );
+        const candidates = [
+          sectionOrigin,
+          ...history,
+          ...recoveryEvidence.map((g) => ({
+            fix: g.from,
+            position: g.from,
+            baseline: query(g.from)
+          }))
+        ].filter((p) => p && p.fix.time < current.fix.time && p.fix.time >= lowerBound);
+        for (const from of candidates.sort((a, b) => a.fix.time - b.fix.time)) {
+          const candidate = ratio(
+            from,
+            current,
+            (current.fix.time - from.fix.time) / 1e3,
+            baselineBetween(from, current)
+          );
+          if (Number.isFinite(candidate.factor)) {
+            recent = candidate;
+            recent.source.windowKind = "latest-valid-section";
+            recent.source.actualWindowMs = current.fix.time - from.fix.time;
+            break;
+          }
+        }
+      }
       if (recent.source) {
+        recent.source.windowKind ??= "observed-window-endpoints";
         recent.source.requestedWindowMs = config2.windowMs;
         recent.source.requestedStartTime = target;
         recent.source.endpointToleranceMs = config2.endpointToleranceMs;
@@ -5077,8 +5342,15 @@
       }
       return { version: LIVE_FACTOR_VERSION, asOf: current.fix.time, total, recent };
     }
-    function update(input, { now = Date.now(), status = "tracking" } = {}) {
+    function update(input, {
+      now = Date.now(),
+      status = "tracking",
+      recoveredGaps = [],
+      pauses = [],
+      unresolvedGap = null
+    } = {}) {
       clock = now;
+      recoveryEvidence = validatedGaps([...recoveryEvidence, ...recoveredGaps], file, pauses);
       if (!["tracking", "requesting"].includes(status)) {
         return snapshot3({ now, status });
       }
@@ -5113,7 +5385,8 @@
       if (!candidates.length) return reject("off-route");
       const nearestOffset = found.matches[0].nearestTrackDistanceM;
       candidates = candidates.filter((p) => p.offsetM <= nearestOffset + fix.accuracy);
-      if (last) {
+      const localReset = unresolvedGap && unresolvedGap.toTime > (sectionOrigin?.fix.time ?? -Infinity);
+      if (last && !localReset) {
         const dt = (fix.time - last.fix.time) / 1e3;
         const reach = config2.maxSpeedMps * dt + last.fix.accuracy + fix.accuracy;
         candidates = candidates.filter(
@@ -5149,7 +5422,7 @@
         config2.progressToleranceM,
         Math.min(50, fix.accuracy + (last?.fix.accuracy ?? 0))
       );
-      if (position3.routeProgressM < peakM - tolerance) return reject("backtracking");
+      if (!localReset && position3.routeProgressM < peakM - tolerance) return reject("backtracking");
       if (last && (needsStability || limited && last.quality !== "limited")) {
         const previous = stability?.last;
         const dt = previous && fix.time - previous.fix.time;
@@ -5165,28 +5438,48 @@
         needsStability = false;
         stability = null;
       }
+      if (localReset) {
+        continuityReason = "gps-observation-gap";
+        history = [];
+        retained = {};
+        sectionOrigin = sample;
+        peakM = position3.routeProgressM;
+        peakSample = sample;
+      }
+      const bridge = last && recoveryEvidence.find(
+        (g) => g.fromTime === last.fix.time && g.toTime <= fix.time && fix.time - g.toTime <= 3e4 && g.segmentIndex === position3.segmentIndex && Math.abs(g.fromM - last.position.routeProgressM) < 1e-6 && position3.routeProgressM >= g.toM - 25 && position3.routeProgressM - g.toM <= 6 * (fix.time - g.toTime) / 1e3 + 20
+      );
       if (restoredBoundary) {
         const bound3 = Math.max(
           5,
           Math.min(config2.maxAdaptiveOffsetM, fix.accuracy + restoredBoundary.fix.accuracy)
         );
-        if (position3.segmentIndex !== restoredBoundary.position.segmentIndex || Math.abs(position3.routeProgressM - restoredBoundary.position.routeProgressM) > bound3 || distanceM(fix, restoredBoundary.fix) > bound3)
-          continuityReason = "restored-continuity-unconfirmed";
+        if (position3.segmentIndex !== restoredBoundary.position.segmentIndex || Math.abs(position3.routeProgressM - restoredBoundary.position.routeProgressM) > bound3 || distanceM(fix, restoredBoundary.fix) > bound3) {
+          if (!bridge) {
+            continuityReason = "restored-continuity-unconfirmed";
+            sectionOrigin = sample;
+            history = [];
+            retained = {};
+          }
+        }
         restoration = {
           kind: "local-sha256-checkpoint",
           restorationCount,
           limitations: ["unobserved-reload-intervals-not-a-continuous-gps-record"],
           verification: "unverified",
           unobservedInterval: { fromTime: restoredBoundary.fix.time, toTime: fix.time },
-          boundaryCompatible: !continuityReason
+          boundaryCompatible: !continuityReason,
+          inferredGapId: bridge?.id ?? null
         };
         restoredBoundary = null;
       }
-      if (last && fix.time - last.fix.time > config2.maxObservationGapMs && Math.abs(position3.routeProgressM - last.position.routeProgressM) > Math.max(config2.progressToleranceM, Math.min(50, fix.accuracy + last.fix.accuracy))) {
+      if (last && !bridge && (fix.time - last.fix.time > config2.maxObservationGapMs || overlapsPause(pauses, last.fix.time, fix.time)) && Math.abs(position3.routeProgressM - last.position.routeProgressM) > Math.max(config2.progressToleranceM, Math.min(50, fix.accuracy + last.fix.accuracy))) {
         continuityReason = "gps-observation-gap";
         history = [];
         retained = {};
+        sectionOrigin = sample;
       }
+      sectionOrigin ??= sample;
       last = sample;
       if (position3.routeProgressM > peakM) peakSample = sample;
       peakM = Math.max(peakM, position3.routeProgressM);
@@ -5257,7 +5550,9 @@
         originReason,
         continuityReason,
         confirmation,
-        restorationCount
+        restorationCount,
+        recoveryEvidence,
+        sectionOrigin: pack(sectionOrigin)
       });
     }
     function restoreCheckpoint(state, savedAt, now = Date.now()) {
@@ -5310,7 +5605,12 @@
           state.originReason
         ))
           return false;
+        const evidence = validatedGaps(state.recoveryEvidence ?? [], file);
+        if (evidence.length !== (state.recoveryEvidence ?? []).length) return false;
+        const savedSection = unpack(state.sectionOrigin);
         restorationCount = state.restorationCount + 1;
+        recoveryEvidence = evidence;
+        sectionOrigin = savedSection ?? savedLast;
         origin = savedOrigin;
         departureCandidate = candidate;
         last = savedLast;
@@ -5413,10 +5713,12 @@
     },
     prepareHistory,
     navigator = globalThis.navigator,
-    locationProvider
+    locationProvider,
+    document: document2 = globalThis.document
   }) {
     let disposed = false;
     const pending = /* @__PURE__ */ new Set();
+    let pendingAutoResume = null, resuming = null;
     const { toast } = feedback;
     const saveDraft = persistence.save, acquireRecordingLock = persistence.acquireLock, releaseWriter = persistence.releaseLock;
     const tracker = createGeolocationTracker({
@@ -5464,7 +5766,13 @@
       if (snapshot3.sourceRouteId) state.selected = snapshot3.sourceRouteId;
       state.recordingRouteWarning = snapshot3.sourceRouteId && !state.library.some((file) => file.id === snapshot3.sourceRouteId) ? "\u672C\u6B21\u7D00\u9304\u539F\u7D81\u5B9A\u7684 GPX \u5DF2\u4E0D\u5728\u8DEF\u7DDA\u6E05\u55AE\u6216\u7121\u6CD5\u8B80\u53D6\u3002\u539F\u8DEF\u7DDA ID\u3001\u65B9\u5411\u8207\u5DF2\u8A18\u9304\u8ECC\u8DE1\u4ECD\u4FDD\u7559\uFF1B\u8ACB\u6838\u5C0D\u8349\u7A3F\u4E2D\u53EF\u7528\u7684\u8DEF\u7DDA\u8CC7\u6599\uFF0C\u672A\u80FD\u78BA\u8A8D\u7684 ETA \u4FDD\u6301\u672A\u77E5\uFF0C\u4E0D\u6703\u6539\u7528\u5176\u4ED6\u8DEF\u7DDA\u3002" : "";
       await onJourneyRestore(state.gps);
-      if (!disposed) navigate("record");
+      if (!disposed) {
+        navigate("record");
+        if (shouldAutoResumeRecording(snapshot3)) {
+          pendingAutoResume = state.gps;
+          await resumeOnForeground();
+        }
+      }
     }
     async function startGps(direct = false) {
       if (disposed || state.loading || state.starting || state.timeSourceBusy || gpsPending2()) return;
@@ -5492,7 +5800,9 @@
           await restoreDraft(existing);
           if (disposed) return;
           render();
-          toast("\u5DF2\u627E\u56DE\u672A\u5B8C\u6210\u7684\u7D00\u9304\uFF0C\u6309\u300C\u7E7C\u7E8C\u7D00\u9304\u300D\u63A5\u7E8C\u3002");
+          toast(
+            state.gps.recordingIntent === "recording" ? "\u5DF2\u627E\u56DE\u672A\u5B8C\u6210\u7684\u7D00\u9304\uFF0C\u6B63\u5728\u6062\u5FA9 GPS\u3002" : "\u5DF2\u627E\u56DE\u66AB\u505C\u4E2D\u7684\u7D00\u9304\uFF0C\u6309\u300C\u7E7C\u7E8C\u7D00\u9304\u300D\u63A5\u7E8C\u3002"
+          );
           return;
         }
         const now = Date.now(), route = direct || current()?.kind === "recording" ? null : current();
@@ -5520,7 +5830,9 @@
           sourceRouteId: route?.id ?? null,
           sourceRouteDirection: normalizeDirection(route?.direction),
           status: "requesting",
+          recordingIntent: "recording",
           segments: [],
+          observationBreaks: [],
           startedAt: now,
           pauseAt: null,
           pausedMs: 0,
@@ -5576,6 +5888,8 @@
     }
     function pauseGps() {
       if (!["requesting", "tracking"].includes(state.gps.status)) return;
+      pendingAutoResume = null;
+      state.gps.recordingIntent = "paused";
       stopWatch();
       state.gps.status = "paused";
       state.gps.pauseAt = Date.now();
@@ -5583,7 +5897,14 @@
       saveDraft();
       render();
     }
-    async function resumeGps() {
+    function resumeGps() {
+      if (!resuming)
+        resuming = resumeSavedGps().finally(() => {
+          resuming = null;
+        });
+      return resuming;
+    }
+    async function resumeSavedGps() {
       if (disposed || !["paused", "error"].includes(state.gps.status)) return;
       if (!await acquireRecordingLock()) {
         if (!disposed) toast(state.recordingBlocked);
@@ -5598,24 +5919,46 @@
         toast("\u5DF2\u9054 500 \u6BB5\uFF0C\u8ACB\u7D50\u675F\u6B64\u4EFD\u7D00\u9304\u5F8C\u518D\u958B\u65B0\u7D00\u9304\u3002");
         return;
       }
-      state.gps.pausedMs += Date.now() - state.gps.pauseAt;
+      if (state.gps.historyObservations?.pauses?.at(-1)?.resumedAt === null || !state.gps.historyObservations)
+        state.gps.pausedMs += Date.now() - state.gps.pauseAt;
+      state.gps.recordingIntent = "recording";
       historyResume(state.gps, Date.now());
       state.gps.pauseAt = null;
       state.gps.endedAt = null;
       state.gps.finalizePending = false;
       startWatch();
     }
-    function downloadGps() {
+    async function resumeOnForeground({ restoredPage = false } = {}) {
+      if (disposed || document2?.visibilityState === "hidden") return false;
+      const gps = state.gps;
+      if (pendingAutoResume === gps) {
+        pendingAutoResume = null;
+        await resumeGps();
+        if (!disposed && gps === state.gps && ["requesting", "tracking"].includes(gps.status)) {
+          toast("\u5DF2\u6062\u5FA9\u539F\u7D00\u9304\uFF0C\u6B63\u5728\u81EA\u52D5\u63A5\u7E8C GPS \u5B9A\u4F4D\u3002");
+          return true;
+        }
+      } else if (restoredPage && gps.id && ["requesting", "tracking"].includes(gps.status)) {
+        startWatch();
+        return true;
+      }
+      return false;
+    }
+    function downloadGps(inferred = false) {
       const segments = state.gps.segments.filter((segment) => segment.length);
       if (!segments.length) {
         toast("\u5C1A\u672A\u53D6\u5F97\u5EA7\u6A19\uFF0C\u6C92\u6709\u53EF\u4E0B\u8F09\u7684\u8ECC\u8DE1\u3002");
         return;
       }
-      downloadGpx(recordingGpx(state.gps), `Ridgewise-${state.date}.gpx`);
+      downloadGpx(
+        inferred ? inferredRecordingGpx(state.gps) : recordingGpx(state.gps),
+        `Ridgewise-${state.date}${inferred ? "-inferred" : ""}.gpx`
+      );
     }
     function clearGps() {
       stopWatch();
       persistence.cancelScheduled();
+      pendingAutoResume = null;
       state.gps = createIdleRecording();
       state.recordingName = "";
       state.recordingRouteWarning = "";
@@ -5658,7 +6001,7 @@
     }
     async function dispose() {
       disposed = true;
-      pauseGps();
+      pendingAutoResume = null;
       stopWatch();
       await Promise.allSettled([...pending]);
     }
@@ -5668,9 +6011,11 @@
       resume: track(resumeGps),
       finish: track(completion.stop),
       save: track(completion.save),
-      download: downloadGps,
+      download: () => downloadGps(),
+      downloadInferred: () => downloadGps(true),
       discard: track(completion.discard),
       restore: restoreDraft,
+      resumeOnForeground: track(resumeOnForeground),
       reset,
       retrySave: track(retrySave),
       stop: stopWatch,
@@ -6563,7 +6908,7 @@
       }[gps.status];
       const expanded = !stopped && state.recordingMapExpandedId === gps.id;
       const currentAccuracy = gps.status === "tracking" && Number.isFinite(gps.accuracy);
-      return `<section data-status="${esc(gps.status)}" class="recording-scene ${stopped ? "recording-stopped" : ""}"><header class="recording-heading"><div><span class="eyebrow">${stopped ? "YOUR WALK" : currentMapPosition(gps) ? "LIVE GPS" : "GPS STATUS"}${gps.sourceRouteId ? gps.sourceRouteDirection === "reverse" ? " \xB7 \u53CD\u5411\u8D70" : " \xB7 \u539F\u5411\u8D70" : ""}</span><h2>${esc(gps.name || file.name)}</h2></div><div class="recording-status-group"><span class="record-status" data-status="${esc(gps.status)}" role="status" aria-live="polite">${status}</span><span id="gps-clock" class="recording-elapsed" aria-label="\u7D00\u9304\u6642\u9593">${elapsedLabel(gpsElapsed())}</span></div></header>${state.recordingRouteWarning ? `<p class="recording-route-warning error-message" role="status">${esc(state.recordingRouteWarning)}</p>` : ""}<p id="gps-location-status" class="recording-location-status"${stopped || currentMapPosition(gps) ? " hidden" : ""}>${locationStatus}</p><div class="recording-map ${expanded ? "recording-map-expanded" : ""}" aria-describedby="gps-location-status">${mapPanel(file, null, recordingSegments(gps), { compact: true })}</div>${stopped ? completionView(gps, gpsElapsed()) : `<section class="recording-sheet"><div class="sheet-handle"></div>${itineraryViews && gps.sourceRouteId ? itineraryViews.nextCard() : '<div class="direct-next"><span class="eyebrow">\u8A18\u4E0B\u81EA\u5DF1\u7684\u8DEF</span><h2>\u81EA\u7531\u7D00\u9304</h2><p class="small muted">\u85CD\u7DDA\u662F\u5DF2\u8A18\u9304\u8ECC\u8DE1\uFF0C\u76EE\u524D\u672A\u4F7F\u7528\u9810\u5B9A\u8DEF\u7DDA\u3002</p></div>'}${itineraryViews?.liveFactorsPanel?.() ?? ""}<div class="live-stats"><div><small>\u884C\u9032\u91CC\u7A0B</small><strong id="gps-distance">${stats.km.toFixed(2)} <small>km</small></strong></div><div><small>GPS \u7CBE\u5EA6</small><strong>${currentAccuracy ? `${Math.round(gps.accuracy)} <small>m</small>` : "\u2014"}</strong></div></div>${gps.error ? `<p class="error-message" role="status">${esc(gps.error)}</p>` : ""}${reroutePanel(state)}${itineraryViews?.departureNotice?.() ?? ""}<div class="live-controls">${button(["paused", "error"].includes(gps.status) ? "\u7E7C\u7E8C\u7D00\u9304" : "\u66AB\u505C\u7D00\u9304", ["paused", "error"].includes(gps.status) ? "gps-resume" : "gps-pause", "", ["paused", "error"].includes(gps.status) ? "play" : "pause")}${button("\u7D50\u675F\u7D00\u9304", "gps-finish", "end-recording", "stop")}</div><details class="recording-more" id="recording-more"><summary>\u7D00\u9304\u72C0\u614B\u8207\u66F4\u591A\u8CC7\u8A0A</summary><div class="stack">${itineraryViews?.liveFactorsDetails?.() ?? ""}${itineraryViews?.departurePanel?.() ?? ""}<p id="gps-save-status" class="small muted" role="status">${esc(saveStatus())}</p>${button("\u91CD\u8A66\u4FDD\u5B58", "gps-save-retry", "", "refresh", `id="gps-save-retry" ${gps.saveError ? "" : "hidden"}`)}${recordingLimitations(locationSource)}<p class="small muted">\u8349\u7A3F\u53EA\u4F9B\u6062\u5FA9\uFF0C\u4E0D\u6703\u81EA\u52D5\u52A0\u5165\u300C\u6B77\u53F2\u7D00\u9304\u300D\u3002\u8DDD\u96E2\u8207\u9AD8\u5EA6\u6703\u96A8\u5F8C\u7E8C\u5B9A\u4F4D\u6821\u6B63\uFF0C\u539F\u59CB GPX \u4FDD\u7559\u3002</p>${button("\u4E0B\u8F09\u5099\u4EFD", "gps-download", "ghost", "download")}${button(stats.points ? "\u653E\u68C4\u9019\u6B21\u7D00\u9304" : "\u53D6\u6D88\u7A7A\u767D\u7D00\u9304", "gps-discard", "ghost", "close")}<p class="small muted">\u5DF2\u4FDD\u7559 ${stats.points} \u500B\u539F\u59CB\u9EDE \xB7 ${gps.segments.filter((segment) => segment.length).length} \u6BB5\u8ECC\u8DE1</p><p class="small muted">\u6821\u6B63\u722C\u5347 <span id="gps-ascent">${meters(stats.up)}</span> m \uFF0F\u4E0B\u964D <span id="gps-descent">${meters(stats.down)}</span> m \xB7 \u5E73\u5747\u901F\u5EA6 <span id="gps-average">\u2014</span></p></div></details></section>`}</section>${heightPanel ? `<details class="recording-height-profile" id="recording-height-profile"><summary>\u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762\u30FB\u65E5\u591C\u8DEF\u6BB5</summary>${heightPanel(file, recordingSegments(gps))}</details>` : ""}${!stopped && file === directMap ? `<details class="manual-reference" id="manual-reference"><summary>\u9032\u968E\uFF1A\u624B\u52D5\u4E0A\u6CB3\u8DEF\u6BB5\u8A08\u6642</summary>${shanghePanel()}</details>` : ""}`;
+      return `<section data-status="${esc(gps.status)}" class="recording-scene ${stopped ? "recording-stopped" : ""}"><header class="recording-heading"><div><span class="eyebrow">${stopped ? "YOUR WALK" : currentMapPosition(gps) ? "LIVE GPS" : "GPS STATUS"}${gps.sourceRouteId ? gps.sourceRouteDirection === "reverse" ? " \xB7 \u53CD\u5411\u8D70" : " \xB7 \u539F\u5411\u8D70" : ""}</span><h2>${esc(gps.name || file.name)}</h2></div><div class="recording-status-group"><span class="record-status" data-status="${esc(gps.status)}" role="status" aria-live="polite">${status}</span><span id="gps-clock" class="recording-elapsed" aria-label="\u7D00\u9304\u6642\u9593">${elapsedLabel(gpsElapsed())}</span></div></header>${state.recordingRouteWarning ? `<p class="recording-route-warning error-message" role="status">${esc(state.recordingRouteWarning)}</p>` : ""}<p id="gps-location-status" class="recording-location-status"${stopped || currentMapPosition(gps) ? " hidden" : ""}>${locationStatus}</p><div class="recording-map ${expanded ? "recording-map-expanded" : ""}" aria-describedby="gps-location-status">${mapPanel(file, null, recordingSegments(gps), { compact: true })}</div>${recoveryDetails(gps.itinerary, navigation)}${stopped ? completionView(gps, gpsElapsed()) : `<section class="recording-sheet"><div class="sheet-handle"></div>${itineraryViews && gps.sourceRouteId ? itineraryViews.nextCard() : '<div class="direct-next"><span class="eyebrow">\u8A18\u4E0B\u81EA\u5DF1\u7684\u8DEF</span><h2>\u81EA\u7531\u7D00\u9304</h2><p class="small muted">\u85CD\u7DDA\u662F\u5DF2\u8A18\u9304\u8ECC\u8DE1\uFF0C\u76EE\u524D\u672A\u4F7F\u7528\u9810\u5B9A\u8DEF\u7DDA\u3002</p></div>'}${itineraryViews?.liveFactorsPanel?.() ?? ""}<div class="live-stats"><div><small>\u884C\u9032\u91CC\u7A0B</small><strong id="gps-distance">${stats.km.toFixed(2)} <small>km</small></strong></div><div><small>GPS \u7CBE\u5EA6</small><strong>${currentAccuracy ? `${Math.round(gps.accuracy)} <small>m</small>` : "\u2014"}</strong></div></div>${gps.error ? `<p class="error-message" role="status">${esc(gps.error)}</p>` : ""}${reroutePanel(state)}${itineraryViews?.departureNotice?.() ?? ""}<div class="live-controls">${button(["paused", "error"].includes(gps.status) ? "\u7E7C\u7E8C\u7D00\u9304" : "\u66AB\u505C\u7D00\u9304", ["paused", "error"].includes(gps.status) ? "gps-resume" : "gps-pause", "", ["paused", "error"].includes(gps.status) ? "play" : "pause")}${button("\u7D50\u675F\u7D00\u9304", "gps-finish", "end-recording", "stop")}</div><details class="recording-more" id="recording-more"><summary>\u7D00\u9304\u72C0\u614B\u8207\u66F4\u591A\u8CC7\u8A0A</summary><div class="stack">${itineraryViews?.liveFactorsDetails?.() ?? ""}${itineraryViews?.departurePanel?.() ?? ""}<p id="gps-save-status" class="small muted" role="status">${esc(saveStatus())}</p>${button("\u91CD\u8A66\u4FDD\u5B58", "gps-save-retry", "", "refresh", `id="gps-save-retry" ${gps.saveError ? "" : "hidden"}`)}${recordingLimitations(locationSource)}<p class="small muted">\u8349\u7A3F\u53EA\u4F9B\u6062\u5FA9\uFF0C\u4E0D\u6703\u81EA\u52D5\u52A0\u5165\u300C\u6B77\u53F2\u7D00\u9304\u300D\u3002\u8DDD\u96E2\u8207\u9AD8\u5EA6\u6703\u96A8\u5F8C\u7E8C\u5B9A\u4F4D\u6821\u6B63\uFF0C\u539F\u59CB GPX \u4FDD\u7559\u3002</p>${button("\u4E0B\u8F09\u5099\u4EFD", "gps-download", "ghost", "download")}${button(stats.points ? "\u653E\u68C4\u9019\u6B21\u7D00\u9304" : "\u53D6\u6D88\u7A7A\u767D\u7D00\u9304", "gps-discard", "ghost", "close")}<p class="small muted">\u5DF2\u4FDD\u7559 ${stats.points} \u500B\u539F\u59CB\u9EDE \xB7 ${gps.segments.filter((segment) => segment.length).length} \u6BB5\u8ECC\u8DE1</p><p class="small muted">\u6821\u6B63\u722C\u5347 <span id="gps-ascent">${meters(stats.up)}</span> m \uFF0F\u4E0B\u964D <span id="gps-descent">${meters(stats.down)}</span> m \xB7 \u5E73\u5747\u901F\u5EA6 <span id="gps-average">\u2014</span></p></div></details></section>`}</section>${heightPanel ? `<details class="recording-height-profile" id="recording-height-profile"><summary>\u8DEF\u7DDA\u9AD8\u5EA6\u5256\u9762\u30FB\u65E5\u591C\u8DEF\u6BB5</summary>${heightPanel(file, recordingSegments(gps))}</details>` : ""}${!stopped && file === directMap ? `<details class="manual-reference" id="manual-reference"><summary>\u9032\u968E\uFF1A\u624B\u52D5\u4E0A\u6CB3\u8DEF\u6BB5\u8A08\u6642</summary>${shanghePanel()}</details>` : ""}`;
     }
     function shanghePanel(readonly = false) {
       const gps = state.gps, calibration = gps.calibration || { completed: [] }, active = calibration.active, factor = shangheFactor(calibration.completed);
@@ -8580,6 +8925,216 @@
     return { updateCamera, updateStatus };
   }
 
+  // src/features/itinerary/navigation-recovery.js
+  var MAX_OFFSET_M = 80;
+  var MAX_HIKING_SPEED_MPS = 6;
+  var MAX_HISTORY_MS = 42 * 60 * 1e3;
+  var GAP_MS = 61 * 1e3;
+  var metresApart = (a, b) => haversine(a, b) * 1e3;
+  var position = (p, time4) => ({
+    routeProgressM: p.routeProgressM,
+    segmentIndex: p.segmentIndex,
+    time: time4
+  });
+  function recoverRoutePosition(file, gps, journey, fix) {
+    if (!file?.points?.length || !fix || !Number.isFinite(fix.time) || !Number.isFinite(fix.lat) || !Number.isFinite(fix.lon) || Math.abs(fix.lat) > 90 || Math.abs(fix.lon) > 180 || fix.excluded || !Number.isFinite(gps.accuracy) || gps.accuracy < 0 || gps.accuracy > 50 || gps.status !== "tracking")
+      return null;
+    const found = routeMatcherFor(file).match(
+      [{ ...fix, stationId: "navigation-progress", coordinateStatus: "located" }],
+      { maxOffsetM: MAX_OFFSET_M, mergeWithinM: 25, preserveReversals: true }
+    );
+    const match = found.matches[0];
+    if (!match) {
+      journey.recoveryBarrier = { time: fix.time, reason: "off-route" };
+      return null;
+    }
+    const nearest = match.nearestTrackDistanceM;
+    let candidates = match.routePositions.filter(
+      (p) => p.offsetM <= nearest + Math.max(8, gps.accuracy)
+    );
+    const previous = journey.routePosition?.revisionId === file.id ? journey.routePosition : null;
+    let recoveredStart = null;
+    if (previous) {
+      const dt = (fix.time - previous.time) / 1e3;
+      if (!(dt > 0)) return null;
+      const reach = MAX_HIKING_SPEED_MPS * dt + (previous.accuracy ?? 5) + gps.accuracy;
+      candidates = candidates.filter(
+        (p) => p.segmentIndex === previous.segmentIndex && p.routeProgressM >= previous.routeProgressM - 25 && p.routeProgressM <= previous.routeProgressM + reach
+      );
+      if (metresApart(previous, fix) > reach) return null;
+      const paused = (gps.historyObservations?.pauses ?? []).some(
+        (p) => p.pausedAt < fix.time && (p.resumedAt ?? fix.time) > previous.time
+      );
+      if (paused)
+        journey.recoveryStatus = { status: "pending", reason: "manual-pause", at: fix.time };
+      if (paused && metresApart(previous, fix) > Math.max(15, gps.accuracy + (previous.accuracy ?? 5)))
+        return null;
+    } else {
+      const first = gps.segments?.flat().find(
+        (p) => !p.excluded && Number.isFinite(p.time) && Number.isFinite(p.accuracy) && p.accuracy >= 0 && p.accuracy <= 50
+      );
+      const startedNear = first && first.time - gps.startedAt <= 12e4 && first.time >= gps.startedAt - 5e3 && metresApart(first, file.points[0]) <= Math.max(80, first.accuracy ?? 0);
+      const elapsed = Math.max(0, (fix.time - gps.startedAt) / 1e3);
+      candidates = candidates.filter(
+        (p) => (journey.reanchor || p.segmentIndex === file.points[0].segment) && (journey.reanchor || !startedNear || p.routeProgressM <= MAX_HIKING_SPEED_MPS * elapsed + 100)
+      );
+      if (!startedNear && candidates.length !== 1) return null;
+      if (startedNear && !journey.routeStart)
+        recoveredStart = {
+          routeProgressM: 0,
+          segmentIndex: file.points[0].segment,
+          time: gps.startedAt,
+          estimated: first.time > gps.startedAt + 5e3 || metresApart(first, file.points[0]) > Math.max(20, first.accuracy ?? 0)
+        };
+    }
+    if (!candidates.length) {
+      journey.recoveryStatus = {
+        status: "pending",
+        reason: "unreachable-or-disconnected",
+        at: fix.time
+      };
+      return null;
+    }
+    candidates.sort((a, b) => a.routeProgressM - b.routeProgressM);
+    candidates = compactPositionCluster(file, candidates);
+    if (candidates.length !== 1) {
+      journey.recoveryStatus = {
+        status: "pending",
+        reason: "ambiguous-route-position",
+        at: fix.time
+      };
+      return null;
+    }
+    const chosen = candidates.reduce((a, b) => a.offsetM <= b.offsetM ? a : b);
+    journey.routeStart ??= recoveredStart ?? { ...position(chosen, fix.time), estimated: true };
+    return {
+      ...position(chosen, fix.time),
+      lat: fix.lat,
+      lon: fix.lon,
+      accuracy: gps.accuracy,
+      offsetM: chosen.offsetM,
+      revisionId: file.id,
+      binding: recoveryBinding(file)
+    };
+  }
+  function advanceNavigationProgress(file, plan, gps, journey, fix, confirmed = false) {
+    if (!file || !plan?.rows?.length || file.rerouted) return false;
+    const previous = journey.routePosition;
+    if (previous && fix?.time <= previous.time) return false;
+    const accepted = recoverRoutePosition(file, gps, journey, fix);
+    if (!accepted || journey.recoveryBarrier || previous?.binding && previous.binding !== recoveryBinding(file)) {
+      const anchorJourney = { reanchor: true };
+      const candidate = recoverRoutePosition(file, gps, anchorJourney, fix);
+      const pending = journey.pendingAnchor;
+      if (!candidate || !pending || candidate.time <= pending.time || candidate.time - pending.time > 3e4 || candidate.segmentIndex !== pending.segmentIndex || candidate.routeProgressM < pending.routeProgressM - 25 || Math.abs(candidate.routeProgressM - pending.routeProgressM) > 6 * (candidate.time - pending.time) / 1e3 + 20) {
+        if (candidate) journey.pendingAnchor = candidate;
+        journey.recoveryStatus = {
+          status: "pending",
+          reason: journey.recoveryStatus?.reason ?? "unsafe-route-continuity",
+          at: fix.time
+        };
+        return false;
+      }
+      journey.unresolvedGap = {
+        fromTime: previous?.time ?? pending.time,
+        toTime: pending.time,
+        reason: journey.recoveryBarrier?.reason ?? "unconfirmed-route-corridor"
+      };
+      journey.routePosition = candidate;
+      journey.routeHistory = [position(pending, pending.time), position(candidate, candidate.time)];
+      delete journey.pendingAnchor;
+      delete journey.recoveryBarrier;
+      return true;
+    }
+    const previousValid = previous?.revisionId === file.id && previous.binding === recoveryBinding(file) && previous.segmentIndex === accepted.segmentIndex && previous.time < accepted.time;
+    const history = Array.isArray(journey.routeHistory) ? journey.routeHistory : [];
+    if (previousValid && accepted.routeProgressM + 25 < previous.routeProgressM) return false;
+    if (previousValid && (accepted.time - previous.time >= GAP_MS || journey.reloadBoundaryTime === previous.time) && !(gps.historyObservations?.pauses ?? []).some(
+      (p) => p.pausedAt < accepted.time && (p.resumedAt ?? accepted.time) > previous.time
+    ) && accepted.routeProgressM > previous.routeProgressM + 25) {
+      if (!confirmed && accepted.routeProgressM - previous.routeProgressM > 1e3) {
+        const candidate = journey.pendingRecovery;
+        if (!candidate || accepted.time - candidate.time < 5e3 || accepted.time - candidate.time > 3e4 || accepted.segmentIndex !== candidate.segmentIndex || Math.abs(accepted.routeProgressM - candidate.routeProgressM) > 6 * (accepted.time - candidate.time) / 1e3 + 20) {
+          journey.pendingRecovery = accepted;
+          journey.recoveryStatus = {
+            status: "pending",
+            reason: "gps-stabilizing",
+            at: accepted.time
+          };
+          return false;
+        }
+        delete journey.pendingRecovery;
+        if (!advanceNavigationProgress(file, plan, gps, journey, candidate, true)) return false;
+        return advanceNavigationProgress(file, plan, gps, journey, fix, true);
+      }
+      journey.recoveredGaps ??= [];
+      const binding = recoveryBinding(file);
+      const gap = {
+        version: RECOVERY_VERSION,
+        id: recoveryId(binding, previous.time, accepted.time),
+        binding,
+        routeId: file.id,
+        direction: file.direction ?? "forward",
+        processingVersion: file.processing?.version ?? null,
+        status: "validated",
+        reason: journey.reloadBoundaryTime === previous.time ? "reload-unique-reachable-route-corridor" : "unique-reachable-route-corridor",
+        confidence: "route-inference-not-measurement",
+        from: { ...previous },
+        to: { ...accepted },
+        elapsedSeconds: (accepted.time - previous.time) / 1e3,
+        geometry: routeGeometryBetween(
+          file,
+          accepted.segmentIndex,
+          previous.routeProgressM,
+          accepted.routeProgressM
+        ),
+        segmentIndex: accepted.segmentIndex,
+        fromM: previous.routeProgressM,
+        toM: accepted.routeProgressM,
+        fromTime: previous.time,
+        toTime: accepted.time,
+        kind: "gpx-estimate"
+      };
+      if (validatedGaps([gap], file).length && !journey.recoveredGaps.some((g) => g.id === gap.id)) {
+        journey.recoveredGaps.push(gap);
+        journey.recoveryStatus = { status: "validated", gapId: gap.id, at: accepted.time };
+      } else return false;
+    }
+    delete journey.reloadBoundaryTime;
+    journey.routePosition = accepted;
+    history.push(position(accepted, accepted.time));
+    const cutoff = accepted.time - MAX_HISTORY_MS;
+    const compact = [];
+    for (const p of history) {
+      if (!compact.length || p.time - compact.at(-1).time >= 1e4) compact.push(p);
+    }
+    if (compact.at(-1) !== history.at(-1)) compact.push(history.at(-1));
+    const firstKept = compact.findIndex((p) => p.time >= cutoff);
+    journey.routeHistory = compact.slice(Math.max(0, firstKept - 1));
+    while (plan.rows[journey.nextIndex]) {
+      const row = plan.rows[journey.nextIndex];
+      if (row.segmentIndex !== accepted.segmentIndex || row.routeProgressM > accepted.routeProgressM + 60)
+        break;
+      const close = metresApart(fix, row.station) <= 60;
+      if (!close && row.routeProgressM > accepted.routeProgressM - 25) break;
+      if (close && Math.abs(row.routeProgressM - accepted.routeProgressM) <= 60)
+        journey.arrivals[journey.nextIndex] = fix.time;
+      else {
+        journey.inferredVisits ??= [];
+        if (!journey.inferredVisits.includes(journey.nextIndex))
+          journey.inferredVisits.push(journey.nextIndex);
+      }
+      journey.nextIndex++;
+    }
+    return true;
+  }
+  function estimatedGapSegments(file, journey) {
+    return validatedGaps(journey?.recoveredGaps, file).flatMap((gap) => {
+      const line = routeGeometryBetween(file, gap.segmentIndex, gap.fromM, gap.toM);
+      return line.length > 1 ? [line] : [];
+    });
+  }
+
   // src/features/gpx-stations/markers.js
   function gpxStationMarkers(data, formatArrival) {
     const places = /* @__PURE__ */ new Map();
@@ -8624,8 +9179,8 @@
     "start-not-aligned": "\u51FA\u767C\u4F4D\u7F6E\u5C1A\u672A\u78BA\u8A8D\uFF1B\u82E5\u53EF\u6838\u5C0D\uFF0C\u8ACB\u5C55\u958B\u300C\u7D00\u9304\u72C0\u614B\u8207\u66F4\u591A\u8CC7\u8A0A\u300D\u3002",
     "session-history-unavailable": "\u8349\u7A3F\u7F3A\u5C11\u53EF\u6838\u5C0D\u7684\u51FA\u767C\u7D00\u9304\uFF1B\u4FDD\u7559\u539F\u59CB\u8ECC\u8DE1\uFF0C\u4F46\u5168\u7A0B\u500D\u7387\u7121\u6CD5\u6062\u5FA9\u3002",
     "restored-awaiting-fix": "\u8349\u7A3F\u5DF2\u6062\u5FA9\uFF1B\u7B49\u5F85\u65B0\u5B9A\u4F4D\u78BA\u8A8D\u8207\u91CD\u8F09\u524D\u4F4D\u7F6E\u9023\u7E8C\u3002",
-    "restored-continuity-unconfirmed": "\u91CD\u8F09\u671F\u9593\u4F4D\u7F6E\u5DF2\u79FB\u52D5\uFF0C\u7121\u6CD5\u78BA\u8A8D\u8DEF\u7A0B\u9023\u7E8C\uFF1B\u672C\u8D9F\u5168\u7A0B\u500D\u7387\u505C\u7528\u3002",
-    "gps-observation-gap": "\u5B9A\u4F4D\u4E2D\u65B7\u8D85\u904E 5 \u5206\u9418\u4E14\u4F4D\u7F6E\u5DF2\u79FB\u52D5\uFF1B\u672C\u8D9F\u5168\u7A0B\u500D\u7387\u505C\u7528\u3002",
+    "restored-continuity-unconfirmed": "\u91CD\u8F09\u7F3A\u6BB5\u5C1A\u672A\u9A57\u8B49\uFF1B\u5168\u7A0B\u5F85\u78BA\u8A8D\uFF0C\u5F8C\u7E8C\u53EF\u9760\u5340\u6BB5\u4ECD\u53EF\u8A08\u7B97\u500D\u7387\u3002",
+    "gps-observation-gap": "GPS \u7F3A\u6BB5\u5C1A\u672A\u901A\u904E\u8DEF\u7DDA\u91CD\u5EFA\u9A57\u8B49\uFF1B\u5168\u7A0B\u5F85\u78BA\u8A8D\uFF0C\u5F8C\u7E8C\u53EF\u9760\u5340\u6BB5\u4ECD\u53EF\u63D0\u4F9B ETA\u3002",
     "window-start-missing": "\u5C1A\u7121\u5B8C\u6574\u6700\u8FD1 30 \u5206\u9418\u7684\u771F\u5BE6\u5B9A\u4F4D\u7AEF\u9EDE\uFF1B\u4E2D\u65B7\u6216\u91CD\u8F09\u5F8C\u9700\u91CD\u65B0\u7D2F\u7A4D\u3002",
     "baseline-too-small": "\u5DF2\u8D70\u8DEF\u6BB5\u7684\u4E0A\u6CB3\u57FA\u6E96\u4E0D\u8DB3 1 \u5206\u9418\uFF1B\u8ACB\u7D2F\u7A4D\u66F4\u591A\u8DEF\u7A0B\u3002",
     "progress-too-small": "\u8DEF\u7A0B\u9032\u5EA6\u5C1A\u672A\u8D85\u904E\u5B9A\u4F4D\u8AA4\u5DEE\uFF1B\u8ACB\u7D2F\u7A4D\u66F4\u591A\u6709\u6548\u8DEF\u7A0B\u3002",
@@ -8650,7 +9205,7 @@
     const rounded = Math.round(seconds);
     return `${Math.floor(rounded / 60)} \u5206 ${rounded % 60} \u79D2`;
   };
-  var fixTime = (time3) => Number.isFinite(time3) ? new Date(time3).toLocaleString("zh-TW", {
+  var fixTime = (time4) => Number.isFinite(time4) ? new Date(time4).toLocaleString("zh-TW", {
     timeZone: "Asia/Taipei",
     month: "numeric",
     day: "numeric",
@@ -8683,7 +9238,7 @@
         const held = !valid(live) && live?.lastValid?.state === "stale" && valid(live.lastValid);
         const metric3 = held ? live.lastValid : live;
         const usable = valid(metric3);
-        values[`live-factor-${key2}-freshness`] = held ? "\u4E0A\u6B21\u6709\u6548\u503C\u30FB\u8CC7\u6599\u5DF2\u904E\u671F" : usable ? metric3.estimated ? "\u63A8\u4F30\u503C\uFF08\u542B\u63A8\u5B9A\uFF09" : metric3.quality === "limited" ? "\u5373\u6642\u503C\u30FBGPS \u7CBE\u5EA6\u53D7\u9650" : "\u5373\u6642\u503C" : "\u66AB\u6642\u7121\u6CD5\u8A08\u7B97";
+        values[`live-factor-${key2}-freshness`] = held ? "\u4E0A\u6B21\u6709\u6548\u503C\u30FB\u8CC7\u6599\u5DF2\u904E\u671F" : usable ? metric3.estimated ? "\u542B GPX \u63A8\u5B9A" : metric3.quality === "limited" ? "\u5373\u6642\u503C\u30FBGPS \u7CBE\u5EA6\u53D7\u9650" : "\u5373\u6642\u503C" : "\u66AB\u6642\u7121\u6CD5\u8A08\u7B97";
         const delta = usable ? (metric3.factor - 1) * 100 : null;
         values[`live-factor-${key2}-value`] = usable ? metric3.factor.toFixed(2) + " \u500D" : "\u2014";
         values[`live-factor-${key2}-comparison`] = !usable ? "" : Math.abs(delta) < 0.05 ? `\u8207${basis()}\u57FA\u6E96\u8017\u6642\u76F8\u540C\uFF080.0%\uFF09` : `${held ? "\u4E0A\u6B21\uFF1A" : ""}\u8017\u6642\u8F03${basis()}${delta > 0 ? "\u591A" : "\u5C11"} ${Math.abs(delta).toFixed(1)}%\uFF08${delta > 0 ? "\u8F03\u6162" : "\u8F03\u5FEB"}\uFF09`;
@@ -8693,7 +9248,7 @@
           const from = metric3?.source?.from?.time, to = metric3?.source?.to?.time;
           const observed = Number.isFinite(from) && Number.isFinite(to) && to >= from ? (to - from) / 1e3 : metric3?.actualSeconds;
           const observedLabel = Number.isFinite(observed) ? span(Math.floor(observed)) : "\u2014";
-          values["live-factor-recent-window"] = usable ? `${held ? "\u4E0A\u6B21" : ""}\u89C0\u6E2C ${observedLabel}${Number.isFinite(observed) && observed < 1800 ? "\u30FB\u672A\u6EFF 30 \u5206\u9418" : ""}` : "";
+          values["live-factor-recent-window"] = usable ? `${held ? "\u4E0A\u6B21" : ""}${metric3?.source?.windowKind === "latest-valid-section" ? "\u5340\u6BB5\u5099\u63F4\u30FB\u5BE6\u969B\u7AEF\u9EDE" : "\u89C0\u6E2C"} ${observedLabel}${Number.isFinite(observed) && observed < 1800 ? "\u30FB\u672A\u6EFF 30 \u5206\u9418" : ""}` : "";
         }
       }
       const sources = [
@@ -8725,7 +9280,7 @@
     function details() {
       const values = fields();
       const text = (id2) => esc(values[id2]);
-      return `<details id="live-factor-details" class="live-factor-details"><summary id="live-factor-summary">\u500D\u7387\u8A08\u7B97\u8207\u5B9A\u4F4D\u4F86\u6E90</summary><p class="small">\u5169\u500B\u500D\u7387\u90FD\u7528\u76EE\u524D\u5DF2\u78BA\u8A8D\u7684\u8DEF\u7DDA\u9032\u5EA6\u4F30\u8A08\uFF1B\u4E0B\u4E00\u7AD9\u50C5\u986F\u793A\u4E00\u500B ETA\u3002</p><p>\u6700\u5F8C\u6709\u6548\u5B9A\u4F4D\uFF08\u53F0\u5317\u6642\u9593\uFF09\uFF1A<span id="live-factor-last-fix">${text("live-factor-last-fix")}</span></p><p>\u5168\u7A0B\uFF1A<span id="live-factor-total-duration">${text("live-factor-total-duration")}</span><br>\u6700\u8FD1\uFF1A<span id="live-factor-recent-duration">${text("live-factor-recent-duration")}</span></p><p>\u500D\u7387\uFF1D\u5BE6\u969B\u7D93\u904E\u6642\u9593 \xF7 \u5DF2\u8D70\u8DEF\u6BB5\u7684${basis()}\u57FA\u6E96\u3002\u5FEB\u6162\u767E\u5206\u6BD4\u6BD4\u8F03\u8017\u6642\uFF0C1.20 \u500D\u4EE3\u8868\u591A\u7528\u6642 20%\u3002\u5BE6\u6E2C\u500D\u7387\u5305\u542B\u4F11\u606F\u8207\u66AB\u505C\uFF1B\u63A8\u4F30\u500D\u7387\u6263\u9664\u660E\u78BA\u624B\u52D5\u66AB\u505C\uFF0C\u4FDD\u7559\u80CC\u666F\u7D93\u904E\u6642\u9593\u3002\u53EA\u5728\u6709\u6548\u5B9A\u4F4D\u6642\u66F4\u65B0\u3002</p><p>\u6700\u8FD1\u7A97\u4EE5\u6700\u8FD130\u5206\u9418\u5167\u7684 GPX \u9032\u5EA6\u4F30\u7B97\uFF1B\u672A\u6EFF 30 \u5206\u9418\u6642\uFF0C\u5361\u7247\u986F\u793A\u5BE6\u969B\u89C0\u6E2C\u671F\u9593\u53CA\u63A8\u4F30\u72C0\u614B\u3002\u8DE8 GPS \u4E2D\u65B7\u6642\u6CBF\u5DF2\u78BA\u8A8D\u8DEF\u6BB5\u5167\u63D2\uFF0C\u4E26\u6A19\u8A3B\u63A8\u5B9A\u3002\u539F\u59CB GPS \u4E0D\u88DC\u9020\u3002</p><p>${basis()}\u5206\u914D\uFF1A<span id="live-factor-distribution">${text("live-factor-distribution")}</span></p><p id="live-factor-provenance">${text("live-factor-provenance")}</p><p>\u5373\u6642\u500D\u7387\u4E0D\u6703\u81EA\u52D5\u8986\u5BEB\u8A2D\u5B9A\uFF1B\u4E0B\u4E00\u7AD9\u512A\u5148\u63A1\u6700\u8FD1\u6709\u6548\u6B65\u8ABF\uFF0C\u5176\u6B21\u5168\u7A0B\u8207\u8A2D\u5B9A\u500D\u7387\u3002</p></details>`;
+      return `<details id="live-factor-details" class="live-factor-details"><summary id="live-factor-summary">\u500D\u7387\u8A08\u7B97\u8207\u5B9A\u4F4D\u4F86\u6E90</summary><p class="small">\u5169\u500B\u500D\u7387\u90FD\u7528\u76EE\u524D\u5DF2\u78BA\u8A8D\u7684\u8DEF\u7DDA\u9032\u5EA6\u4F30\u8A08\uFF1B\u4E0B\u4E00\u7AD9\u50C5\u986F\u793A\u4E00\u500B ETA\u3002</p><p>\u6700\u5F8C\u6709\u6548\u5B9A\u4F4D\uFF08\u53F0\u5317\u6642\u9593\uFF09\uFF1A<span id="live-factor-last-fix">${text("live-factor-last-fix")}</span></p><p>\u5168\u7A0B\uFF1A<span id="live-factor-total-duration">${text("live-factor-total-duration")}</span><br>\u6700\u8FD1\uFF1A<span id="live-factor-recent-duration">${text("live-factor-recent-duration")}</span></p><p>\u500D\u7387\uFF1D\u5BE6\u969B\u7D93\u904E\u6642\u9593 \xF7 \u5DF2\u8D70\u8DEF\u6BB5\u7684${basis()}\u57FA\u6E96\u3002\u5FEB\u6162\u767E\u5206\u6BD4\u6BD4\u8F03\u8017\u6642\uFF0C1.20 \u500D\u4EE3\u8868\u591A\u7528\u6642 20%\u3002\u500D\u7387\u5305\u542B\u4F11\u606F\u8207\u66AB\u505C\uFF0C\u4E5F\u4FDD\u7559\u5DF2\u9A57\u8B49\u7F3A\u6BB5\u7684\u771F\u5BE6\u7D93\u904E\u6642\u9593\uFF1B\u57FA\u6E96\u4F7F\u7528\u539F\u4E0A\u6CB3\u6216 GPX \u6642\u9593\uFF0C\u4E0D\u4F7F\u7528\u9810\u6E2C\u6642\u9593\u4F5C\u70BA\u5BE6\u969B\u8017\u6642\u3002\u53EA\u5728\u6709\u6548\u5B9A\u4F4D\u6642\u66F4\u65B0\u3002</p><p>\u6700\u8FD1\u7A97\u53EA\u4F7F\u7528\u771F\u5BE6 GPS \u6642\u9593\u7AEF\u9EDE\u300230 \u5206\u9418\u908A\u754C\u843D\u5728\u7F3A\u6BB5\u5167\u6642\uFF0C\u6539\u7528\u6709\u8DB3\u5920\u6709\u6548\u57FA\u6E96\u7684\u6700\u8FD1\u5340\u6BB5\uFF0C\u986F\u793A\u300C\u5340\u6BB5\u5099\u63F4\u300D\u53CA\u5BE6\u969B\u671F\u9593\uFF0C\u4E0D\u5047\u8A2D\u7F3A\u6BB5\u5167\u4EFB\u4E00\u6642\u523B\u7684\u4F4D\u7F6E\u3002\u542B\u88DC\u6BB5\u7684\u500D\u7387\u6A19\u8A18\u300C\u542B GPX \u63A8\u5B9A\u300D\uFF0C\u4E0D\u52A0\u5165\u7D14\u5BE6\u6E2C\u500B\u4EBA\u6B77\u53F2\u3002</p><p>${basis()}\u5206\u914D\uFF1A<span id="live-factor-distribution">${text("live-factor-distribution")}</span></p><p id="live-factor-provenance">${text("live-factor-provenance")}</p><p>\u5373\u6642\u500D\u7387\u4E0D\u6703\u81EA\u52D5\u8986\u5BEB\u8A2D\u5B9A\uFF1B\u4E0B\u4E00\u7AD9\u512A\u5148\u63A1\u6700\u8FD1\u6709\u6548\u6B65\u8ABF\uFF0C\u5176\u6B21\u5168\u7A0B\u8207\u8A2D\u5B9A\u500D\u7387\u3002</p></details>`;
     }
     function updateNumbers() {
       if (!document2.getElementById("live-factor-total-value")) return;
@@ -8744,7 +9299,7 @@
   // src/features/itinerary/route-progress.js
   function remainingRouteProgress(file, data, gps, now = Date.now()) {
     const next = data?.next;
-    const fix = gps ? recordingFix(gps) : null;
+    const fix = gps ? currentMapPosition(gps, now) ?? recordingFix(gps) : null;
     if (!file || gps?.status !== void 0 && gps.status !== "tracking" || !data?.active || !data.compatible || data.finished || !next || next.gap || !fix || !Number.isFinite(fix.lat) || Math.abs(fix.lat) > 90 || !Number.isFinite(fix.lon) || Math.abs(fix.lon) > 180 || !Number.isFinite(gps.accuracy) || gps.accuracy < 0 || gps.accuracy > 50 || !Number.isFinite(fix.time) || !Number.isFinite(now) || now - fix.time > 6e4 || fix.time > now + 5e3)
       return null;
     const previous = data.rows[Math.max(0, data.nextIndex - 1)];
@@ -9017,7 +9572,7 @@
       const data = itinerary.snapshot(), next = data?.next, file = recordingRoute2?.() ?? state.library.find((entry) => entry.id === state.gps.sourceRouteId), metrics = remainingRouteMetrics(file, data, state.gps), nav = itinerary.navigation?.(), legacy = file?.rerouted ? itinerary.nextEtas?.() : null, remaining = nav?.nextDistanceM ?? metrics.distanceM, etaTime = nav?.arrivalUtcMs ?? legacy?.recent?.arrivalUtcMs ?? legacy?.total?.arrivalUtcMs ?? null, etaSeconds = nav?.remainingSeconds ?? legacy?.recent?.remainingSeconds ?? legacy?.total?.remainingSeconds ?? null;
       const journeyMetrics = file?.rerouted ? remainingJourneyMetrics(file, data, state.gps) : null;
       const revisedSummary = file?.rerouted ? `<p id="reroute-remaining" class="small muted">\u6539\u9053\u5F8C\u81F3\u7D42\u9EDE\uFF1A${journeyMetrics?.distanceM != null ? (journeyMetrics.distanceM / 1e3).toFixed(2) + " km" : "\u8DDD\u96E2\u4E0D\u53EF\u7528"} \xB7 \u722C\u5347 ${heightLabel(journeyMetrics?.ascentM ?? null)} \uFF0F\u4E0B\u964D ${heightLabel(journeyMetrics?.descentM ?? null)}</p>` : "";
-      return `<section class="panel next-card itinerary-next"><span class="eyebrow">NEXT STOP</span><h2>${next ? esc(next.station.name) : data?.active ? "\u6CBF\u9014\u7AD9\u9EDE\u5DF2\u5B8C\u6210" : "\u4E0B\u4E00\u7AD9\u5F85\u63D0\u4F9B"}</h2><p class="small station-status">${data?.active ? next ? "\u672A\u5230\u9054" : "\u5DF2\u901A\u904E\u5168\u90E8\u7AD9\u9EDE" : "\u5C1A\u672A\u51FA\u767C"}</p><p class="small">${next ? typeLabels[next.station.type] ?? "\u6CBF\u9014\u7AD9\u9EDE" : "\u9078\u7528 GPX \u5F8C\u81EA\u52D5\u986F\u793A\u3002"}</p><div class="next-metrics"><div><strong id="itinerary-distance">${remaining !== null ? (remaining / 1e3).toFixed(2) + " km" : "\u2014"}</strong><small id="itinerary-distance-label">\u8DDD\u96E2\u4E0B\u4E00\u7AD9\uFF08\u6CBF GPX\uFF09</small></div><div><strong id="itinerary-next-arrival">${etaTime !== null ? arrival2(etaTime) : "\u2014"}</strong><small>\u9810\u4F30\u62B5\u9054\uFF08\u53F0\u5317\u6642\u9593\uFF09</small></div></div><p id="itinerary-countdown" class="small">${etaSeconds !== null ? "\u9810\u4F30\u5269\u9918 " + duration3(etaSeconds) : "\u7B49\u5F85\u8DEF\u7DDA\u9032\u5EA6\u8207\u6709\u6548\u4F30\u7B97"}</p><p id="itinerary-estimate-note" class="small muted">${nav?.estimated && etaTime !== null ? "\u5305\u542B GPX \u63A8\u5B9A\u8DEF\u6BB5 \xB7 \u50C5\u4F9B\u53C3\u8003" : ""}</p>${revisedSummary}<div class="next-elevation" role="group" aria-label="\u5230\u4E0B\u4E00\u7AD9\u7684\u5269\u9918\u9AD8\u5EA6"><div><span>\u5269\u9918\u722C\u5347</span><strong id="itinerary-remaining-ascent" title="${esc(metrics.message)}">${heightLabel(metrics.ascentM)}</strong></div><div><span>\u5269\u9918\u4E0B\u964D</span><strong id="itinerary-remaining-descent" title="${esc(metrics.message)}">${heightLabel(metrics.descentM)}</strong></div></div>${data?.offRoute ? '<p class="error-message">\u76EE\u524D\u4F4D\u7F6E\u504F\u96E2\u9810\u5B9A GPX\uFF0C\u8ACB\u78BA\u8A8D\u8DEF\u7DDA\u3002</p>' : ""}${next?.reason ? `<p class="small error-message">${esc(next.reason)}</p>` : ""}<p id="itinerary-elevation-status" class="small muted">${esc(metrics.message)}</p><details class="next-details" id="next-details"><summary>\u5230\u7AD9\u78BA\u8A8D\u8207\u5BE6\u6E2C\u500D\u7387</summary>${data?.active && !data.finished && next ? button("\u5DF2\u62B5\u9054\uFF0C\u5207\u63DB\u4E0B\u4E00\u7AD9", "itinerary-arrived", "", "") : ""}<p class="small muted">\u5230\u7AD9\u5BE6\u6E2C\u500D\u7387\uFF1A<strong>${data?.observedFactor === null || !data?.observedFactor ? "\u5C1A\u5F85\u6709\u6548\u5230\u7AD9\u7D00\u9304" : data.observedFactor.toFixed(2) + " \u500D"}</strong></p></details></section>`;
+      return `<section class="panel next-card itinerary-next"><span class="eyebrow">NEXT STOP</span><h2>${next ? esc(next.station.name) : data?.active ? "\u6CBF\u9014\u7AD9\u9EDE\u5DF2\u5B8C\u6210" : "\u4E0B\u4E00\u7AD9\u5F85\u63D0\u4F9B"}</h2><p class="small station-status">${data?.active ? next ? "\u672A\u5230\u9054" : "\u5DF2\u901A\u904E\u5168\u90E8\u7AD9\u9EDE" : "\u5C1A\u672A\u51FA\u767C"}</p><p class="small">${next ? typeLabels[next.station.type] ?? "\u6CBF\u9014\u7AD9\u9EDE" : "\u9078\u7528 GPX \u5F8C\u81EA\u52D5\u986F\u793A\u3002"}</p><div class="next-metrics"><div><strong id="itinerary-distance">${remaining !== null ? (remaining / 1e3).toFixed(2) + " km" : "\u2014"}</strong><small id="itinerary-distance-label">\u8DDD\u96E2\u4E0B\u4E00\u7AD9\uFF08\u6CBF GPX\uFF09</small></div><div><strong id="itinerary-next-arrival">${etaTime !== null ? arrival2(etaTime) : "\u2014"}</strong><small>\u9810\u4F30\u62B5\u9054\uFF08\u53F0\u5317\u6642\u9593\uFF09</small></div></div><p id="itinerary-countdown" class="small">${etaSeconds !== null ? "\u9810\u4F30\u5269\u9918 " + duration3(etaSeconds) : "\u7B49\u5F85\u8DEF\u7DDA\u9032\u5EA6\u8207\u6709\u6548\u4F30\u7B97"}</p><p id="itinerary-estimate-note" class="small muted">${nav?.estimated && etaTime !== null ? "\u5305\u542B GPX \u63A8\u5B9A\u8DEF\u6BB5 \xB7 \u50C5\u4F9B\u53C3\u8003" : ""}</p>${revisedSummary}<p id="itinerary-destination-eta" class="small muted">\u81F3\u7D42\u9EDE\uFF1A${nav?.routeRemainingSeconds != null ? duration3(nav.routeRemainingSeconds) : "\u6642\u9593\u672A\u77E5"} \xB7 ${arrival2(nav?.destinationArrivalUtcMs ?? null)}</p><div class="next-elevation" role="group" aria-label="\u5230\u4E0B\u4E00\u7AD9\u7684\u5269\u9918\u9AD8\u5EA6"><div><span>\u5269\u9918\u722C\u5347</span><strong id="itinerary-remaining-ascent" title="${esc(metrics.message)}">${heightLabel(metrics.ascentM)}</strong></div><div><span>\u5269\u9918\u4E0B\u964D</span><strong id="itinerary-remaining-descent" title="${esc(metrics.message)}">${heightLabel(metrics.descentM)}</strong></div></div>${data?.offRoute ? '<p class="error-message">\u76EE\u524D\u4F4D\u7F6E\u504F\u96E2\u9810\u5B9A GPX\uFF0C\u8ACB\u78BA\u8A8D\u8DEF\u7DDA\u3002</p>' : ""}${next?.reason ? `<p class="small error-message">${esc(next.reason)}</p>` : ""}<p id="itinerary-elevation-status" class="small muted">${esc(metrics.message)}</p><details class="next-details" id="next-details"><summary>\u5230\u7AD9\u78BA\u8A8D\u8207\u5BE6\u6E2C\u500D\u7387</summary>${data?.active && !data.finished && next ? button("\u5DF2\u62B5\u9054\uFF0C\u5207\u63DB\u4E0B\u4E00\u7AD9", "itinerary-arrived", "", "") : ""}<p class="small muted">\u5230\u7AD9\u5BE6\u6E2C\u500D\u7387\uFF1A<strong>${data?.observedFactor === null || !data?.observedFactor ? "\u5C1A\u5F85\u6709\u6548\u5230\u7AD9\u7D00\u9304" : data.observedFactor.toFixed(2) + " \u500D"}</strong></p></details></section>`;
     }
     function updateNumbers() {
       const smartConfirm = document2.getElementById("smart-reroute-confirm");
@@ -9059,6 +9614,10 @@
         if (el && el.textContent !== value2) el.textContent = value2;
       };
       setText("itinerary-distance", remaining !== null ? (remaining / 1e3).toFixed(2) + " km" : "\u2014");
+      setText(
+        "itinerary-destination-eta",
+        `\u81F3\u7D42\u9EDE\uFF1A${nav?.routeRemainingSeconds != null ? duration3(nav.routeRemainingSeconds) : "\u6642\u9593\u672A\u77E5"} \xB7 ${arrival2(nav?.destinationArrivalUtcMs ?? null)}`
+      );
       setText("itinerary-next-arrival", etaTime !== null ? arrival2(etaTime) : "\u2014");
       setText(
         "itinerary-estimate-note",
@@ -9115,6 +9674,7 @@
       return `<section class="chart-wrap"><div class="chart-title"><span class="chart-heading">${icon("mountain")}${file === directMap ? "\u7D00\u9304\u7684" : "\u8DEF\u7DDA"}\u9AD8\u5EA6\u5256\u9762</span><span>\u6CBF\u9014\u7684\u9AD8\u5EA6\u8B8A\u5316</span></div>${heightProfile?.panel(plotted) ?? elevationSvg(plotted)}</section>`;
     }
     function mapPanel(file, position3 = null, live = [], { compact = false, includeHeight = true } = {}) {
+      const estimated = compact ? estimatedGapSegments(file, state.gps.itinerary) : validatedGaps(file.recording?.itinerary?.recoveredGaps).map((g) => g.geometry);
       const showNavigation = compact && ["requesting", "tracking", "paused", "error"].includes(state.gps.status);
       return `<section class="panel ${compact ? "compact-map" : ""}"><div class="panel-header"><div><h2>${file === directMap ? "\u6211\u7684\u8ECC\u8DE1" : "\u8DEF\u7DDA\u8207\u5730\u5F62"}</h2><p>${file === directMap ? "\u5BE6\u969B GPS \u4F4D\u7F6E" : file.processing ? "\u6821\u6B63\u5F8C GPX \u8DEF\u7DDA" : "GPX \u8DEF\u7DDA"} \xB7 ${state.mapMode === "terrain" ? "\u53EF\u65CB\u8F49\u8996\u89D2" : "\u5317\u65B9\u671D\u4E0A"}</p></div><span class="chip">${(file === directMap ? live : file.segments).filter((segment) => segment.length).length} \u6BB5\u8ECC\u8DE1</span></div>
     <div class="terrain-toolbar"><div class="tab-group" role="group" aria-label="\u5730\u5716\u6A21\u5F0F">${[
@@ -9133,10 +9693,10 @@
         ""
       )}</div><div class="map-navigation-tools">${button("\u770B\u5168\u7A0B", "map-fit", "ghost")}${showNavigation ? button(`<span data-location-label>${currentMapPosition(state.gps) ? terrainMap.following() ? "\u8DDF\u96A8\u4E2D" : "\u6211\u7684\u4F4D\u7F6E" : "\u5C1A\u7121\u5B9A\u4F4D"}</span>`, "map-locate", "ghost", "locate", `aria-label="\u56DE\u5230\u6211\u7684\u4F4D\u7F6E\u4E26\u8DDF\u96A8 GPS" aria-pressed="${Boolean(currentMapPosition(state.gps) && terrainMap.following())}" ${currentMapPosition(state.gps) ? "" : "disabled"}`) + button(state.recordingMapExpandedId === state.gps.id ? "\u7E2E\u5C0F\u5730\u5716" : "\u5C55\u958B\u5730\u5716", "recording-map-toggle", "ghost", "", `aria-expanded="${state.recordingMapExpandedId === state.gps.id}" aria-controls="track-map"`) : ""}</div></div>
     ${state.mapMode === "terrain" ? `<div class="terrain-camera-controls" role="group" aria-label="3D \u8996\u89D2"><label for="map-pitch">\u50BE\u659C <span id="map-pitch-value">${Math.round(terrainMap.pitch())}\xB0</span></label><input id="map-pitch" type="range" min="0" max="75" step="5" value="${Math.round(terrainMap.pitch())}">${button("\u5DE6\u8F49", "map-rotate", "ghost", "", 'data-angle="-30"')}${button("\u53F3\u8F49", "map-rotate", "ghost", "", 'data-angle="30"')}${button("\u5317\u5411", "map-north", "ghost")}</div><p class="terrain-gesture-note">\u53F3\u9375\u62D6\u66F3\u53EF\u65CB\u8F49\u8207\u50BE\u659C\uFF1B\u624B\u6A5F\u53EF\u96D9\u6307\u65CB\u8F49\u3001\u4E0A\u4E0B\u6ED1\u52D5\uFF0C\u6216\u4F7F\u7528\u4E0A\u65B9\u8996\u89D2\u63A7\u5236\u3002</p>` : ""}
-    <div class="actual-map" id="track-map">${mapSvg(file, position3, live, false, itineraryMarkers(itinerary?.snapshot()))}</div>
+    <div class="actual-map" id="track-map">${mapSvg(file, position3, live, false, itineraryMarkers(itinerary?.snapshot()), estimated)}</div>
     ${stationEditor?.panel() ?? ""}
     <div class="terrain-status-row"><p id="map-status" class="terrain-status" role="status" aria-live="polite">${state.mapMode === "plain" ? "\u55AE\u7D14\u8ECC\u8DE1\u6A21\u5F0F\uFF0C\u4E0D\u8F09\u5165\u5E95\u5716\u3002" : "\u6B63\u5728\u8F09\u5165\u5E95\u5716\u2026"}</p>${button("\u91CD\u8A66\u5E95\u5716", "map-retry", "ghost", "refresh", 'id="map-retry" hidden')}</div>
-    <div class="legend">${file === directMap ? "" : `<span><i style="background:#326753"></i>${file.kind === "recording" ? "\u4FDD\u5B58\u7684 GPS \u8ECC\u8DE1" : "\u61C9\u8D70\u8DEF\u7DDA"}</span>`}${live.length ? '<span><i style="background:#4388b7"></i>\u5BE6\u969B GPS \u7D00\u9304</span>' : ""}<span class="legend-note">\u4E2D\u65B7\u8655\u4E0D\u9023\u7DDA \xB7 \u62D6\u66F3\u79FB\u52D5\u3001\u6EFE\u8F2A\u6216\u96D9\u6307\u7E2E\u653E</span></div>
+    <div class="legend">${file === directMap ? "" : `<span><i style="background:#326753"></i>${file.kind === "recording" ? "\u4FDD\u5B58\u7684 GPS \u8ECC\u8DE1" : "\u61C9\u8D70\u8DEF\u7DDA"}</span>`}${live.length ? '<span><i style="background:#4388b7"></i>\u5BE6\u969B GPS \u7D00\u9304</span>' : ""}<span><i style="background:#e0a040"></i>\u6A58\u9EC3\u865B\u7DDA\uFF1AGPX \u63A8\u5B9A</span><span class="legend-note">\u4E2D\u65B7\u8655\u4E0D\u9023\u7DDA \xB7 \u62D6\u66F3\u79FB\u52D5\u3001\u6EFE\u8F2A\u6216\u96D9\u6307\u7E2E\u653E</span></div>
     <p class="terrain-note">${state.mapMode === "plain" ? "\u55AE\u7D14\u8ECC\u8DE1\u6A21\u5F0F\u4E0D\u8ACB\u6C42\u5E95\u5716\uFF0C\u4ECD\u53EF\u7E2E\u653E\u8207\u79FB\u52D5 GPX \u8DEF\u7DDA\u3002" : state.mapMode === "terrain" ? "\u767B\u5C71\u5E95\u5716\uFF1AOpenTopoMap\uFF1B\u7ACB\u9AD4\u9AD8\u7A0B\uFF1AMapterhorn\uFF0C\u539F\u6BD4\u4F8B 1\xD7\u3002\u958B\u555F\u6642\u6703\u5411\u5169\u500B\u5716\u8CC7\u670D\u52D9\u8ACB\u6C42\u700F\u89BD\u5340\u57DF\uFF0CGPX \u4E0D\u6703\u4E0A\u50B3\u3002\u5C1A\u672A\u63D0\u4F9B\u96E2\u7DDA 3D \u5730\u5716\u3002" : "\u5DF2\u4E0B\u8F09\u6642\u4F7F\u7528\u672C\u6A5F\u53F0\u7063\u6A19\u6E96\u5E95\u5716\uFF08OSM\uFF0FProtomaps\uFF09\uFF1B\u5426\u5247\u4F7F\u7528 OSM \u7DDA\u4E0A\u5E95\u5716\u3002\u5169\u7A2E\u5E95\u5716\u6A23\u5F0F\u7565\u6709\u4E0D\u540C\uFF0CGPX \u6A94\u6848\u4E0D\u6703\u4E0A\u50B3\u3002"}</p>
     ${state.mapMode === "standard" && !compact ? offlineMapPanel(offlineMaps, file) : ""}
     ${compact || !includeHeight ? "" : heightPanel(file, live)}</section>`;
@@ -9246,8 +9806,8 @@
     const rounded = Number(number.toFixed(1));
     return `${rounded > 0 ? "+" : ""}${rounded.toFixed(1)}%`;
   };
-  var position = (point) => point?.position ? `${point.position.lat.toFixed(6)}, ${point.position.lon.toFixed(6)}` : "\u672A\u77E5";
-  var time2 = (point) => point?.time == null ? "\u672A\u77E5" : new Date(point.time).toLocaleString("zh-TW", {
+  var position2 = (point) => point?.position ? `${point.position.lat.toFixed(6)}, ${point.position.lon.toFixed(6)}` : "\u672A\u77E5";
+  var time3 = (point) => point?.time == null ? "\u672A\u77E5" : new Date(point.time).toLocaleString("zh-TW", {
     timeZone: "Asia/Taipei",
     hourCycle: "h23"
   }) + "\uFF08\u53F0\u7063\u6642\u9593\uFF09";
@@ -9283,7 +9843,7 @@
         (entry) => `<li data-segment="${entry.segment ?? ""}" data-point="${entry.sourceIndex ?? ""}"><div class="correction-point-heading"><strong>${entry.segment === null ? "\u4F4D\u7F6E\u7D22\u5F15\u672A\u77E5" : `\u7B2C ${entry.segment + 1} \u6BB5 \xB7 \u7B2C ${entry.sourceIndex + 1} \u9EDE`}</strong><span>${entry.reasons.map((reason) => esc(reason.label)).join("\u3001") || "\u8655\u7406\u539F\u56E0\u672A\u77E5"}</span></div>
       <p class="small muted">\u539F\u59CB GPX \u9EDE\u4F4D\uFF1A${entry.gpxSegment === null ? "\u672A\u77E5" : `\u7B2C ${entry.gpxSegment + 1} \u6BB5 \xB7 \u7B2C ${entry.gpxIndex + 1} \u9EDE`}</p>
       <p class="small">${entry.reasons.map((reason) => esc(reason.description)).join(" ")}</p>
-      <dl class="correction-locations"><div><dt>\u539F\u59CB\u4F4D\u7F6E\uFF08\u7DEF\u5EA6\u3001\u7D93\u5EA6\uFF09</dt><dd>${position(entry.original)}</dd></div><div><dt>\u6821\u6B63\u5F8C\u4F4D\u7F6E\uFF08\u7DEF\u5EA6\u3001\u7D93\u5EA6\uFF09</dt><dd>${entry.excluded ? "\u4E0D\u7D0D\u5165\u5206\u6790" : position(entry.corrected)}</dd></div><div><dt>\u6D77\u62D4\uFF1A\u539F\u59CB \u2192 \u6821\u6B63\u5F8C</dt><dd>${value(entry.original?.elevation ?? null, "m")} \u2192 ${value(entry.corrected?.elevation ?? null, "m")}</dd></div><div><dt>\u539F\u59CB\u6642\u9593</dt><dd>${esc(time2(entry.original))}</dd></div></dl></li>`
+      <dl class="correction-locations"><div><dt>\u539F\u59CB\u4F4D\u7F6E\uFF08\u7DEF\u5EA6\u3001\u7D93\u5EA6\uFF09</dt><dd>${position2(entry.original)}</dd></div><div><dt>\u6821\u6B63\u5F8C\u4F4D\u7F6E\uFF08\u7DEF\u5EA6\u3001\u7D93\u5EA6\uFF09</dt><dd>${entry.excluded ? "\u4E0D\u7D0D\u5165\u5206\u6790" : position2(entry.corrected)}</dd></div><div><dt>\u6D77\u62D4\uFF1A\u539F\u59CB \u2192 \u6821\u6B63\u5F8C</dt><dd>${value(entry.original?.elevation ?? null, "m")} \u2192 ${value(entry.corrected?.elevation ?? null, "m")}</dd></div><div><dt>\u539F\u59CB\u6642\u9593</dt><dd>${esc(time3(entry.original))}</dd></div></dl></li>`
       ).join("")}</ol>
       ${pages > 1 ? `<nav class="correction-pagination" aria-label="\u8A3A\u65B7\u5206\u9801">${button("\u4E0A\u4E00\u9801", "correction-page", "ghost", "", `data-page="${page - 1}" ${page === 0 ? "disabled" : ""}`)}<span role="status">\u7B2C ${page + 1} / ${pages} \u9801 \xB7 ${offset + 1}\u2013${offset + entries.length} \u9EDE</span>${button("\u4E0B\u4E00\u9801", "correction-page", "ghost", "", `data-page="${page + 1}" ${page === pages - 1 ? "disabled" : ""}`)}</nav>` : ""}
       </details>
@@ -9533,6 +10093,18 @@
         state.correctionPage = { file, page };
         render();
       },
+      "file-download-inferred": (target) => {
+        const file = state.library.find((f) => f.id === target.dataset.id);
+        if (file?.recording)
+          downloadGpx(
+            inferredRecordingGpx({
+              ...file.recording,
+              name: file.name,
+              segments: file.rawSegments ?? file.segments
+            }),
+            file.fileName.replace(/\.gpx$/i, "-inferred.gpx")
+          );
+      },
       "file-download": (target) => {
         const file = state.library.find((file2) => file2.id === target.dataset.id);
         if (file) downloadGpx(file.raw, file.fileName);
@@ -9605,6 +10177,7 @@
       "gps-save": recording.save,
       "gps-no-save": recording.discard,
       "gps-download": recording.download,
+      "gps-download-inferred": recording.downloadInferred,
       "gps-save-retry": recording.retrySave,
       "gps-reset": recording.reset,
       "gps-discard": () => modal(
@@ -9647,156 +10220,6 @@
       help: feedback.showHelp,
       onError: () => toast("\u64CD\u4F5C\u672A\u5B8C\u6210\uFF0C\u8ACB\u7A0D\u5F8C\u91CD\u8A66\u3002")
     };
-  }
-
-  // src/features/itinerary/navigation-recovery.js
-  var MAX_OFFSET_M = 80;
-  var MAX_HIKING_SPEED_MPS = 6;
-  var MAX_HISTORY_MS = 42 * 60 * 1e3;
-  var GAP_MS = 61 * 1e3;
-  var metresApart = (a, b) => haversine(a, b) * 1e3;
-  var position2 = (p, time3) => ({
-    routeProgressM: p.routeProgressM,
-    segmentIndex: p.segmentIndex,
-    time: time3
-  });
-  function recoverRoutePosition(file, gps, journey, fix) {
-    if (!file?.points?.length || !fix || !Number.isFinite(fix.time) || !Number.isFinite(fix.lat) || !Number.isFinite(fix.lon) || Math.abs(fix.lat) > 90 || Math.abs(fix.lon) > 180 || fix.excluded || !Number.isFinite(gps.accuracy) || gps.accuracy < 0 || gps.accuracy > 50 || gps.status !== "tracking")
-      return null;
-    const found = routeMatcherFor(file).match(
-      [{ ...fix, stationId: "navigation-progress", coordinateStatus: "located" }],
-      { maxOffsetM: MAX_OFFSET_M, mergeWithinM: 25, preserveReversals: true }
-    );
-    const match = found.matches[0];
-    if (!match) return null;
-    const nearest = match.nearestTrackDistanceM;
-    let candidates = match.routePositions.filter(
-      (p) => p.offsetM <= nearest + Math.max(8, gps.accuracy)
-    );
-    const previous = journey.routePosition?.revisionId === file.id ? journey.routePosition : null;
-    let recoveredStart = null;
-    if (previous) {
-      const dt = (fix.time - previous.time) / 1e3;
-      if (!(dt > 0)) return null;
-      const reach = MAX_HIKING_SPEED_MPS * dt + (previous.accuracy ?? 5) + gps.accuracy;
-      candidates = candidates.filter(
-        (p) => p.segmentIndex === previous.segmentIndex && p.routeProgressM >= previous.routeProgressM - 25 && p.routeProgressM <= previous.routeProgressM + reach
-      );
-      if (metresApart(previous, fix) > reach) return null;
-      const paused = (gps.historyObservations?.pauses ?? []).some(
-        (p) => p.pausedAt < fix.time && (p.resumedAt ?? fix.time) > previous.time
-      );
-      if (paused && metresApart(previous, fix) > Math.max(15, gps.accuracy + (previous.accuracy ?? 5)))
-        return null;
-    } else {
-      const first = gps.segments?.flat().find(
-        (p) => !p.excluded && Number.isFinite(p.time) && Number.isFinite(p.accuracy) && p.accuracy >= 0 && p.accuracy <= 50
-      );
-      const startedNear = first && first.time - gps.startedAt <= 12e4 && first.time >= gps.startedAt - 5e3 && metresApart(first, file.points[0]) <= Math.max(80, first.accuracy ?? 0);
-      const elapsed = Math.max(0, (fix.time - gps.startedAt) / 1e3);
-      candidates = candidates.filter(
-        (p) => p.segmentIndex === file.points[0].segment && (!startedNear || p.routeProgressM <= MAX_HIKING_SPEED_MPS * elapsed + 100)
-      );
-      if (!startedNear && candidates.length !== 1) return null;
-      if (startedNear && !journey.routeStart)
-        recoveredStart = {
-          routeProgressM: 0,
-          segmentIndex: file.points[0].segment,
-          time: gps.startedAt,
-          estimated: first.time > gps.startedAt + 5e3 || metresApart(first, file.points[0]) > Math.max(20, first.accuracy ?? 0)
-        };
-    }
-    if (!candidates.length) return null;
-    candidates.sort((a, b) => a.routeProgressM - b.routeProgressM);
-    candidates = compactPositionCluster(file, candidates);
-    if (candidates.length !== 1) return null;
-    const chosen = candidates.reduce((a, b) => a.offsetM <= b.offsetM ? a : b);
-    journey.routeStart ??= recoveredStart ?? { ...position2(chosen, fix.time), estimated: true };
-    return {
-      ...position2(chosen, fix.time),
-      lat: fix.lat,
-      lon: fix.lon,
-      accuracy: gps.accuracy,
-      offsetM: chosen.offsetM,
-      revisionId: file.id
-    };
-  }
-  function advanceNavigationProgress(file, plan, gps, journey, fix) {
-    if (!file || !plan?.rows?.length || file.rerouted) return false;
-    const previous = journey.routePosition;
-    const accepted = recoverRoutePosition(file, gps, journey, fix);
-    if (!accepted) return false;
-    const previousValid = previous?.revisionId === file.id && previous.segmentIndex === accepted.segmentIndex && previous.time < accepted.time;
-    const history = Array.isArray(journey.routeHistory) ? journey.routeHistory : [];
-    if (previousValid && accepted.routeProgressM + 25 < previous.routeProgressM) return false;
-    if (previousValid && accepted.time - previous.time >= GAP_MS && !(gps.historyObservations?.pauses ?? []).some(
-      (p) => p.pausedAt < accepted.time && (p.resumedAt ?? accepted.time) > previous.time
-    ) && accepted.routeProgressM > previous.routeProgressM + 25) {
-      journey.recoveredGaps ??= [];
-      journey.recoveredGaps.push({
-        segmentIndex: accepted.segmentIndex,
-        fromM: previous.routeProgressM,
-        toM: accepted.routeProgressM,
-        fromTime: previous.time,
-        toTime: accepted.time,
-        kind: "gpx-estimate"
-      });
-    }
-    journey.routePosition = accepted;
-    history.push(position2(accepted, accepted.time));
-    const cutoff = accepted.time - MAX_HISTORY_MS;
-    const compact = [];
-    for (const p of history) {
-      if (!compact.length || p.time - compact.at(-1).time >= 1e4) compact.push(p);
-    }
-    if (compact.at(-1) !== history.at(-1)) compact.push(history.at(-1));
-    const firstKept = compact.findIndex((p) => p.time >= cutoff);
-    journey.routeHistory = compact.slice(Math.max(0, firstKept - 1));
-    while (plan.rows[journey.nextIndex]) {
-      const row = plan.rows[journey.nextIndex];
-      if (row.segmentIndex !== accepted.segmentIndex || row.routeProgressM > accepted.routeProgressM + 60)
-        break;
-      const close = metresApart(fix, row.station) <= 60;
-      if (!close && row.routeProgressM > accepted.routeProgressM - 25) break;
-      if (close) journey.arrivals[journey.nextIndex] = fix.time;
-      else {
-        journey.inferredVisits ??= [];
-        if (!journey.inferredVisits.includes(journey.nextIndex))
-          journey.inferredVisits.push(journey.nextIndex);
-      }
-      journey.nextIndex++;
-    }
-    return true;
-  }
-  function routeGeometryBetween(file, segmentIndex, fromM, toM) {
-    if (!file?.points?.length || !Number.isFinite(fromM) || !Number.isFinite(toM) || toM <= fromM)
-      return [];
-    const points = file.points.filter((p) => p.segment === segmentIndex);
-    if (points.length < 2 || fromM < points[0].km * 1e3 - 1 || toM > points.at(-1).km * 1e3 + 1)
-      return [];
-    const at = (distance2) => {
-      for (let i = 1; i < points.length; i++) {
-        const a = points[i - 1], b = points[i], lo = a.km * 1e3, hi = b.km * 1e3;
-        if (lo <= distance2 && distance2 <= hi && hi > lo) {
-          const f = (distance2 - lo) / (hi - lo);
-          return { lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f };
-        }
-      }
-      return null;
-    };
-    const start = at(fromM), end = at(toM);
-    if (!start || !end) return [];
-    return [
-      start,
-      ...points.filter((p) => p.km * 1e3 > fromM && p.km * 1e3 < toM).map(({ lat, lon }) => ({ lat, lon })),
-      end
-    ];
-  }
-  function estimatedGapSegments(file, journey) {
-    return (journey?.recoveredGaps ?? []).flatMap((gap) => {
-      const line = routeGeometryBetween(file, gap.segmentIndex, gap.fromM, gap.toM);
-      return line.length > 1 ? [line] : [];
-    });
   }
 
   // src/ui/navigation-view.js
@@ -9859,7 +10282,7 @@
         state.view === "record" ? recordingSegments(state.gps) : [],
         state.mapMode,
         itineraryMarkers(itinerary?.snapshot()),
-        state.view === "record" && gpsPending2() ? estimatedGapSegments(recordingRoute2(), state.gps.itinerary) : [],
+        state.view === "record" && gpsPending2() ? estimatedGapSegments(recordingRoute2(), state.gps.itinerary) : validatedGaps(current()?.recording?.itinerary?.recoveredGaps).map((g) => g.geometry).filter((g) => g?.length > 1),
         {
           position: state.view === "record" ? currentMapPosition(state.gps) : null,
           recordingId: state.view === "record" && gpsPending2() ? state.gps.id : null
@@ -11404,9 +11827,9 @@
   function visitedStations(gps, plan) {
     const keys = /* @__PURE__ */ new Set();
     for (const version of [...gps.navigation?.revisions ?? [], { plan, journey: gps.itinerary }]) {
-      for (const [index, time3] of Object.entries(version.journey?.arrivals ?? {})) {
+      for (const [index, time4] of Object.entries(version.journey?.arrivals ?? {})) {
         const row = version.plan?.rows?.[Number(index)];
-        if (row && Number.isFinite(time3)) keys.add(stationKey2(row));
+        if (row && Number.isFinite(time4)) keys.add(stationKey2(row));
       }
     }
     return keys;
@@ -11967,7 +12390,8 @@
     const resolved = await binding;
     if (!resolved) return null;
     const body = {
-      version: 1,
+      version: 2,
+      recoverySha256: await rawGpxDigest(JSON.stringify(snapshot3.itinerary ?? null)),
       sessionId: snapshot3.id,
       startedAt: snapshot3.startedAt,
       savedAt: snapshot3.updatedAt,
@@ -11979,11 +12403,12 @@
   }
   async function readLiveCheckpoint(gps, binding, now = Date.now()) {
     const saved = gps.liveFactorCheckpoint;
-    if (!saved || saved.version !== 1 || typeof saved.sessionId !== "string" || !saved.sessionId || saved.sessionId !== gps.id || saved.savedAt !== gps.updatedAt || saved.startedAt !== gps.startedAt || !Number.isFinite(saved.savedAt) || saved.savedAt < gps.startedAt || saved.savedAt > now + 5e3)
+    if (!saved || ![1, 2].includes(saved.version) || typeof saved.sessionId !== "string" || !saved.sessionId || saved.sessionId !== gps.id || saved.savedAt !== gps.updatedAt || saved.startedAt !== gps.startedAt || !Number.isFinite(saved.savedAt) || saved.savedAt < gps.startedAt || saved.savedAt > now + 5e3)
       return null;
     try {
       const body = {
         version: saved.version,
+        ...saved.version === 2 ? { recoverySha256: saved.recoverySha256 } : {},
         sessionId: saved.sessionId,
         startedAt: saved.startedAt,
         savedAt: saved.savedAt,
@@ -11991,7 +12416,7 @@
         recordingSha256: saved.recordingSha256,
         state: saved.state
       };
-      if (!await binding || JSON.stringify(saved.binding) !== JSON.stringify(await binding) || saved.recordingSha256 !== await rawGpxDigest(recordingGpx(gps)) || saved.sha256 !== await rawGpxDigest(JSON.stringify(body)))
+      if (saved.version === 2 && saved.recoverySha256 !== await rawGpxDigest(JSON.stringify(gps.itinerary ?? null)) || !await binding || JSON.stringify(saved.binding) !== JSON.stringify(await binding) || saved.recordingSha256 !== await rawGpxDigest(recordingGpx(gps, { preserveSegments: saved.version === 1 })) || saved.sha256 !== await rawGpxDigest(JSON.stringify(body)))
         return null;
       return { state: saved.state, savedAt: saved.savedAt };
     } catch {
@@ -12160,8 +12585,14 @@
       const session = liveSession();
       if (!session || gps !== state.gps) return;
       const checked = await readLiveCheckpoint(gps, session.binding);
-      if (!disposed && gps === state.gps && checked && liveSession() === session)
-        session.engine.restoreCheckpoint(checked.state, checked.savedAt);
+      if (!disposed && gps === state.gps && checked && liveSession() === session) {
+        const restored = session.engine.restoreCheckpoint(checked.state, checked.savedAt);
+        const position3 = gps.itinerary?.routePosition, saved = checked.state.last;
+        if (restored && position3 && saved?.fix.time === position3.time && Math.abs(saved.position.routeProgressM - position3.routeProgressM) < 1e-6) {
+          position3.binding = recoveryBinding(session.file);
+          gps.itinerary.reloadBoundaryTime = position3.time;
+        }
+      }
     }
     function captureLiveCheckpoint(gps, snapshot4) {
       const session = liveSessions.get(gps);
@@ -12192,8 +12623,40 @@
     }
     function updateLiveFactor(fix, now = Date.now()) {
       if (disposed) return;
-      const value2 = liveSession()?.engine.update(fix, { now, status: state.gps.status });
+      const gps = state.gps, file = recordingRoute2(), plan = planFor(file), session = liveSession();
+      const count = gps.itinerary?.recoveredGaps?.length ?? 0;
+      if (session && gps.itinerary && !file.rerouted && plan && !fix.excluded && Number.isFinite(now) && fix.time <= now + 5e3 && now - fix.time <= 6e4 && gps.status === "tracking") {
+        advanceNavigationProgress(file, plan, gps, gps.itinerary, fix);
+        gps.itinerary.lastFixTime = fix.time;
+        gps.itinerary.offRoute = nearestRouteOffset(file, fix) > 200;
+        if (gps.itinerary.offRoute && !gps.itinerary.deviationNotified) {
+          gps.itinerary.deviationNotified = true;
+          feedback.toast("\u76EE\u524D\u4F4D\u7F6E\u8DDD\u9810\u5B9A GPX \u8D85\u904E 200 \u516C\u5C3A\uFF0C\u8ACB\u78BA\u8A8D\u8DEF\u7DDA\u3002");
+        }
+      }
+      const gap = gps.itinerary?.recoveredGaps?.at(-1);
+      if ((gps.itinerary?.recoveredGaps?.length ?? 0) > count)
+        feedback.toast(
+          `GPS \u5DF2\u6062\u5FA9\uFF0C\u5DF2\u6CBF GPX \u63A8\u5B9A\u88DC\u56DE ${((gap.toM - gap.fromM) / 1e3).toFixed(2)} km\uFF08${Math.round(gap.elapsedSeconds / 60)} \u5206\u9418\uFF09\u3002\u9019\u6BB5\u70BA\u8DEF\u7DDA\u63A8\u5B9A\uFF0C\u975E\u771F\u5BE6 GPS \u91CF\u6E2C\u3002`
+        );
+      if (gps.itinerary?.pendingRecovery)
+        return liveSession()?.engine.snapshot({ now, status: gps.status });
+      const value2 = liveSession()?.engine.update(fix, {
+        now,
+        status: gps.status,
+        recoveredGaps: gps.itinerary?.recoveredGaps ?? [],
+        pauses: gps.historyObservations?.pauses ?? [],
+        unresolvedGap: gps.itinerary?.unresolvedGap
+      });
       if (value2) {
+        const nav = navigation(now, session, value2);
+        for (const gap2 of gps.itinerary?.recoveredGaps ?? []) {
+          gap2.usage = {
+            totalFactor: value2.total?.source?.inferredGapIds?.includes(gap2.id) === true,
+            recentFactor: value2.recent?.source?.inferredGapIds?.includes(gap2.id) === true,
+            eta: Number.isFinite(nav?.remainingSeconds) && (value2.recent?.source?.inferredGapIds?.includes(gap2.id) === true || !Number.isFinite(value2.recent?.factor) && value2.total?.source?.inferredGapIds?.includes(gap2.id) === true)
+          };
+        }
         state.gps.routeFactorHistory ??= [];
         state.gps.routeFactorHistory.push({
           ...planFor(recordingRoute2())?.timeBasis === "gpx-moving-time" ? { timeBasis: "gpx-moving-time" } : {},
@@ -12215,7 +12678,13 @@
         "gps-signal-unavailable",
         "abnormal-gps-speed"
       ].includes(reason);
-      return navigationEstimate(unreliable ? null : recordingRoute2(), snapshot3(), state.gps, now);
+      return navigationEstimate(
+        unreliable ? null : recordingRoute2(),
+        snapshot3(),
+        state.gps,
+        now,
+        measured ?? session?.engine.snapshot({ now, status: state.gps.status })
+      );
     }
     function liveFactors(now = Date.now()) {
       const session = !disposed && liveSession();
@@ -12287,7 +12756,7 @@
       if (!journey || gps.status !== "tracking" || !Number.isFinite(gps.accuracy) || gps.accuracy > 50)
         return;
       const file = recordingRoute2(), plan = planFor(file), point = recordingFix(gps);
-      if (!plan || !point || point.time === journey.lastFixTime || journey.signature !== signature(plan))
+      if (!plan || !point || point.time <= journey.lastFixTime || journey.signature !== signature(plan))
         return;
       journey.lastFixTime = point.time;
       if (!file.rerouted) advanceNavigationProgress(file, plan, gps, journey, point);
@@ -12605,6 +13074,7 @@
     });
     if (observations2?.version !== 1 || !Array.isArray(observations2?.pauses) || !Array.isArray(observations2?.interruptions) || observations2.interruptions.some((item) => typeof item !== "string"))
       reasons2.add("observation-history-unavailable");
+    if (recording.itinerary?.recoveredGaps?.length) reasons2.add("inferred-gpx-recovery");
     if (entry.processing?.version !== TRACK_FILTER_VERSION) reasons2.add("quality-version-mismatch");
     if (rawPoints.length < 2) reasons2.add("insufficient-gps-points");
     if (!reference?.file || !reference?.timeModel?.legs?.length) reasons2.add("missing-reference");
@@ -13283,6 +13753,7 @@
     });
     const recording = createRecordingController({
       locationProvider,
+      document: document2,
       onJourneyStart: itinerary.begin,
       onJourneyProgress: itinerary.progress,
       onJourneyFix: itinerary.updateLiveFactor,
@@ -13451,6 +13922,7 @@
           persistence,
           map,
           recordingView,
+          recording,
           heightProfile,
           stationEditor,
           personalFactorView,
