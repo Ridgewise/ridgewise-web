@@ -8936,6 +8936,60 @@
     segmentIndex: p.segmentIndex,
     time: time4
   });
+  var MAX_AMBIGUITY_SAMPLES = 120;
+  var MAX_AMBIGUITY_CANDIDATES = 12;
+  var STABLE_FIX_WINDOW_MS = 45e3;
+  function compatibleForwardStep(from, to) {
+    const seconds = (to.time - from.time) / 1e3;
+    if (!(seconds > 0) || from.segmentIndex !== to.segmentIndex) return false;
+    const reach = MAX_HIKING_SPEED_MPS * seconds + (from.accuracy ?? 5) + (to.accuracy ?? 5);
+    const advance = to.routeProgressM - from.routeProgressM;
+    if (advance < -25 || advance > reach || metresApart(from, to) > reach) return false;
+    const observedM = metresApart(from, to);
+    if (observedM > Math.max(35, (from.accuracy ?? 5) + (to.accuracy ?? 5) + 10) && advance < 10)
+      return false;
+    return true;
+  }
+  function rememberAmbiguity(journey, previous, file, fix, accuracy, candidates) {
+    if (!previous) return;
+    const binding = recoveryBinding(file);
+    let pending = journey.pendingAmbiguity;
+    if (pending?.fromTime !== previous.time || pending?.binding !== binding) {
+      pending = { fromTime: previous.time, binding, samples: [] };
+      journey.pendingAmbiguity = pending;
+    }
+    if (pending.samples.length >= MAX_AMBIGUITY_SAMPLES || candidates.length > MAX_AMBIGUITY_CANDIDATES) {
+      delete journey.pendingAmbiguity;
+      journey.recoveryBarrier = { time: fix.time, reason: "ambiguous-route-position" };
+      return;
+    }
+    pending.samples.push({
+      time: fix.time,
+      candidates: candidates.map((p) => ({
+        lat: fix.lat,
+        lon: fix.lon,
+        time: fix.time,
+        accuracy,
+        segmentIndex: p.segmentIndex,
+        routeProgressM: p.routeProgressM
+      }))
+    });
+  }
+  function ambiguitySupportsPosition(journey, previous, accepted) {
+    const pending = journey.pendingAmbiguity;
+    if (!pending) return true;
+    if (!previous || pending.fromTime !== previous.time || pending.binding !== accepted.binding)
+      return false;
+    let possible = [previous];
+    for (const sample of pending.samples) {
+      const next = sample.candidates.filter(
+        (candidate) => possible.some((prior) => compatibleForwardStep(prior, candidate))
+      );
+      if (!next.length) return false;
+      possible = next;
+    }
+    return possible.some((prior) => compatibleForwardStep(prior, accepted));
+  }
   function recoverRoutePosition(file, gps, journey, fix) {
     if (!file?.points?.length || !fix || !Number.isFinite(fix.time) || !Number.isFinite(fix.lat) || !Number.isFinite(fix.lon) || Math.abs(fix.lat) > 90 || Math.abs(fix.lon) > 180 || fix.excluded || !Number.isFinite(gps.accuracy) || gps.accuracy < 0 || gps.accuracy > 50 || gps.status !== "tracking")
       return null;
@@ -8988,6 +9042,7 @@
         };
     }
     if (!candidates.length) {
+      delete journey.pendingAmbiguity;
       journey.recoveryStatus = {
         status: "pending",
         reason: "unreachable-or-disconnected",
@@ -8998,6 +9053,7 @@
     candidates.sort((a, b) => a.routeProgressM - b.routeProgressM);
     candidates = compactPositionCluster(file, candidates);
     if (candidates.length !== 1) {
+      rememberAmbiguity(journey, previous, file, fix, gps.accuracy, candidates);
       journey.recoveryStatus = {
         status: "pending",
         reason: "ambiguous-route-position",
@@ -9022,11 +9078,21 @@
     const previous = journey.routePosition;
     if (previous && fix?.time <= previous.time) return false;
     const accepted = recoverRoutePosition(file, gps, journey, fix);
+    if (accepted && journey.pendingAmbiguity) {
+      const consistent = ambiguitySupportsPosition(journey, previous, accepted);
+      delete journey.pendingAmbiguity;
+      if (!consistent)
+        journey.recoveryBarrier = { time: fix.time, reason: "ambiguous-route-position" };
+    }
+    if (!accepted && previous && journey.pendingAmbiguity && !journey.recoveryBarrier && !(gps.historyObservations?.pauses ?? []).some(
+      (p) => p.pausedAt < fix.time && (p.resumedAt ?? fix.time) > previous.time
+    ))
+      return false;
     if (!accepted || journey.recoveryBarrier || previous?.binding && previous.binding !== recoveryBinding(file)) {
       const anchorJourney = { reanchor: true };
       const candidate = recoverRoutePosition(file, gps, anchorJourney, fix);
       const pending = journey.pendingAnchor;
-      if (!candidate || !pending || candidate.time <= pending.time || candidate.time - pending.time > 3e4 || candidate.segmentIndex !== pending.segmentIndex || candidate.routeProgressM < pending.routeProgressM - 25 || Math.abs(candidate.routeProgressM - pending.routeProgressM) > 6 * (candidate.time - pending.time) / 1e3 + 20) {
+      if (!candidate || !pending || candidate.time <= pending.time || candidate.time - pending.time > STABLE_FIX_WINDOW_MS || candidate.segmentIndex !== pending.segmentIndex || candidate.routeProgressM < pending.routeProgressM - 25 || Math.abs(candidate.routeProgressM - pending.routeProgressM) > 6 * (candidate.time - pending.time) / 1e3 + 20) {
         if (candidate) journey.pendingAnchor = candidate;
         journey.recoveryStatus = {
           status: "pending",
@@ -9043,6 +9109,7 @@
       journey.routePosition = candidate;
       journey.routeHistory = [position(pending, pending.time), position(candidate, candidate.time)];
       delete journey.pendingAnchor;
+      delete journey.pendingAmbiguity;
       delete journey.recoveryBarrier;
       return true;
     }
@@ -9054,7 +9121,7 @@
     ) && accepted.routeProgressM > previous.routeProgressM + 25) {
       if (!confirmed && accepted.routeProgressM - previous.routeProgressM > 1e3) {
         const candidate = journey.pendingRecovery;
-        if (!candidate || accepted.time - candidate.time < 5e3 || accepted.time - candidate.time > 3e4 || accepted.segmentIndex !== candidate.segmentIndex || Math.abs(accepted.routeProgressM - candidate.routeProgressM) > 6 * (accepted.time - candidate.time) / 1e3 + 20) {
+        if (!candidate || accepted.time - candidate.time < 5e3 || accepted.time - candidate.time > STABLE_FIX_WINDOW_MS || accepted.segmentIndex !== candidate.segmentIndex || Math.abs(accepted.routeProgressM - candidate.routeProgressM) > 6 * (accepted.time - candidate.time) / 1e3 + 20) {
           journey.pendingRecovery = accepted;
           journey.recoveryStatus = {
             status: "pending",

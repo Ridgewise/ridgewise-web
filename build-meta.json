@@ -1499,7 +1499,7 @@
       "format": "esm"
     },
     "src/features/itinerary/navigation-recovery.js": {
-      "bytes": 11884,
+      "bytes": 15451,
       "imports": [
         {
           "path": "src/domain/track-math.js",
@@ -2796,7 +2796,7 @@
       "imports": [],
       "exports": [],
       "inputs": {},
-      "bytes": 5176023
+      "bytes": 5181557
     },
     "dist/app.bundle.js": {
       "imports": [],
@@ -3084,7 +3084,7 @@
           "bytesInOutput": 712
         },
         "src/features/itinerary/navigation-recovery.js": {
-          "bytesInOutput": 10264
+          "bytesInOutput": 13247
         },
         "src/features/gpx-stations/markers.js": {
           "bytesInOutput": 877
@@ -3255,7 +3255,7 @@
           "bytesInOutput": 100
         }
       },
-      "bytes": 3352532
+      "bytes": 3355515
     },
     "dist/app.bundle.css.map": {
       "imports": [],
